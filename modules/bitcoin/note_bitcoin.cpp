@@ -354,6 +354,9 @@ int bitcoin_parse(Modules *note, Connection *conn, char *raw, int size) {
                 RelayAdd(note, conn, raw, size);
         }
     }
+    
+    // we dont need the message in the future..
+    return 1;
 }
 
 /*

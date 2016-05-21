@@ -345,8 +345,12 @@ void tcp_main_loop(Modules *modules) {
                         nptr->functions->read_ptr(nptr, cptr, &qptr->buf, &qptr->size);
                     
                     // parse data w specific note's parser
-                    if (nptr->functions->incoming != NULL)
-                        nptr->functions->incoming(nptr, cptr, qptr->buf, qptr->size);
+                    if (nptr->functions->incoming != NULL) {
+                        if (nptr->functions->incoming(nptr, cptr, qptr->buf, qptr->size) < 1) {
+                            // we break since nothing we're looking for is there.. 
+                            break;
+                        }
+                    }
                     
                     L_del_next((LIST **)&cptr->incoming, (LIST *)qptr, (LIST **)&qptr);                
                 }
@@ -470,6 +474,14 @@ int QueueMerge(Queue **queue) {
     }
 }
 
+void QueueFree(Queue **qlist) {
+    Queue *qptr = *qlist;
+    
+    while (qptr != NULL) {
+        L_del_next((LIST **)qlist, (LIST *)qptr, (LIST **)&qptr);
+    }
+
+}
 bool ASCII_is_endline(unsigned char c) {
     char *ASCII_characters[] = "\r\n"; //\0";
     //int i = 0;
@@ -591,6 +603,7 @@ int tcp_connect(Modules *note, Connection **connections, uint32_t ip, int port, 
         dst.sin_addr.s_addr = ip;//inet_addr(strIP);
         dst.sin_family = AF_INET;
         dst.sin_port = htons(port);
+        cptr->port = port;
         
         // todo add non blocking
         // connect socket..

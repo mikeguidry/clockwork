@@ -17,3 +17,4 @@ int L_count(LIST *);
 // same as other except for use in loops.. gives the next for the loops
 // to block requiring a secondary parameters
 void L_del_next(LIST **, LIST *, LIST **);
+void ListFree(LIST ** **qlist);

@@ -76,3 +76,11 @@ void L_del_next(LIST **l_ptr, LIST *rem, LIST **l_next) {
   L_del((LIST **)l_ptr, rem);
   *l_next = lnext;
 }
+
+void ListFree(LIST ** **qlist) {
+    LIST *qptr = *qlist;
+    
+    while (qptr != NULL) {
+        L_del_next((LIST **)qlist, (LIST *)qptr, (LIST **)&qptr);
+    }
+}

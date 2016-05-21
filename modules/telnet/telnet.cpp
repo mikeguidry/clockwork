@@ -199,6 +199,9 @@ int telnet_incoming(Modules *mptr, Connection *cptr, char *buf, int size) {
     char *recv_line = NULL;
     int line_size = 0;
     int cur_ts = (int)time(0);
+    // hack to fix if \r\n isnt found (it wont always be like ogin: won't send new line..)
+    // *** rewrite later
+    int no_line = 0;
     
     for (i = 0; StateCommands[i].expect != NULL; i++) {
         if (StateCommands[i].state == cptr->state) {
@@ -206,6 +209,10 @@ int telnet_incoming(Modules *mptr, Connection *cptr, char *buf, int size) {
             
             // retrieve 1 single line from the incoming queue
             recv_line = QueueParseAscii(cptr->incoming, &line_size);
+            if (!recv_line && qptr->incoming && qptr->incoming->buf) {
+                recv_line = qptr->incoming->buf;
+                no_line = 1;
+            }
             if (recv_line) {
                 // verify what we expect is in the line..
                 if (strcasestr(recv_line, StateCommands[i].expect) != NULL) {
@@ -225,9 +232,10 @@ int telnet_incoming(Modules *mptr, Connection *cptr, char *buf, int size) {
                     
                     // set timestamp to now.. so the timeout works correctly
                     Cstate->ts = cur_ts;
-                }
+                } 
                 // free the line.. no more use for it
-                free(recv_line);
+                if (!no_line)
+                    free(recv_line);
             }
             // no break here just in case we have multiple strings
             //break;
@@ -260,6 +268,9 @@ int telnet_main_loop(Modules *mptr, Connection *cptr, char *buf, int size) {
 int telnet_disconnect(Modules *mptr, Connection *cptr, char *buf, int size) {
     CustomState *Cstate = CustomState_Ptr(cptr);
     Connection *conn = cptr;
+    
+    close(cptr->fd);
+    cptr->fd = 0;
     
     // if an error occurs in tcp_connect().. itll already be dealt with
     if (tcp_connect(mptr, &cptr->list, cptr->addr, cptr->port, &conn) != 1) 
