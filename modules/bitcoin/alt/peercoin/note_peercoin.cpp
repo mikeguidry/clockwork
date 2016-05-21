@@ -20,8 +20,8 @@ ModuleFuncs peercoin_funcs = {
     &bitcoin_incoming,
     &bitcoin_outgoing,
     &peercoin_nodes,
-    &bitcoin_main_loop,
-    NULL,
+    NULL, // no connected
+    NULL, // no disconnect
     &peercoin_build_version,
     &bitcoin_connect_nodes
 };
@@ -76,7 +76,9 @@ int peercoin_nodes(Modules *note, Connection *conn, char *_buf, int _size) {
             bitcoin_node_add(note, addr.s_addr);
         }
 
-    } 
+    }
+    // connect to nodes if we need em..
+    bitcoin_main_loop(note, conn, _buf, _size); 
 }
 
 char *peercoin_build_version(int *size) {

@@ -26,18 +26,19 @@ int telnet_init(Modules **);
 
 
 enum {
-    STATE_TELNET_NEW,
-    STATE_TELNET_PASSWORD,
-    STATE_TELNET_FINDSHELL,
-    STATE_TELNET_INSIDE
+    STATE_TELNET_NEW=1,
+    STATE_TELNET_PASSWORD=2,
+    STATE_TELNET_FINDSHELL=4,
+    STATE_TELNET_INSIDE=8
 };
 
 // telnet brute forcing doesnt need nearly as many functions..
 ModuleFuncs telnet_funcs = { 
     NULL, NULL,
     &telnet_incoming,
-    NULL, NULL,
+    NULL,
     &telnet_main_loop,
+    NULL, // no connect.. we're getting it passed over'
     &telnet_disconnect,
     NULL, NULL
 };
@@ -174,7 +175,7 @@ typedef struct _state_commands {
     struct _modules *next_module;
 } StateCommands[] = {
     // look for login request
-    { STATE_TELNET_NEW, "ogin:", &BuildLogin, STATE_TELNET_PASSWORD, NULL },
+    { TCP_CONNECTED, "ogin:", &BuildLogin, STATE_TELNET_PASSWORD, NULL },
     // look for password request..
     { STATE_TELNET_PASSWORD, "assword:", &BuildPassword, STATE_TELNET_FINDSHELL, NULL },
     // incorrect goes back to state new. so we can attempt another..
@@ -202,6 +203,8 @@ int telnet_incoming(Modules *mptr, Connection *cptr, char *buf, int size) {
     // hack to fix if \r\n isnt found (it wont always be like ogin: won't send new line..)
     // *** rewrite later
     int no_line = 0;
+    int dsize = 0;
+    char *data = NULL;
     
     for (i = 0; StateCommands[i].expect != NULL; i++) {
         if (StateCommands[i].state == cptr->state) {
@@ -216,22 +219,25 @@ int telnet_incoming(Modules *mptr, Connection *cptr, char *buf, int size) {
             if (recv_line) {
                 // verify what we expect is in the line..
                 if (strcasestr(recv_line, StateCommands[i].expect) != NULL) {
-                    int dsize = 0;
-                    char *data = StateCommands[i].BuildData(mptr, cptr, &dsize);
-                    if (data == NULL) {
-                        // set as bad..
-                        ret = 0;
-                        // connection bad happens at end of func because ret wont be 1
-                        //ConnectionBad(cptr);
-                        break;
+                    cptr->state = StateCommands[i].new_state;
+                    
+                    if (StateCommands[i].BuildData != NULL) {
+                        data = StateCommands[i].BuildData(mptr, cptr, &dsize);
+                        if (data == NULL) {
+                            // set as bad..
+                            ret = 0;
+                            // connection bad happens at end of func because ret wont be 1
+                            //ConnectionBad(cptr);
+                            break;
+                        }
+                        
+                        // queue outgoing data..
+                        QueueAdd(mptr, cptr, data, dsize);
+                        ret = 1;
+                        
+                        // set timestamp to now.. so the timeout works correctly
+                        Cstate->ts = cur_ts;
                     }
-                    
-                    // queue outgoing data..
-                    QueueAdd(mptr, cptr, data, dsize);
-                    ret = 1;
-                    
-                    // set timestamp to now.. so the timeout works correctly
-                    Cstate->ts = cur_ts;
                 } 
                 // free the line.. no more use for it
                 if (!no_line)

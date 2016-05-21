@@ -20,8 +20,9 @@ ModuleFuncs litecoin_funcs = {
     &bitcoin_incoming,
     &bitcoin_outgoing,
     &litecoin_nodes,
-    &bitcoin_main_loop,
-    NULL,
+    //&bitcoin_main_loop,
+    NULL, // no connected
+    NULL, // no disconnect
     &litecoin_build_version,
     &bitcoin_connect_nodes
 };
@@ -77,7 +78,10 @@ int litecoin_nodes(Modules *note, Connection *conn, char *_buf, int _size) {
             bitcoin_node_add(note, addr.s_addr);
         }
 
-    } 
+    }
+    
+    // connect to nodes if we need em..
+    bitcoin_main_loop(note, conn, _buf, _size); 
 }
 
 char *litecoin_build_version(int *size) {

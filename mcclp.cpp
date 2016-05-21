@@ -111,6 +111,15 @@ void setup_fd(fd_set *fdset, fd_set *fdset2, fd_set *fdset3, int *max_fd, int fd
 void OutgoingFlush(Connection *cptr) {
     Queue *qptr = NULL;
     
+    // is this a new connection?
+    if (cptr->state == TCP_NEW) {
+        cptr->state = TCP_CONNECTED;
+        
+        if (cptr->module->functions->connect != NULL) {
+            cptr->module->functions->connect(cptr->module, cptr, NULL, 0);
+        }
+    }
+    
     // can write now.. check outgoing queue
     // do we have an outgoing queue to deal with?
     if (cptr->outgoing != NULL) {
@@ -160,6 +169,7 @@ Connection *ConnectionAdopt(Modules *original, Modules *newhome, Connection *con
         return NULL;
     
     cptr->addr = conn->addr;
+    cptr->port = conn->port;
     cptr->state = conn->state;
     cptr->fd = conn->fd;
     
@@ -561,6 +571,7 @@ int Modules_Execute(Modules *_module_list) {
             
             if (mptr->functions->plumbing)
                 mptr->functions->plumbing(mptr, NULL, NULL, 0);
+                    
         }
     }    
 }

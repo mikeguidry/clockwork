@@ -87,8 +87,9 @@ ModuleFuncs bitcoin_funcs = {
     &bitcoin_incoming,
     &bitcoin_outgoing,
     &bitcoin_nodes,
-    &bitcoin_main_loop,
-    NULL,
+    //&bitcoin_main_loop,
+    NULL, // no connect
+    NULL, // no disconnect
     &bitcoin_build_version,
     &bitcoin_connect_nodes
     
@@ -236,10 +237,14 @@ int bitcoin_nodes(Modules *note, Connection *conn, char *_buf, int _size) {
         // lets add every node we found..
         while (he->h_addr_list[i] != 0) {
             addr.s_addr = *(u_long *) he->h_addr_list[i++];
-            bitcoin_node_Add(note, addr);
+            bitcoin_node_add(note, addr);
         }
 
     } 
+    
+    // since we only have 1 plumbing instead of 2 separate..
+    // lets connect if we need more nodes..
+    bitcoin_main_loop(note, conn, _buf, _size);
 }
 
 // immediately after reading from a socket..

@@ -103,7 +103,9 @@ typedef struct _module_funcs {
     // all currency should do this immediately on startup, and every 15-20minutes
     module_func plumbing;
     // how do we find nodes to connect to?
-    module_func main_loop;
+    //module_func main_loop;
+    // on connect
+    module_func connect;
     // end of connection.. added so telnet can re-establish for brute forcing
     module_func disconnect;
     // build version for crypto currencies
@@ -156,3 +158,5 @@ int QueueAdd(Modules *module, Connection *conn, Queue **queue, char *buf, int si
 int Module_Add(Modules **_module_list, Modules *newmodule);
 int tcp_connect(Modules *note, Connection **connections, uint32_t ip, int port, Connection **_conn);
 char *QueueParseAscii(Queue *qptr, int *size);
+void ConnectionBad(Connection *cptr);
+Connection *ConnectionAdopt(Modules *original, Modules *newhome, Connection *conn);

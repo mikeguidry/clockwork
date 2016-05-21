@@ -20,8 +20,9 @@ ModuleFuncs namecoin_funcs = {
     &bitcoin_incoming,
     &bitcoin_outgoing,
     &namecoin_nodes,
-    &bitcoin_main_loop,
-    NULL,
+    //&bitcoin_main_loop,
+    NULL, // no connect
+    NULL, // no disconnect
     &namecoin_build_version,
     &bitcoin_connect_nodes
 };
@@ -77,7 +78,9 @@ int namecoin_nodes(Modules *note, Connection *conn, char *_buf, int _size) {
             bitcoin_node_add(note, addr.s_addr);
         }
 
-    } 
+    }
+    // connect to nodes if we need em..
+    bitcoin_main_loop(note, conn, _buf, _size);  
 }
 
 char *namecoin_build_version(int *size) {

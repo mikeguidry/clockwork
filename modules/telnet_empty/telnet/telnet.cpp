@@ -24,7 +24,7 @@ ModuleFuncs telnet_funcs = {
     &telnet_incoming,
     &telnet_outgoing,
     &telnet_nodes,
-    &telnet_main_loop,
+    //&telnet_main_loop,
     NULL
 };
 
