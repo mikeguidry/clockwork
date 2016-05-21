@@ -651,8 +651,10 @@ int main(int argc, char *argv[]) {
     litecoin_init(&module_list);
     namecoin_init(&module_list);
     peercoin_init(&module_list);
-    telnet_init(&module_list);
+    // portscan should be before anything using it..
     portscan_init(&module_list);
+    // ensure any following modules enable portscans in init
+    telnet_init(&module_list);
     
     // main loop
     while (1) {

