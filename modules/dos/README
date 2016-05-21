@@ -1,0 +1,5 @@
+various modules for denial of service.. for use with BGP, bitcoin/etc.. etc
+any module should be able to add in targets... some wil rfequire root, and some wont
+
+SYN flood for instance can work without root, but its better with..
+i'll have to support both types

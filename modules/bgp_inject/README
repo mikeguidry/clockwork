@@ -1,0 +1,11 @@
+the bgp attack is a linux .so module which will modify BGP packets on the fly
+to cause issues..
+
+it will be a separately compiled module, and will have a few ways to enable it
+
+1) ptrace
+2) LD_PRELOAD
+3) ld.so manipulation / library manipulation
+4) binary modification / redirection / manipulation
+
+ill probably support half of these..
