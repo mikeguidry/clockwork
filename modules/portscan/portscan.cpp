@@ -137,7 +137,7 @@ int portscan_main_loop(Modules *mptr, Connection *conn, char *buf, int size) {
     int cur_ts = time(0);
     Connection *cptr = mptr->connections;
     int count = 0;
-    int z = 0, a = 0, c = 0, port = 0, x= 0, b = 0, d = 0;
+    int z = 0, a = 0, c = 0, port = 0, x= 0,  d = 0;
    int scan_count = 0;
     Portscan *pptr = NULL;
     // we have to check timeouts here.. just in case the OS timeouts arent working well..
@@ -179,20 +179,18 @@ int portscan_main_loop(Modules *mptr, Connection *conn, char *buf, int size) {
         pptr = portscan_list;
         while (pptr != NULL) {
             // start 'a' new connections for this scan..
-            for (b = 0; b < a; b++) {
-                // now we have to generate more connections
-                // x is a backup in case ther is a bug, or other OS level issues during tcp_connect()
-                while (z < a && x++ < 500) {
-                    // first we generate an IP address
-                    unsigned int ip = IPGenerate();
-                    
-                    // connect to this new ip
-                    c = tcp_connect(note, note->connections, ip, port, &cptr);
+            // now we have to generate more connections
+            // x is a backup in case ther is a bug, or other OS level issues during tcp_connect()
+            while (z < a && x++ < 500) {
+                // first we generate an IP address
+                unsigned int ip = IPGenerate();
+                
+                // connect to this new ip
+                c = tcp_connect(note, note->connections, ip, port, &cptr);
 
-                    // if it worked.. we count it in z                    
-                    if (c) {
-                        z++;
-                    }
+                // if it worked.. we count it in z                    
+                if (c) {
+                    z++;
                 }
             }
             

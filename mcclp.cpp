@@ -187,6 +187,11 @@ the module can choose to keep it alive (by reconnecting, etc)
 */
 void ConnectionBad(Connection *cptr) {
     int r = 0;
+    
+    // free buffers..
+    QueueFree(&cptr->incoming);
+    QueueFree(&cptr->outgoing);
+    
     if (cptr->module && cptr->module->functions->disconnect) {
         r = cptr->module->functions->disconnect(cptr->module, cptr, NULL, 0);
         // 1 from disconnect means we are reusing...
@@ -227,7 +232,7 @@ void ConnectionCleanup(Connection **conn_list) {
 
 
 // select & handle i/o of sockets
-void tcp_socket_loop(Modules *modules) {
+void socket_loop(Modules *modules) {
     Modules *mptr = NULL;
     Connection *cptr = NULL;
     Queue *qptr = cptr->outgoing;
@@ -330,43 +335,35 @@ void ConnectionRead(Connection *cptr) {
 }
 
 // handle basic TCP/IP (input/output)
-void tcp_main_loop(Modules *modules) {
+void network_main_loop(Modules *mptr) {
     Queue *qptr = NULL;
-    Modules *nptr = NULL;
     Connection *cptr = NULL;
-    
-    // first handle all socket I/O...
-    tcp_socket_loop(modules);
-    
-    // now we can handle crypto currency/application specific handling
-    for (nptr = modules; nptr != NULL; nptr = nptr->next) {
-        // loop for each note's Connection'
-        for (cptr = nptr->connections; cptr != NULL; cptr = cptr->next) {
-            // do we have an incoming queue to deal with?
-            if (cptr->incoming != NULL) {
+        
+    // loop for each connection under this module..
+    for (cptr = nptr->connections; cptr != NULL; cptr = cptr->next) {
+        // do we have an incoming queue to deal with?
+        if (cptr->incoming != NULL) {
+            // lets attempt to merge messages that may be fragmented in the queue
+            QueueMerge(&cptr->incoming);  
+            
+            for (qptr = cptr->incoming; qptr != NULL; ) {
+                // first we hit our read function..maybe compressed, or encrypted
                 
-                // lets attempt to merge messages that may be fragmented in the queue
-                QueueMerge(&cptr->incoming);  
+                if (nptr->functions->read_ptr != NULL)
+                    nptr->functions->read_ptr(nptr, cptr, &qptr->buf, &qptr->size);
                 
-                for (qptr = cptr->incoming; qptr != NULL; ) {
-                    // first we hit our read function..maybe compressed, or encrypted
-                    
-                    if (nptr->functions->read_ptr != NULL)
-                        nptr->functions->read_ptr(nptr, cptr, &qptr->buf, &qptr->size);
-                    
-                    // parse data w specific note's parser
-                    if (nptr->functions->incoming != NULL) {
-                        if (nptr->functions->incoming(nptr, cptr, qptr->buf, qptr->size) < 1) {
-                            // we break since nothing we're looking for is there.. 
-                            break;
-                        }
+                // parse data w specific note's parser
+                if (nptr->functions->incoming != NULL) {
+                    if (nptr->functions->incoming(nptr, cptr, qptr->buf, qptr->size) < 1) {
+                        // we break since nothing we're looking for is there.. 
+                        break;
                     }
-                    
-                    L_del_next((LIST **)&cptr->incoming, (LIST *)qptr, (LIST **)&qptr);                
                 }
+                
+                L_del_next((LIST **)&cptr->incoming, (LIST *)qptr, (LIST **)&qptr);                
             }
-            // outgoing gets handled in tcp_socket_loop() (yes i know it happens on the next loop)
         }
+        // outgoing gets handled in tcp_socket_loop() (yes i know it happens on the next loop)
     }
 }
 
@@ -490,8 +487,8 @@ void QueueFree(Queue **qlist) {
     while (qptr != NULL) {
         L_del_next((LIST **)qlist, (LIST *)qptr, (LIST **)&qptr);
     }
-
 }
+
 bool ASCII_is_endline(unsigned char c) {
     char *ASCII_characters[] = "\r\n"; //\0";
     //int i = 0;
@@ -561,9 +558,12 @@ int Modules_Execute(Modules *_module_list) {
     unsigned int ts = time(0);
     Modules *mptr = NULL;
     
+    // first handle all socket I/O...
+    socket_loop(_module_list);
+
     for (mptr = _module_list; mptr != NULL; mptr = mptr->next) {
         // first handle tcp/ip I/O
-        tcp_main_loop(mptr);
+        network_main_loop(mptr);
         
         // now run plumbing for every interval
         if (ts - mptr->timer_ts > mptr->timer_interval) {

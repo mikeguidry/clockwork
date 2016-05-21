@@ -1,3 +1,3 @@
-int litecoin_init(Modules **);
-int litecoin_nodes(Modules *note, Connection *conn, char *_buf, int _size);
-char *litecoin_build_version(int *size);
+int namecoin_init(Modules **);
+int namecoin_nodes(Modules *note, Connection *conn, char *_buf, int _size);
+char *namecoin_build_version(int *size);
