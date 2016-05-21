@@ -1,0 +1,9 @@
+need error checking behind every call of any int
+make 'instructions' for linked list to express which variables should be freed, or closed on delete
+
+make classes so bitcoin can be modified in its smallest forms
+just magic bytes, seeds, and port.. and same as a lot of other coins
+
+move coins to a cryptocurrency module to monitor them.. and have that under a DoS module
+
+setup ifdef to remove error checking for a smaller exe

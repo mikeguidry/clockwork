@@ -1,0 +1,6 @@
+This will hold data packages for distribution.. whether on each box, irc, httpd, tftpd,dht,  etc..
+
+I'll put the source code, and other data I want distributed inside this module.. and available to control other modules
+
+I'll have to make some object files directly during compilation here because
+the cpp source files only allow a max of 65k bytes
