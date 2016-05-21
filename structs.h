@@ -67,9 +67,6 @@ typedef struct _connection {
     // last ping / pong
     uint32_t ping_ts;
     
-    // state of connection
-    int connection_state;
-    
     Queue *incoming;
     Queue *outgoing;
     

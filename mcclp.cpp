@@ -515,12 +515,12 @@ char *QueueParseAscii(Queue *qptr, int *size) {
             while (i < qptr->size && ASCII_is_endline((unsigned char)qptr->buf[i]))
                 i++;
 
-            if (i < qptr->size) {
+            if (i < qptr->size)
                 //move memory up in buffer..
                 memmove(qptr->buf, qptr->buf + i, qptr->size - i);
-                
-                qptr->size -= i;
-            }
+
+            
+            qptr->size -= i;
             break;
         }
         
@@ -568,13 +568,18 @@ int Module_Add(Modules **_module_list, Modules *newmodule) {
 int tcp_connect(Modules *note, Connection **connections, uint32_t ip, int port, Connection **_conn) {
     int ret = -1;
     int fd = 0;
+    Connection *cptr = NULL;
     
     
     if ((fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) == -1)
         return ret;
     
-    // allocate a linked list structure for this new socket
-    Connection *cptr = (Connection *)l_add((LIST **)note->connections, sizeof(Connection));
+    // if we are reusing a structure.. do it otherwise create a new
+    if (*_conn == NULL)
+        cptr = (Connection *)l_add((LIST **)note->connections, sizeof(Connection));
+    else
+        cptr = *_conn;
+        
     if (cptr != NULL) {
         // quick freeing later..
         cptr->list = &note->connections;
@@ -602,7 +607,10 @@ int tcp_connect(Modules *note, Connection **connections, uint32_t ip, int port, 
         ret = 1;
     }
     
-    if (ret != 1 && cptr)
+    // !*_conn = only delete if its brand new.. not a prior reconnecting
+    // because itll be inside of events, etc.. and itll reuse the memory..
+    // like this itll get removed during Cleanup()
+    if (ret != 1 && cptr && !*_conn)
         L_del((LIST **)&note->connections, (LIST *)cptr);
     
     return ret;
