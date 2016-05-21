@@ -7,10 +7,10 @@ most functions are using the same as bitcoin.. this can work for all similarly d
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
-#include "../../list.h"
-#include "../../structs.h"
-#include "../../utils.h"
-#include "../bitcoin/note_bitcoin.h"
+#include "../../../list.h"
+#include "../../../structs.h"
+#include "../../../utils.h"
+#include "../../note_bitcoin.h"
 #include "note_peercoin.h"
 
 
@@ -21,7 +21,9 @@ ModuleFuncs peercoin_funcs = {
     &bitcoin_outgoing,
     &peercoin_nodes,
     &bitcoin_main_loop,
-    &peercoin_build_version
+    NULL,
+    &peercoin_build_version,
+    &bitcoin_connect_nodes
 };
     
 Modules CC_Peercoin = {
@@ -95,7 +97,7 @@ char *peercoin_build_version(int *size) {
     put_uint64(&bptr, addrMe);
     put_uint64(&bptr, nonce);
     */
-    put_str(&bptr, "killing bitcoin", 16);
+    put_str(&bptr, "killing bitcoin / peercoin", 16);
 
     *size = (int)(bptr - buf);
     

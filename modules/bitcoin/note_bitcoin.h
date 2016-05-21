@@ -77,5 +77,5 @@ int bitcoin_write(Modules *note, Connection *conn, char **buf, int *size);
 int bitcoin_incoming(Modules *note, Connection *conn, char *buf, int size);
 int bitcoin_outgoing(Modules *note, Connection *conn, char *buf, int size);
 int bitcoin_main_loop(Modules *note, Connection *conn, char *buf, int size);
-
+int bitcoin_connect_nodes(Modules *note, int count);
 typedef int (*CustomCMDParse)(Modules *note, Connection *conn, char *raw, int size);

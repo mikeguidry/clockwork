@@ -46,7 +46,8 @@ Modules CC_Telnet = {
     // we will run this every 5 seconds since we are a WORM
     5,
     // bitcoin functions
-    &telnet_funcs, NULL
+    &telnet_funcs, NULL,
+    NULL, 0
 };
 
 

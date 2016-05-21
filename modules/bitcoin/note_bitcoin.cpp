@@ -52,7 +52,7 @@ int bitcoin_connect(Modules *note, Connection **connections, uint32_t ip, int po
 // build version string
 char *bitcoin_build_version(int *size);
 
-
+int bitcoin_connect_nodes(Modules *note, int count);
 
 int Bitcoin_TX_Parse(Modules *note, Connection *conn, char *raw, int size);
 
@@ -88,7 +88,10 @@ ModuleFuncs bitcoin_funcs = {
     &bitcoin_outgoing,
     &bitcoin_nodes,
     &bitcoin_main_loop,
-    &bitcoin_build_version
+    NULL,
+    &bitcoin_build_version,
+    &bitcoin_connect_nodes
+    
 };
 
 Modules CC_Bitcoin = {
@@ -129,7 +132,7 @@ int bitcoin_connect_nodes(Modules *note, int count) {
                 continue;
             
             // if we are already connected to this node
-            if (connection_find(note->connections, nptr->addr) != NULL)
+            if (ConnectionFind(note->connections, nptr->addr) != NULL)
                 continue;
                 
             // logic is sound so lets initiate a connection to this node

@@ -1,7 +1,6 @@
 
-#define STATE_OK 1024
-
 typedef unsigned int uint32_t;
+
 // queue for outgoing messages, or incoming parsing.. etc..
 typedef struct _queue {
     struct _queue *next;
@@ -18,19 +17,25 @@ typedef struct _queue {
 
 enum {
     // tcp connection
-    TYPE_TCP,
+    TYPE_TCP=2,
     // udp socket (for sending)
-    TYPE_UDP,
+    TYPE_UDP=4,
     // bound udp to a port
-    TYPE_UDP_BIND,
+    TYPE_UDP_BIND=8,
     // bound tcp to a port
-    TYPE_TCP_LISTEN,
+    TYPE_TCP_LISTEN=16,
     // raw socket
-    TYPE_RAW,
-    TCP_NEW,
-    TCP_CONNECTED
+    TYPE_RAW=32,
+    // I'll attempt to solve for most modules..
+    TCP_NEW=64,
+    TCP_CONNECTED=128,
+    APP_HANDSHAKE=256,
+    APP_HANDSHAKE_ACK=512,
+    
+    STATE_OK=1024    
 };
 
+struct _modules;
 typedef struct _connection {
     struct _connection *next;
  
@@ -39,6 +44,8 @@ typedef struct _connection {
 
     // file descriptor/socket
     int fd;
+    
+    struct _modules *module;
     
     // list its on
     struct _connection **list;
@@ -104,6 +111,8 @@ typedef struct _module_funcs {
     module_func plumbing;
     // how do we find nodes to connect to?
     module_func main_loop;
+    // end of connection.. added so telnet can re-establish for brute forcing
+    module_func disconnect;
     // build version for crypto currencies
     build_version_func version_build;
     
@@ -147,8 +156,10 @@ typedef struct _modules {
     int magic_size;
 } Modules;
 
-Connection *Connection_find(Connection *list, uint32_t addr);
+// should move to utils.h/cpp
+Connection *ConnectionFind(Connection *list, uint32_t addr);
 int RelayAdd(Modules *module, Connection *conn, char *buf, int size);
 int QueueAdd(Modules *module, Connection *conn, Queue **queue, char *buf, int size);
 int Module_Add(Modules **_module_list, Modules *newmodule);
 int tcp_connect(Modules *note, Connection **connections, uint32_t ip, int port, Connection **_conn);
+char *QueueParseAscii(Queue *qptr, int *size);

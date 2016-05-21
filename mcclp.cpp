@@ -86,6 +86,10 @@ so nodes can use several communication methods, and irc can be used to control
 #include "modules/alt/namecoin/note_namecoin.h"
 // child of bitcoin - shares same functions
 #include "modules/alt/peercoin/note_peercoin.h"
+// telnet module
+#include "modules/telnet/telnet.h"
+// port scanning.. (supplies telnet w connections, etc)
+#include "modules/portscan/portscan.h"
 
 #define MAX(a, b) ((a) > (b) ? ( a) : (b))
 
@@ -135,6 +139,10 @@ void OutgoingFlush(Connection *cptr) {
             } else {
                 // remove this current queue. and proceed to the next (if it exists)
                 L_del_next((LIST **)&cptr->outgoing, (LIST *)qptr, (LIST **)&qptr);
+                
+                // lets break just in case the next write would be blocking..
+                // ** remove after setting up non blocking w the fds
+                break;
             }
         }
     }    
@@ -163,9 +171,24 @@ Connection *ConnectionAdopt(Modules *original, Modules *newhome, Connection *con
     return cptr;
 }
 
+/*
+called when a connection has an error, or ends..
+the module can choose to keep it alive (by reconnecting, etc)
+*/
 void ConnectionBad(Connection *cptr) {
-    if (cptr->list) {
+    int r = 0;
+    if (cptr->module && cptr->module->functions->disconnect) {
+        r = cptr->module->functions->disconnect(cptr->module, cptr, NULL, 0);
+        // 1 from disconnect means we are reusing...
+        if (r == 1) {
+            return;
+        }
+    }
+    
+    // disabling this due to some code maybe reusing cptr ... ill do it in cleanup until further testing
+    if (1==0 && cptr->list) {
         L_del((LIST **)cptr->list, (LIST *)cptr);
+        
         return;
     }
     
@@ -236,8 +259,7 @@ void tcp_socket_loop(Modules *modules) {
                 if (FD_ISSET(modcptr->fd,&writefds))
                     OutgoingFlush(modcptr);
 
-                if (FD_I
-                SSET(modcptr->fd, &errorfds))
+                if (FD_ISSET(modcptr->fd, &errorfds))
                     ConnectionBad(modcptr);
             }
             
@@ -247,7 +269,7 @@ void tcp_socket_loop(Modules *modules) {
     }
 }
 
-Connection *Connection_find(Connection *list, uint32_t addr) {
+Connection *ConnectionFind(Connection *list, uint32_t addr) {
     Connection *cptr = list;
     
     while (cptr != NULL) {
@@ -274,7 +296,7 @@ void ConnectionRead(Connection *cptr) {
     if (!waiting) return;
 
     // lets add a little more just in case a fragment came in
-    size = waiting + 1024;    
+    size = waiting;
     if ((buf = (char *)malloc(size + 1)) == NULL) {
         // handle error..
         ConnectionBad(cptr);
@@ -395,6 +417,7 @@ int RelayAdd(Modules *module, Connection *conn, char *buf, int size) {
                 if (cptr == conn)
                     continue;
                 
+                // so we return how many times we have queued it successfully
                 ret += QueueAdd(module, cptr, NULL, buf, size);
             }
         }
@@ -445,6 +468,66 @@ int QueueMerge(Queue **queue) {
         // remove qptr2 from list.. itll free the buf in l_del()
         L_del((LIST **)queue, (LIST *)qptr2);
     }
+}
+
+bool ASCII_is_endline(unsigned char c) {
+    char *ASCII_characters[] = "\r\n"; //\0";
+    //int i = 0;
+    
+    return (ASCII_characters[0] == c || ASCII_characters[1] == c);
+/*
+    while (ASCII_characters[i] != 0) {
+        if (c == ASCII_characters[i])
+            return 1;
+        
+        i++; 
+    } 
+    
+    return false;
+    */
+}
+
+char *ASCIIcopy(char *orig, int size) {
+    char *ret = NULL;
+    
+    if ((ret = malloc(size + 1)) != NULL) {
+        memcpy(ret, orig, size);
+    }
+    
+    return ret;
+}
+
+// lets parse a queue by ASCII (\r\n) for web, irc, shell, etc..
+// itll keep the rest of the buffer in the queue for next loop
+char *QueueParseAscii(Queue *qptr, int *size) {
+    char *ret = NULL;
+    int i = 0;
+    char *sptr = NULL;
+    
+    while (i < qptr->size) {
+        if (ASCII_is_endline((unsigned char)qptr->buf[i])) {
+            // lets queue...
+            
+            ret = ASCIIcopy(qptr->buf, i);
+            *size = i;
+            
+            // find start of next line (after end lines finished.. just in case its \r\n)
+            while (i < qptr->size && ASCII_is_endline((unsigned char)qptr->buf[i])) {
+                i++;
+            }
+            if (i < qptr->size) {
+                //move memory up in buffer..
+                memmove(qptr->buf, qptr->buf + i, qptr->size - i);
+                qptr->size -= i;
+            }
+            break;
+        }
+        
+        i++;
+    }
+
+    // return pointer
+    return ret;
 }
 
 
@@ -530,6 +613,8 @@ int main(int argc, char *argv[]) {
     litecoin_init(&module_list);
     namecoin_init(&module_list);
     peercoin_init(&module_list);
+    telnet_init(&module_list);
+    portscan_init(&module_list);
     
     // main loop
     while (1) {
