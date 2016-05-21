@@ -13,6 +13,8 @@ most functions are using the same as bitcoin.. this can work for all similarly d
 #include "../../note_bitcoin.h"
 #include "note_litecoin.h"
 
+char namecoin_magic[4] = "ABCD";
+
 
 ModuleFuncs litecoin_funcs = { 
     &bitcoin_read,
@@ -60,7 +62,7 @@ int litecoin_init(Modules **_module_list) {
 // lookup every domain
 int litecoin_nodes(Modules *note, Connection *conn, char *_buf, int _size) {
     char *dns_hosts[] = {
-        "litecoin.org",
+        "dnsseed.litecointools.com",
         NULL
     };
     struct hostent *he = NULL;
