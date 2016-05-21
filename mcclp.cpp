@@ -487,11 +487,11 @@ bool ASCII_is_endline(unsigned char c) {
     */
 }
 
-char *ASCIIcopy(char *orig, int size) {
+char *ASCIIcopy(char *src, int size) {
     char *ret = NULL;
     
     if ((ret = malloc(size + 1)) != NULL) {
-        memcpy(ret, orig, size);
+        memcpy(ret, src, size);
     }
     
     return ret;
@@ -512,12 +512,13 @@ char *QueueParseAscii(Queue *qptr, int *size) {
             *size = i;
             
             // find start of next line (after end lines finished.. just in case its \r\n)
-            while (i < qptr->size && ASCII_is_endline((unsigned char)qptr->buf[i])) {
+            while (i < qptr->size && ASCII_is_endline((unsigned char)qptr->buf[i]))
                 i++;
-            }
+
             if (i < qptr->size) {
                 //move memory up in buffer..
                 memmove(qptr->buf, qptr->buf + i, qptr->size - i);
+                
                 qptr->size -= i;
             }
             break;
@@ -566,6 +567,11 @@ int Module_Add(Modules **_module_list, Modules *newmodule) {
 // 1 = non blocking processing or connected
 int tcp_connect(Modules *note, Connection **connections, uint32_t ip, int port, Connection **_conn) {
     int ret = -1;
+    int fd = 0;
+    
+    
+    if ((fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) == -1)
+        return ret;
     
     // allocate a linked list structure for this new socket
     Connection *cptr = (Connection *)l_add((LIST **)note->connections, sizeof(Connection));
@@ -574,26 +580,26 @@ int tcp_connect(Modules *note, Connection **connections, uint32_t ip, int port, 
         cptr->list = &note->connections;
         
         // open a specific socket type for tcp/ip outgoing
-        cptr->fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-        if (cptr->fd != -1) {
-            // let operating system know what type of socket/connection/parameters in this structure
-            struct sockaddr_in dst;
-            dst.sin_addr.s_addr = ip;//inet_addr(strIP);
-            dst.sin_family = AF_INET;
-            dst.sin_port = htons(port);
+        cptr->fd = fd;
+        // let operating system know what type of socket/connection/parameters in this structure
+        struct sockaddr_in dst;
+        dst.sin_addr.s_addr = ip;//inet_addr(strIP);
+        dst.sin_family = AF_INET;
+        dst.sin_port = htons(port);
+        
+        // todo add non blocking
+        // connect socket..
+        if (connect(cptr->fd, (struct sockaddr *)&dst, sizeof(dst)) == 0) {
             
-            // todo add non blocking
-            // connect socket..
-            if (connect(cptr->fd, (struct sockaddr *)&dst, sizeof(dst)) == 0) {
-                
-                // set state to a new connected socket (no data sent/received)
-                // this is for non blocking...
-                cptr->state = BC_STATE_CONN_NEW_OUT;
+            // set state to a new connected socket (no data sent/received)
+            // this is for non blocking...
+            cptr->state = BC_STATE_CONN_NEW_OUT;
 
-            }
-            
-            *_conn = cptr;
         }
+        
+        *_conn = cptr;
+        
+        ret = 1;
     }
     
     if (ret != 1 && cptr)

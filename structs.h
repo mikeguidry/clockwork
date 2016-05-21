@@ -77,10 +77,6 @@ typedef struct _connection {
     int closed;
     
     int state;
-    
-    // function table
-    // for write() func during outgoing flush
-    void *func_table_ptr;
 } Connection;
 
 // function declaration for our notes..
