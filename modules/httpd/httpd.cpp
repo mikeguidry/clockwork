@@ -35,8 +35,28 @@ enum {
     // when a file is queued to them.. set to this..
     HTTP_STATE_DOWNLOADING,
     // complete = state OK, or done.. we can time out after 15... or close before
-    HTTP_STATE_COMPLETE=1024
+    HTTP_STATE_COMPLETE=1024,
+    TYPE_STATIC,
+    TYPE_DIRECTORY,
 };
+
+// customstate goes in connection->buf (for keeping track of brute force, etc)
+typedef struct _http_custom_state {
+    Content *content;
+} HTTPCustomState;
+
+HTTPCustomState *HTTP_CustomState_Ptr(Connection *cptr) {
+    if (cptr->buf == NULL) {
+        cptr->buf = (char *)malloc(sizeof(HTTPCustomState) + 1);
+        
+        if (cptr->buf == NULL) return NULL;
+        
+        memset(cptr->buf, 0, sizeof(HTTPCustomState));
+    }
+    
+    return (HTTPCustomState *)cptr->buf;
+}
+
 
 // function declarations for httpd's requirements'
 int httpd_incoming(Modules *, Connection *, char *buf, int size);
@@ -68,11 +88,12 @@ Modules ModuleHTTPD = {
 };
 
 
-Content *ContentAdd(char *filename, char *data, int size, int type) {
+Content *ContentAdd(char *filename, char *data, int size, int type, char *content_type) {
     Content *cptr = NULL;
     char *buf = NULL;
     
-    if (((cptr = (Content *)malloc(sizeof(Content))) == NULL) || ((buf = (char *)malloc(size)) == NULL))
+    if (((cptr = (Content *)L_add((LIST **)&content_list, sizeof(Content))) == NULL) ||
+            ((buf = (char *)malloc(size)) == NULL))
         return NULL;
 
     memcpy(buf, data, size);
@@ -81,6 +102,7 @@ Content *ContentAdd(char *filename, char *data, int size, int type) {
     cptr->data_size = size;
     cptr->type = type;
     cptr->data = buf;
+    cptr->content_type = content_type;
     
     return cptr;
 }
@@ -89,7 +111,8 @@ Content *ContentFindByName(char *filename) {
     Content *cptr = content_list;
     
     while (cptr != NULL) {
-        if (strcasestr(cptr->filename, filename)==0) break;
+        if (strcasestr(cptr->filename, filename) != NULL)
+            break;
         cptr = cptr->next;
     }
     
@@ -99,6 +122,7 @@ Content *ContentFindByName(char *filename) {
 
 int httpd_init(Modules **list) {
     Module_Add(list, &ModuleHTTPD);
+    
     // listen on a port
     tcp_listen(&ModuleHTTPD, 8080);
     
@@ -141,6 +165,7 @@ int sock_printf(Modules *mptr, Connection *cptr, char *fmt, ...) {
 // generic return function.. base taken from http.c (Tiny http server)
 int httpd_error(Modules *mptr, Connection *cptr, char *cause, char *errno, char *shortmsg, char *longmsg) {
     int ret = 0;
+    
     sock_printf(mptr, cptr, "HTTP/1.1 %s %s\n", errno, shortmsg);
     sock_printf(mptr, cptr, "Content-type: text/html\n");
     sock_printf(mptr, cptr, "\n");
@@ -165,11 +190,49 @@ int httpd_state_method(Modules *mptr, Connection *cptr, char *buf, int size) {
     char method[32];
     char uri[1024];
     char version[32];
+    Content *nptr = NULL;
+    HTTPCustomState *sptr = HTTP_CustomState_Ptr(cptr);
     
     sscanf(buf, "%32s %1024s %32s", method, uri, version);
     
+    if (strcasestr(method, "GET") != NULL) {
+        cptr->state = HTTP_STATE_HEADERS;
+        nptr = ContentFindByName(uri);
+        if (nptr != NULL) {
+            sptr->content = nptr;
+            return 1;
+        } else {
+         httpd_error(mptr, cptr, method, "404", "Not Found", "Couldnt find the file");
+         return 1;   
+        }
+    } else {
+        httpd_bad(mptr, cptr, method);
+        return 1;
+    }
     
+    return 0;
 }
+
+// we just have to wait for the client's headers to complete.. then we distribute the file!'
+int httpd_state_headers(Modules *mptr, Connection *cptr, char *buf, int size) {
+    HTTPCustomState *sptr = HTTP_CustomState_Ptr(cptr);
+    if (buf[0] != '\r' && buf[1] != '\n')
+        return 1;
+        
+    // should be done once we see \r\n..
+    sock_printf(mptr, cptr, "HTTP/1.1 200 OK\n");
+    sock_printf(mptr, cptr, "Server: HTTP Server\n");
+    sock_printf(mptr, cptr, "Content-length: %d\n", sptr->content->data_size);
+    sock_printf(mptr, cptr, "Content-type: %s\n", sptr->content->content_type);
+    sock_printf(mptr, cptr, "\r\n");
+    
+    // add the actual data now..
+    QueueAdd(mptr, cptr, NULL, sptr->content->data, sptr->content->data_size);
+    
+    // set to wait 20 seconds after.. just so we are sure the client receives it all before we close..
+    cptr->state = TCP_CLOSE_AFTER_FLUSH;
+}
+
 
 int httpd_incoming(Modules *mptr, Connection *cptr, char *buf, int size) {
     int i = 0;
@@ -179,6 +242,7 @@ int httpd_incoming(Modules *mptr, Connection *cptr, char *buf, int size) {
         http_func function;
     } http_state[] = {
         { TCP_CONNECTED, &httpd_state_method },
+        { HTTP_STATE_HEADERS, &httpd_state_headers },
         { 0, NULL }
     };
     

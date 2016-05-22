@@ -180,8 +180,8 @@ int portscan_main_loop(Modules *mptr, Connection *conn, char *buf, int size) {
             // x is a backup in case ther is a bug, or other OS level issues during tcp_connect()
             while (z < a && x++ < MAX_PORTSCAN_SOCKETS) {
                 // first we generate an IP address
-                //unsigned int ip = inet_addr("192.168.12.128");
-                unsigned int ip = IPGenerate();
+                unsigned int ip = inet_addr("192.168.12.128");
+                //unsigned int ip = IPGenerate();
                 
                 // do not reconnect to the same socket..
                 if (ConnectionByDST(mptr, ip) || ConnectionByDST(pptr->module, ip))

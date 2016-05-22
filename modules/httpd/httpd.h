@@ -3,6 +3,7 @@ typedef struct _offered_files {
     struct _offered_files *next;
     char *filename;
     char *data;
+    char *content_type;
     int data_size;
     int type; // static file, or real directory
 } Content;
