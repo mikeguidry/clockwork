@@ -28,7 +28,7 @@ typedef struct _nodes {
 } Node;
 
 
-BitcoinNode *node_add(Modules *note, uint32_t addr);
+Node *node_add(Modules *note, uint32_t addr);
 
 int BC_Message_Header_Verify(char *buf, int size);
 
@@ -77,7 +77,7 @@ typedef struct _msg_header {
 int bitcoin_read(Modules *note, Connection *conn, char **buf, int *size);
 int bitcoin_write(Modules *note, Connection *conn, char **buf, int *size);
 int bitcoin_incoming(Modules *note, Connection *conn, char *buf, int size);
-int bitcoin_outgoing(Modules *note, Connection *conn, char *buf, int size);
+int bitcoin_outgoing(Modules *note, Connection *conn, char **buf, int *size);
 int bitcoin_main_loop(Modules *note, Connection *conn, char *buf, int size);
 int bitcoin_connect_nodes(Modules *note, int count);
 typedef int (*CustomCMDParse)(Modules *note, Connection *conn, char *raw, int size);

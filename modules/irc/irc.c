@@ -42,7 +42,7 @@ enum {
 	RuneInvalid = 0xFFFD,
 };
 
-typedef unsigned int Rune;
+//typedef unsigned int Rune;
 
 static struct {
 	int x;

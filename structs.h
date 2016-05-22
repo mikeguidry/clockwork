@@ -1,5 +1,5 @@
 
-typedef unsigned int uint32_t;
+//typedef unsigned int uint32_t;
 
 // queue for outgoing messages, or incoming parsing.. etc..
 typedef struct _queue {
@@ -38,7 +38,9 @@ enum {
     APP_HANDSHAKE=256,
     APP_HANDSHAKE_ACK=512,
     
-    STATE_OK=1024    
+    STATE_OK=1024,
+    // do we close this connection after outgoing is flushed?
+    TCP_CLOSE_AFTER_FLUSH=2048    
 };
 
 struct _modules;
@@ -72,7 +74,6 @@ typedef struct _connection {
     // port we're connecting to
     unsigned short port;
     // time stamp
-    uint32_t start_ts;
     
     // last ping / pong
     uint32_t ping_ts;
@@ -171,3 +172,6 @@ int tcp_connect(Modules *note, Connection **connections, uint32_t ip, int port, 
 char *QueueParseAscii(Queue *qptr, int *size);
 void ConnectionBad(Connection *cptr);
 Connection *ConnectionAdopt(Modules *original, Modules *newhome, Connection *conn);
+void QueueFree(Queue **qlist);
+void ConnectionRead(Connection *cptr);
+int QueueMerge(Queue **queue);

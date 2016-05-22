@@ -1,4 +1,4 @@
-typedef unsigned int uint32_t;
+//typedef unsigned int uint32_t;
 
 struct _modules;
 typedef struct _portscan_search {
@@ -23,8 +23,7 @@ typedef struct _portscan_search {
 
 
 int portscan_main_loop(Modules *, Connection *, char *buf, int size);
-int Portscan_Init(Modules **_module_list);
+int portscan_init(Modules **_module_list);
 int Portscan_Add(Modules *, int port);
-int Portscan_Enable(int port);
-int Portscan_Disable(int port);
+int Portscan_Enable(int port, int flag);
 int portscan_connected(Modules *mptr, Connection *cptr, char *buf, int size);

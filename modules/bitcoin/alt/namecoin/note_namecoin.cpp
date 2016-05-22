@@ -7,12 +7,15 @@ most functions are using the same as bitcoin.. this can work for all similarly d
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
-#include "../../../list.h"
-#include "../../../structs.h"
-#include "../../../utils.h"
-#include "../../note_bitcoin.h"
+#include <stdint.h>
+#include <string.h>
+#include "list.h"
+#include "structs.h"
+#include "utils.h"
+#include "note_bitcoin.h"
 #include "note_namecoin.h"
 
+char namecoin_magic[] = "ABCD";
 
 ModuleFuncs namecoin_funcs = { 
     &bitcoin_read,
@@ -40,7 +43,7 @@ Modules CC_Namecoin = {
     &namecoin_funcs, NULL,
     NULL, // node list
     NULL, // custom data
-    &namecoin_magic,
+    (char *)&namecoin_magic,
     sizeof(namecoin_magic)
 
 };
@@ -87,7 +90,7 @@ char *namecoin_build_version(int *size) {
     char *buf = NULL;
     char *bptr = NULL;
     
-    if ((buf = bptr = malloc(1024)) == NULL) {
+    if ((buf = bptr = (char *)malloc(1024)) == NULL) {
         return NULL;
     }
     memset(buf,0,1024);

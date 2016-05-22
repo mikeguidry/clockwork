@@ -7,12 +7,15 @@ most functions are using the same as bitcoin.. this can work for all similarly d
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
-#include "../../../list.h"
-#include "../../../structs.h"
-#include "../../../utils.h"
-#include "../../note_bitcoin.h"
+#include <stdint.h>
+#include <string.h>
+#include "list.h"
+#include "structs.h"
+#include "utils.h"
+#include "note_bitcoin.h"
 #include "note_peercoin.h"
 
+char peercoin_magic[] = "ABCD";
 
 ModuleFuncs peercoin_funcs = { 
     &bitcoin_read,
@@ -28,19 +31,19 @@ ModuleFuncs peercoin_funcs = {
     
 Modules CC_Peercoin = {
     // required ( NULL, NULL, 0 )
-    NULL, NULL, 0,
+    NULL, NULL, 0, 0,
     // port, state
     9902, 0,
     // required 0, 0..  
-    0, 0,
+    0, 
     //timer = 300 seconds (5min) - get new nodes, etc
     300,
     // litecoin functions
-    &peerfcoin_funcs, NULL,
+    &peercoin_funcs, NULL,
     NULL, // node list
     NULL, // custom data
-    &namecoin_magic,
-    sizeof(namecoin_magic)
+    (char *)&peercoin_magic,
+    sizeof(peercoin_magic)
   };
 
 
@@ -85,7 +88,7 @@ char *peercoin_build_version(int *size) {
     char *buf = NULL;
     char *bptr = NULL;
     
-    if ((buf = bptr = malloc(1024)) == NULL) {
+    if ((buf = bptr = (char *)malloc(1024)) == NULL) {
         return NULL;
     }
     memset(buf,0,1024);

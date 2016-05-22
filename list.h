@@ -8,7 +8,7 @@ int l_count(LINK *);
 
 // new type of list which will free a buffer automatically while deleting
 // will start using after expanding to multiple buffers
-typedef struct _list { struct _list *next; void *buf; int fd; } LIST;
+typedef struct _list { struct _list *next; void *buf; int fd; uint32_t start_ts; } LIST;
 
 LIST *L_last(LIST *);
 LIST *L_add(LIST **, int);

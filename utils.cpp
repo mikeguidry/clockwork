@@ -1,3 +1,7 @@
+#include <stdint.h>
+#include <string.h>
+#include "structs.h"
+
 void put_int32(char **bptr, int32_t a) {
     int32_t *b = (int32_t *)*bptr;
     *b = a;

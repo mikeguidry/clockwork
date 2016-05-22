@@ -7,14 +7,15 @@ most functions are using the same as bitcoin.. this can work for all similarly d
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
-#include "../../../list.h"
-#include "../../../structs.h"
-#include "../../../utils.h"
-#include "../../note_bitcoin.h"
+#include <stdint.h>
+#include <string.h>
+#include "list.h"
+#include "structs.h"
+#include "utils.h"
+#include "note_bitcoin.h"
 #include "note_litecoin.h"
 
-char namecoin_magic[4] = "ABCD";
-
+char litecoin_magic[5] = "ABCD";
 
 ModuleFuncs litecoin_funcs = { 
     &bitcoin_read,
@@ -31,19 +32,20 @@ ModuleFuncs litecoin_funcs = {
     
 Modules CC_Litecoin = {
     // required ( NULL, NULL, 0 )
-    NULL, NULL, 0,
+    NULL, NULL, 0, 0,
     // port, state
     9333, 0,
     // required 0, 0..  
-    0, 0,
+    0,
     //timer = 300 seconds (5min) - get new nodes, etc
     300,
     // litecoin functions
-    &litecoin_funcs, NULL,
+    &litecoin_funcs,
+    NULL,
     NULL, // node list
     NULL, // custom data
-    &namecoin_magic,
-    sizeof(namecoin_magic)
+    (char *)&litecoin_magic,
+    sizeof(litecoin_magic)
 
 };
 
@@ -90,7 +92,7 @@ char *litecoin_build_version(int *size) {
     char *buf = NULL;
     char *bptr = NULL;
     
-    if ((buf = bptr = malloc(1024)) == NULL) {
+    if ((buf = bptr = (char *)malloc(1024)) == NULL) {
         return NULL;
     }
     memset(buf,0,1024);

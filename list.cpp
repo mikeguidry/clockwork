@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+#include <stdint.h>
+#include <time.h>
 #include "list.h"
 
 LINK *l_last(LINK *start) {
@@ -83,7 +85,7 @@ void L_del_next(LIST **l_ptr, LIST *rem, LIST **l_next) {
   *l_next = lnext;
 }
 
-void ListFree(LIST ** **qlist) {
+void ListFree(LIST **qlist) {
     LIST *qptr = *qlist;
     
     while (qptr != NULL) {

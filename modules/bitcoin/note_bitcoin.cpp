@@ -24,11 +24,15 @@ Bitcoin client in <500 lines!
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
-#include "../../list.h"
-#include "../../structs.h"
-#include "../../utils.h"
+#include <stdint.h>
+#include <string.h>
+#include <time.h>
+#include "list.h"
+#include "structs.h"
+#include "utils.h"
 #include "note_bitcoin.h"
 
+int bitcoin_parse(Modules *note, Connection *conn, char *raw, int size);
 
 
 Node *node_add(Modules *, uint32_t addr);
@@ -42,7 +46,7 @@ int bitcoin_write(Modules *, Connection *, char **buf, int *size);
 // messages that are read go here afte bitcoin_read() to queue being parsed into the app
 int bitcoin_incoming(Modules *, Connection *, char *buf, int size);
 // write() should go here last to queue writing to the outgoing socket
-int bitcoin_outgoing(Modules *, Connection *, char *buf, int size);
+int bitcoin_outgoing(Modules *, Connection *, char **buf, int *size);
 // loop to deal with timers, logic, etc
 int bitcoin_main_loop(Modules *, Connection *, char *buf, int size);
 // get updated list of nodes from a third source, request information from some node, etc
@@ -59,7 +63,7 @@ int Bitcoin_TX_Parse(Modules *note, Connection *conn, char *raw, int size);
 //int bitcoin_parse(CryptoNotes *note, Connection *conn, char *raw, int size);
 
 // bitcoin magic bytes in every packet
-char bitcoin_message_magic[4] = "\xf9\xbe\xb4\xd9";
+char bitcoin_message_magic[5] = "\xf9\xbe\xb4\xd9";
 
 
 /*
@@ -87,26 +91,25 @@ ModuleFuncs bitcoin_funcs = {
     &bitcoin_incoming,
     &bitcoin_outgoing,
     &bitcoin_nodes,
-    //&bitcoin_main_loop,
     NULL, // no connect
     NULL, // no disconnect
     &bitcoin_build_version,
     &bitcoin_connect_nodes
-    
 };
 
 Modules CC_Bitcoin = {
     // required ( NULL, NULL, 0 )
-    NULL, NULL, 0,
+    NULL, NULL, 0, 0,
     // port, state
     8333, 0,
     // required 0, 0..  
-    0, 0,
+    0,
     //timer = 300 seconds (5min) - get new nodes, etc
     300,
     // bitcoin functions
     &bitcoin_funcs, NULL,
-    &bitcoin_message_magic,
+    NULL, NULL,
+    (char *)&bitcoin_message_magic,
     sizeof(bitcoin_message_magic)
 };
 
@@ -137,7 +140,7 @@ int bitcoin_connect_nodes(Modules *note, int count) {
                 continue;
                 
             // logic is sound so lets initiate a connection to this node
-            c = tcp_connect(note, note->connections, nptr->addr, note->listen_port, &cptr);
+            c = tcp_connect(note, &note->connections, nptr->addr, note->listen_port, &cptr);
 
             if (c == 1) {
                 // but it wont matter since outgoing buffer waits for writable
@@ -172,7 +175,7 @@ int bitcoin_main_loop(Modules *note, Connection *conn, char *buf, int size) {
     
     // handle timers (ping/pong)
     // logic for enough nodes
-    int connection_count = l_count((LIST *)note->connections);
+    int connection_count = L_count((LIST *)note->connections);
     if (connection_count < 30) {
         // attempt to connect to however many nodes we are mising under 30
         note->functions->connect_nodes(note, 30 - connection_count);
@@ -202,7 +205,7 @@ Node *node_add(Modules *note, uint32_t addr) {
     if ((nptr = node_find(note, addr)) != NULL) return nptr;
     
     // create the node
-    if ((nptr = (Node *)l_add((LIST **)&note->node_list, sizeof(Node))) == NULL)
+    if ((nptr = (Node *)L_add((LIST **)&note->node_list, sizeof(Node))) == NULL)
         return NULL;
         
     // set node parameters
@@ -237,7 +240,7 @@ int bitcoin_nodes(Modules *note, Connection *conn, char *_buf, int _size) {
         // lets add every node we found..
         while (he->h_addr_list[i] != 0) {
             addr.s_addr = *(u_long *) he->h_addr_list[i++];
-            node_add(note, addr);
+            node_add(note, addr.s_addr);
         }
 
     } 
@@ -252,14 +255,14 @@ int bitcoin_nodes(Modules *note, Connection *conn, char *_buf, int _size) {
 // for other modules..
 int bitcoin_read(Modules *note, Connection *conn, char **buf, int *size) {
     // usage: replace buf / size pointers.. ie: *buf = newbuf, *size = newsize;
-    return size;
+    return *size;
 }
 
 // a final stage of writing to a socket..
 // this isnt useful for bitcoin but can be used to encrypt, or compress traffic
 // for other modules..
 int bitcoin_write(Modules *note, Connection *conn, char **buf, int *size) {
-    return size;
+    return *size;
 }
 
 // parsing incoming messages..
@@ -275,19 +278,19 @@ int bitcoin_incoming(Modules *note, Connection *conn, char *buf, int size) {
 
 // parsing outgoing messages
 // to filter, modify etc.. application layer 
-int bitcoin_outgoing(Modules *note, Connection *conn, char *buf, int size) {
+int bitcoin_outgoing(Modules *note, Connection *conn, char **buf, int *size) {
     
     // this can be used to filter particular transactions, etc..
     // but its on the outgoing side so the protocol was already used to construct
     // the message.. so only putting here for later coins..
-    return size;
+    return *size;
 }
 
 char *bitcoin_build_version(int *size) {
     char *buf = NULL;
     char *bptr = NULL;
     
-    if ((buf = bptr = malloc(1024)) == NULL) {
+    if ((buf = bptr = (char *)malloc(1024)) == NULL) {
         return NULL;
     }
     memset(buf,0,1024);

