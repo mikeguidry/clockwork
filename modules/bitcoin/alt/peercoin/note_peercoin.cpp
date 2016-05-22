@@ -62,7 +62,7 @@ int peercoin_nodes(Modules *note, Connection *conn, char *_buf, int _size) {
         NULL
     };
     struct hostent *he = NULL;
-    BitcoinNode *nptr = NULL;
+    Node *nptr = NULL;
     struct in_addr addr;
     int a = 0, i = 0;
         
@@ -73,7 +73,7 @@ int peercoin_nodes(Modules *note, Connection *conn, char *_buf, int _size) {
         // lets add every node we found..
         while (he->h_addr_list[i] != 0) {
             addr.s_addr = *(u_long *) he->h_addr_list[i++];
-            bitcoin_node_add(note, addr.s_addr);
+            node_add(note, addr.s_addr);
         }
 
     }

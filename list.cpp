@@ -61,7 +61,13 @@ int l_count(LINK *l_ptr) {
 
 
 LIST *L_last(LIST *start) { return (LIST *)l_last((LINK *)start); }
-LIST *L_add(LIST **list, int size) {return (LIST *)l_add((LINK **)list, size); }
+LIST *L_add(LIST **list, int size) {
+  LIST *ret = (LIST *)l_add((LINK **)list, size);
+  if (ret) {
+    ret->start_ts = time(0);
+  } 
+  return ret;
+}
 int L_count(LIST *l_ptr) { return l_count((LINK *)l_ptr); }
 void L_del(LIST **l_ptr, LIST *rem) {
   if (rem->buf != NULL) free(rem->buf);

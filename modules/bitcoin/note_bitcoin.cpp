@@ -31,7 +31,7 @@ Bitcoin client in <500 lines!
 
 
 
-BitcoinNode *bitcoin_node_add(Modules *, uint32_t addr);
+Node *node_add(Modules *, uint32_t addr);
 
 // init bitcoin (adding the note to the main loop)
 int bitcoin_init(Modules **);
@@ -123,7 +123,7 @@ int bitcoin_connect_nodes(Modules *note, int count) {
     int y = 0;
     Connection *cptr = NULL;
     Connection *cfind = NULL;
-    BitcoinNode *nptr = NULL;
+    Node *nptr = NULL;
     int ret = 0;
     int c = 0;
     
@@ -184,8 +184,8 @@ int bitcoin_main_loop(Modules *note, Connection *conn, char *buf, int size) {
 
 
 
-BitcoinNode *bitcoin_node_find(Modules *note, uint32_t addr) {
-    BitcoinNode *nptr = note->node_list;
+Node *node_find(Modules *note, uint32_t addr) {
+    Node *nptr = note->node_list;
     
     while (nptr != NULL) {
         if (nptr->addr == addr) break;
@@ -195,14 +195,14 @@ BitcoinNode *bitcoin_node_find(Modules *note, uint32_t addr) {
     return nptr;
 }
 
-BitcoinNode *bitcoin_node_add(Modules *note, uint32_t addr) {
-    BitcoinNode *nptr = NULL;
+Node *node_add(Modules *note, uint32_t addr) {
+    Node *nptr = NULL;
     
     // attempt to find node first..
-    if ((nptr = bitcoin_node_find(note, addr)) != NULL) return nptr;
+    if ((nptr = node_find(note, addr)) != NULL) return nptr;
     
     // create the node
-    if ((nptr = (BitcoinNode *)l_add((LIST **)&note->node_list, sizeof(BitcoinNode))) == NULL)
+    if ((nptr = (Node *)l_add((LIST **)&note->node_list, sizeof(Node))) == NULL)
         return NULL;
         
     // set node parameters
@@ -226,7 +226,7 @@ int bitcoin_nodes(Modules *note, Connection *conn, char *_buf, int _size) {
         "seed.bitnodes.io", NULL
     };
     struct hostent *he = NULL;
-    BitcoinNode *nptr = NULL;
+    Node *nptr = NULL;
     struct in_addr addr;
     int a = 0, i = 0;
         
@@ -237,7 +237,7 @@ int bitcoin_nodes(Modules *note, Connection *conn, char *_buf, int _size) {
         // lets add every node we found..
         while (he->h_addr_list[i] != 0) {
             addr.s_addr = *(u_long *) he->h_addr_list[i++];
-            bitcoin_node_add(note, addr);
+            node_add(note, addr);
         }
 
     } 

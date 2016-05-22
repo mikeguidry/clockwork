@@ -29,6 +29,7 @@ enum {
     HTTP_STATE_COMPLETE=1024
 }
 
+// function declarations for httpd's requirements'
 int httpd_incoming(Modules *, Connection *, char *buf, int size);
 int httpd_plumbing(Modules *, Connection *, char *buf, int size);
 

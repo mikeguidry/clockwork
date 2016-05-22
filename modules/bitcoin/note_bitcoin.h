@@ -1,13 +1,15 @@
 int bitcoin_init(Modules **);
 
 
-typedef struct _bitcoin_nodes {
+typedef struct _nodes {
     // first 3 are required in this order..
-    struct _bitcoin_nodes *next;
+    struct _nodes *next;
     
     char *buf;
     
     int fd;
+    
+    uint32_t start_ts;
     
     uint32_t addr;
     
@@ -23,10 +25,10 @@ typedef struct _bitcoin_nodes {
     uint32_t last_ts;
     
     int failures;
-} BitcoinNode;
+} Node;
 
 
-BitcoinNode *bitcoin_node_add(Modules *note, uint32_t addr);
+BitcoinNode *node_add(Modules *note, uint32_t addr);
 
 int BC_Message_Header_Verify(char *buf, int size);
 

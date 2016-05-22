@@ -1,3 +1,4 @@
+typedef unsigned int uint32_t;
 
 struct _modules;
 typedef struct _portscan_search {
@@ -5,6 +6,7 @@ typedef struct _portscan_search {
     char *buf;
     int fd;
     
+    uint32_t start_ts;
     // priority? (compared to others...)
     int priority;
     // do we share over bots communication?

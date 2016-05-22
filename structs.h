@@ -11,11 +11,17 @@ typedef struct _queue {
     // fd goes here to auto close connections with L_del
     int empty;
     
+    // start timestamp
+    uint32_t start_ts;
+    
     // queue size
     int size;
 } Queue;
 
 enum {
+    RET_ERROR=-1,
+    RET_SAME=0,
+    RET_OK=1,
     // tcp connection
     TYPE_TCP=2,
     // udp socket (for sending)
@@ -44,6 +50,10 @@ typedef struct _connection {
 
     // file descriptor/socket
     int fd;
+    
+    // timestamp for creation
+    uint32_t start_ts;
+
     
     struct _modules *module;
     
@@ -114,7 +124,7 @@ typedef struct _module_funcs {
     connect_nodes_func connect_nodes;
 } ModuleFuncs;
 
-struct _bitcoin_nodes;
+struct _nodes;
 
 // current status of note
 typedef struct _modules {
@@ -125,13 +135,14 @@ typedef struct _modules {
     // fd has to be in place (if its not 0 itll get closed)
     int fd;
     
+    // timestamp for creation
+    uint32_t start_ts;
+    
     // if we are attempting to listen
     int listen_port;
     // state of crypto currency (our connections, etc)
     int state;
     
-    // timers for loops/logic/etc
-    uint32_t start_ts;
     uint32_t timer_ts;
     int timer_interval;
 
@@ -139,7 +150,7 @@ typedef struct _modules {
     ModuleFuncs *functions;
     Connection *connections;
     
-    struct _bitcoin_nodes *node_list;
+    struct _nodes *node_list;
     
     // any kind of custom data that has to be passed around
     void *custom_data;
