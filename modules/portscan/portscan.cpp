@@ -10,6 +10,8 @@ if an IP is open for one port we will attempt all searches because itll be quick
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <netdb.h>
 #include <stdint.h>
 #include <string.h>
@@ -21,7 +23,7 @@ if an IP is open for one port we will attempt all searches because itll be quick
 
 // lets set the maximum amount of scans to attempt simultaneously
 #define MAX_PORTSCAN_SOCKETS 200
-#define RETRY_LOOP 5
+#define RETRY_LOOP 1
 // timeout for each connect()
 #define CONNECTION_TIMEOUT 15
 
@@ -176,10 +178,14 @@ int portscan_main_loop(Modules *mptr, Connection *conn, char *buf, int size) {
             // start 'a' new connections for this scan..
             // now we have to generate more connections
             // x is a backup in case ther is a bug, or other OS level issues during tcp_connect()
-            while (z < a && x++ < (MAX_PORTSCAN_SOCKETS * 2)) {
+            while (z < a && x++ < MAX_PORTSCAN_SOCKETS) {
                 // first we generate an IP address
+                //unsigned int ip = inet_addr("192.168.12.128");
                 unsigned int ip = IPGenerate();
                 
+                // do not reconnect to the same socket..
+                if (ConnectionByDST(mptr, ip) || ConnectionByDST(pptr->module, ip))
+                    continue;
                 // set port from information..
                 port = pptr->port;
                 

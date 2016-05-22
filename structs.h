@@ -177,3 +177,4 @@ void ConnectionRead(Connection *cptr);
 int QueueMerge(Queue **queue);
 void ConnectionNew(Connection *cptr);
 Connection *tcp_listen(Modules *mptr, int port);
+Connection *ConnectionByDST(Modules *mptr, uint32_t dst);

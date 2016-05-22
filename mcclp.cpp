@@ -133,19 +133,25 @@ void OutgoingFlush(Connection *cptr) {
     Queue *qptr = NULL;
     int cur_time = time(0);
     
+    printf("outgoing flush %d\n", cptr->fd);
+    
     // is this a new connection?
     if (cptr->state == TCP_NEW) {
         cptr->state = TCP_CONNECTED;
         
         if (cptr->module->functions->connect != NULL) {
-            cptr->module->functions->connect(cptr->module, cptr, NULL, 0);
+            if (cptr->module->functions->connect(cptr->module, cptr, NULL, 0) == 1)
+                return;
         }
     }
     
+    printf("outgoing %p\n", cptr->outgoing);
     // can write now.. check outgoing queue
     // do we have an outgoing queue to deal with?
-    if ((qptr = cptr->outgoing) != NULL) {        
+    if ((qptr = cptr->outgoing) != NULL) {  
+        printf("starting loop\n");      
         while (qptr != NULL) {
+            printf("loop\n");
             // outgoing might not write everything first shot..
             int wrote = write(cptr->fd, qptr->buf, qptr->size);
             
@@ -203,12 +209,26 @@ Connection *ConnectionAdopt(Modules *original, Modules *newhome, Connection *con
     cptr->port = conn->port;
     cptr->state = conn->state;
     cptr->fd = conn->fd;
+    // move queues over.. 
+    cptr->outgoing = conn->outgoing;
+    cptr->incoming = conn->incoming;
+    conn->outgoing = NULL;
+    conn->incoming = NULL;
+    cptr->list = &newhome->connections;
+    cptr->module = newhome;
     
     // remove from original
     // set to 0 so it doesnt close the connection
     conn->fd = 0;
-    L_del((LIST **)&original->connections, (LIST *)conn);
+    cptr->module = NULL;
     
+    // mark as bad to get removed from other functions..
+    // when L_del() here created a bug in the loop near select()
+    ConnectionBad(conn);
+    //L_del((LIST **)&original->connections, (LIST *)conn);
+
+    printf("adopted!\n");
+        
     return cptr;
 }
 
@@ -219,6 +239,7 @@ the module can choose to keep it alive (by reconnecting, etc)
 void ConnectionBad(Connection *cptr) {
     int r = 0;
     
+    printf("marked as bad\n");
     // free buffers..
     QueueFree(&cptr->incoming);
     QueueFree(&cptr->outgoing);
@@ -232,14 +253,13 @@ void ConnectionBad(Connection *cptr) {
     }
 
     // close socket
-    if (cptr->fd) {
+    if (cptr->fd > 0) {
         close(cptr->fd);
         cptr->fd = 0;
     }
         
     // mark for deletion    
     cptr->closed = 1;
-    
     return;
 }
 
@@ -250,6 +270,7 @@ void ConnectionCleanup(Connection **conn_list) {
     printf("Cleanup\n");
     
     for (cptr = *conn_list; cptr != NULL; ) {
+        printf("conn %d\n", cptr->fd);
         if (cptr->closed) {
             count++;
             printf("closed connection\n");
@@ -258,8 +279,6 @@ void ConnectionCleanup(Connection **conn_list) {
             continue;            
         }
         
-        if (cptr->fd != 0)
-            close(cptr->fd);
         // if we didnt remove it.. the next is simple to iterate
         cptr = cptr->next;
     }
@@ -327,8 +346,8 @@ void socket_loop(Modules *modules) {
             // the module may have several Connection as well
             for (modcptr = mptr->connections; modcptr != NULL; modcptr = modcptr->next) {
                 printf("cnnection under module %p: %d\n", mptr, modcptr->fd);
-                
                 if (FD_ISSET(modcptr->fd, &readfds)) {
+                    printf("read fd %d\n", modcptr->fd);
                     if (modcptr->state == TCP_LISTEN) {
                         // if its listening... its a new connection..
                         // it needs to adopt to its correct module after
@@ -339,14 +358,19 @@ void socket_loop(Modules *modules) {
                     }
                 }
                     
-                if (FD_ISSET(modcptr->fd,&writefds))
+                if (FD_ISSET(modcptr->fd,&writefds)) {
+                    printf("write fd %d\n", modcptr->fd);
                     OutgoingFlush(modcptr);
+                }
 
-                if (FD_ISSET(modcptr->fd, &errorfds))
+                if (FD_ISSET(modcptr->fd, &errorfds)) {
+                    printf("error fd %d\n", modcptr->fd);
                     ConnectionBad(modcptr);
+                }
             }
         }
     }
+    printf("leaving\n");
 }
 
 Connection *ConnectionFind(Connection *list, uint32_t addr) {
@@ -370,14 +394,21 @@ void ConnectionRead(Connection *cptr) {
     int r = 0;
     Queue *newqueue = NULL;
     
+    printf("connection read\n");
     // check size waiting
     // maybe find another way.. not sure if ioctl will work everywhere
     ioctl(cptr->fd, FIONREAD, &waiting);
+    
+    printf("waiting: %d\n", waiting);
+    
     if (!waiting) return;
+    
+    
 
     // lets add a little more just in case a fragment came in
     size = waiting;
     if ((buf = (char *)malloc(size + 1)) == NULL) {
+        printf("bad 2\n");
         // handle error..
         ConnectionBad(cptr);
         return;
@@ -385,11 +416,13 @@ void ConnectionRead(Connection *cptr) {
     
     // verify we read something.. if not its bad
     if (read(cptr->fd, buf, size) <= 0) {
+        printf("bad 3\n");
         ConnectionBad(cptr);
         return;
     }
 
     if ((newqueue = (Queue *)L_add((LIST **)&cptr->incoming, sizeof(Queue))) == NULL) {
+        printf("bad 4\n");
         // error!
         ConnectionBad(cptr);
     }
@@ -397,6 +430,8 @@ void ConnectionRead(Connection *cptr) {
     // all is well..
     newqueue->buf = buf;
     newqueue->size = size;
+    
+    printf("done reading into queu\n");
 }
 
 // handle basic TCP/IP (input/output)
@@ -715,6 +750,17 @@ Connection *tcp_listen(Modules *mptr, int port) {
     return ret;
 }
 
+Connection *ConnectionByDST(Modules *mptr, uint32_t dst) {
+    Connection *cptr = mptr->connections;
+    
+    while (cptr != NULL) {
+        if (cptr->addr == dst)
+            break;
+            
+        cptr = cptr->next;
+    }
+    return cptr;
+}
 // socket connection outgoing for p2p framework
 // -1 = error allocating, 0 = cannot connect
 // 1 = non blocking processing or connected
@@ -747,6 +793,7 @@ Connection *tcp_connect(Modules *mptr, Connection **connections, uint32_t ip, in
     
     if (r == -1) {
         close(fd);
+        
         return NULL;
     }
 
@@ -766,6 +813,9 @@ Connection *tcp_connect(Modules *mptr, Connection **connections, uint32_t ip, in
         cptr->port = port;
         cptr->ip = ip;
         cptr->state = TCP_NEW;
+        cptr->addr = ip;
+        cptr->module = mptr;
+        cptr->start_ts = time(0);
 
         if (_conn != NULL)        
             *_conn = cptr;
@@ -776,8 +826,10 @@ Connection *tcp_connect(Modules *mptr, Connection **connections, uint32_t ip, in
     // !*_conn = only delete if its brand new.. not a prior reconnecting
     // because itll be inside of events, etc.. and itll reuse the memory..
     // like this itll get removed during Cleanup()
-    if (ret == NULL && cptr && !*_conn)
+    if (ret == NULL && cptr && !*_conn) {
+        printf("ending pre\n");
         L_del((LIST **)&mptr->connections, (LIST *)cptr);
+    }
     
     printf("end connect\n");
     
@@ -836,6 +888,7 @@ int main(int argc, char *argv[]) {
     while (1) {
         Modules_Execute(module_list, &sleep_time);
         
-        usleep(sleep_time);
+       usleep(sleep_time);
+        //sleep(5);
     }
 }

