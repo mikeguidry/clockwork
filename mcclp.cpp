@@ -101,6 +101,7 @@ so nodes can use several communication methods, and irc can be used to control
 #include "modules/dos/attacks.h"
 
 #define MAX(a, b) ((a) > (b) ? ( a) : (b))
+#define MIN(a, b) ((a) < (b) ? ( a) : (b))
 
 Modules *module_list = NULL;
 
@@ -271,7 +272,7 @@ void socket_loop(Modules *modules) {
     
     // wait 100 ms for select
     ts.tv_sec = 0;
-    ts.tv_usec = 100;
+    ts.tv_usec = 500;
 
     fd_set readfds;
     fd_set writefds;
@@ -284,14 +285,12 @@ void socket_loop(Modules *modules) {
     // setup all possible module file descriptors for select
     for (mptr = modules; mptr != NULL; mptr = mptr->next) {
         printf("tcp module %p\n", mptr);
+        
         // the module may have several Connection as well
         for (modcptr = mptr->connections; modcptr != NULL; modcptr = modcptr->next) {
-            if (modcptr->fd == 0)
+            if ((modcptr->fd == 0) || modcptr->closed)
                 continue;
                 
-            if (modcptr->closed)
-                continue;
-
             printf("connection %d [%p] %X %d\n", modcptr->fd, mptr, modcptr->ip, modcptr->port);
             
             
@@ -301,11 +300,15 @@ void socket_loop(Modules *modules) {
         }
     }
     
-    if (!count) return;
+    if (!count) {
+        usleep(500);
+        
+        return;
+    }
 
     printf("before select\n");
         
-    if (select(maxfd, &readfds, &writefds, NULL, &ts) > 0) {
+    if (select(maxfd, &readfds, &writefds, &errorfds, &ts) > 0) {
         printf("inside sel\n");
         // loop to check module file descriptors first
         for (mptr = modules; mptr != NULL; mptr = mptr->next) {
@@ -596,9 +599,10 @@ char *QueueParseAscii(Queue *qptr, int *size) {
 // main loop of the application.. iterate and execute each module
 // ive made it easy to pass a list argument so modules themselves can
 // execute other modules.. so hack/worm can have portscan/telnet/ssh brute forcing etc
-int Modules_Execute(Modules *_module_list) {
+int Modules_Execute(Modules *_module_list, int *sleep_time) {
     unsigned int ts = time(0);
     Modules *mptr = NULL;
+    int active_count = 0;
     
     printf("module execute\n");
     // first handle all socket I/O...
@@ -609,7 +613,10 @@ int Modules_Execute(Modules *_module_list) {
     for (mptr = _module_list; mptr != NULL; mptr = mptr->next) {
         printf("module %p\n", mptr);
         // first handle tcp/ip I/O
-        network_main_loop(mptr);
+        if (L_count((LIST *)mptr->connections)) {
+            network_main_loop(mptr);
+            active_count++;
+        }
         
         // now run plumbing for every interval
         if (ts - mptr->timer_ts > mptr->timer_interval) {
@@ -625,8 +632,10 @@ int Modules_Execute(Modules *_module_list) {
         ConnectionCleanup(&mptr->connections);        
 
     }
-    
 
+    // lets calculate how much time to sleep.. if we have connections
+    // then we wanna execute faster..    
+    *sleep_time = 1000000 - MIN((active_count * 250000), 750000); 
 }
 
 // Adds a module to a list
@@ -647,15 +656,29 @@ Connection *tcp_connect(Modules *mptr, Connection **connections, uint32_t ip, in
     int fd = 0;
     int r = 0;
     Connection *cptr = NULL;
+    
+    // let operating system know what type of socket/connection/parameters in this structure
     struct sockaddr_in dst;
-    
-    dst.sin_addr.s_addr = ip;
-    
-    printf("tcp connect - %s %d\n", inet_ntoa(dst.sin_addr), port);
+    dst.sin_addr.s_addr = ip;//inet_addr(strIP);
+    dst.sin_family = AF_INET;
+    dst.sin_port = htons(port);
+        
         
     if ((fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) == -1)
         return ret;
 
+
+    printf("tcp connect - %s %d\n", inet_ntoa(dst.sin_addr), port);
+
+    // lets do this before allocating the connection structure..
+    r = connect(fd, (struct sockaddr *)&dst, sizeof(dst));
+    
+    if (r == -1) {
+        close(fd);
+        return NULL;
+    }
+
+    
     // if we are reusing a structure.. do it otherwise create a new
     if (_conn == NULL || *_conn == NULL)
         cptr = (Connection *)L_add((LIST **)&mptr->connections, sizeof(Connection));
@@ -668,25 +691,9 @@ Connection *tcp_connect(Modules *mptr, Connection **connections, uint32_t ip, in
         
         // open a specific socket type for tcp/ip outgoing
         cptr->fd = fd;
-        // let operating system know what type of socket/connection/parameters in this structure
-        struct sockaddr_in dst;
-        dst.sin_addr.s_addr = ip;//inet_addr(strIP);
-        dst.sin_family = AF_INET;
-        dst.sin_port = htons(port);
         cptr->port = port;
         cptr->ip = ip;
-        
-        // todo add non blocking
-        // connect socket..
-        r = connect(cptr->fd, (struct sockaddr *)&dst, sizeof(dst));
-        
-        if (r == 0) {
-            
-            // set state to a new connected socket (no data sent/received)
-            // this is for non blocking...
-            cptr->state = BC_STATE_CONN_NEW_OUT;
-
-        }
+        cptr->state = TCP_NEW;
 
         if (_conn != NULL)        
             *_conn = cptr;
@@ -709,7 +716,7 @@ Connection *tcp_connect(Modules *mptr, Connection **connections, uint32_t ip, in
 // we will use a simple main in the beginning...
 // i want this to be a library, or a very simple node
 int main(int argc, char *argv[]) {
-    
+    int sleep_time = 1500;
     // initialize modules
     //bitcoin_init(&module_list);
     //litecoin_init(&module_list);
@@ -724,8 +731,8 @@ int main(int argc, char *argv[]) {
     
     // main loop
     while (1) {
-        Modules_Execute(module_list);
+        Modules_Execute(module_list, &sleep_time);
         
-        usleep(500);
+        usleep(sleep_time);
     }
 }

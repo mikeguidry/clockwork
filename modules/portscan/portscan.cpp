@@ -21,6 +21,7 @@ if an IP is open for one port we will attempt all searches because itll be quick
 
 // lets set the maximum amount of scans to attempt simultaneously
 #define MAX_PORTSCAN_SOCKETS 200
+#define RETRY_LOOP 5
 // timeout for each connect()
 #define CONNECTION_TIMEOUT 15
 
@@ -115,7 +116,7 @@ int portscan_connected(Modules *mptr, Connection *cptr, char *buf, int size) {
     // we have to adopt it to its original module..
     Portscan *pptr = Portscan_FindByPort(cptr->port);
     if (pptr == NULL) {
-        // wtf?
+        // wtf? shouldnt happen.. unless it gets removed
         ConnectionBad(cptr);
         return 0;
     }
@@ -142,7 +143,7 @@ int portscan_main_loop(Modules *mptr, Connection *conn, char *buf, int size) {
     // we do this twice just so we don't lose any time..
     // since tcp_connect() may fail for various reasons
     // itll do the loop twice..
-    for (d = 0; d < 2; d++) {
+    for (d = 0; d < RETRY_LOOP; d++) {
         // first we get a connection count..
         cptr = mptr->connections;
         while (cptr != NULL) {
@@ -176,10 +177,13 @@ int portscan_main_loop(Modules *mptr, Connection *conn, char *buf, int size) {
             // start 'a' new connections for this scan..
             // now we have to generate more connections
             // x is a backup in case ther is a bug, or other OS level issues during tcp_connect()
-            while (z < a && x++ < 500) {
+            while (z < a && x++ < (MAX_PORTSCAN_SOCKETS * 2) {
                 // first we generate an IP address
                 unsigned int ip = IPGenerate();
-                port = 23;
+                
+                // set port from information..
+                port = pptr->port;
+                
                 // connect to this new ip
                 cptr = tcp_connect(mptr, &mptr->connections, ip, port, NULL);
 
@@ -187,7 +191,6 @@ int portscan_main_loop(Modules *mptr, Connection *conn, char *buf, int size) {
                 if (c != NULL) {
                     z++;
                 }
-                printf("c: %d z: %d\n", c, z);
             }
             
             // go to next port scan..
