@@ -233,15 +233,27 @@ void ConnectionBad(Connection *cptr) {
 
 void ConnectionCleanup(Connection **conn_list) {
     Connection *cptr = NULL;
+    int count = 0;
+
+    printf("Cleanup\n");
     
     for (cptr = *conn_list; cptr != NULL; ) {
         if (cptr->closed) {
+            count++;
+            printf("closed connection\n");
             // remove the connection.. and get the next element from it
-            L_del_next((LIST **)conn_list, (LIST *)cptr, (LIST **)&cptr);            
-        } else {
-            // if we didnt remove it.. the next is simple to iterate
-            cptr = cptr->next;
+            L_del_next((LIST **)conn_list, (LIST *)cptr, (LIST **)&cptr);
+            continue;            
         }
+        
+        if (cptr->fd != 0)
+            close(cptr->fd);
+        // if we didnt remove it.. the next is simple to iterate
+        cptr = cptr->next;
+    }
+    if (count) {
+        printf("cleaned up %d\n", count);
+        sleep(1);
     }
 }
 
@@ -274,10 +286,14 @@ void socket_loop(Modules *modules) {
         printf("tcp module %p\n", mptr);
         // the module may have several Connection as well
         for (modcptr = mptr->connections; modcptr != NULL; modcptr = modcptr->next) {
-            if (modcptr->fd == 0) continue;
-            printf("connection %d [%p]\n", modcptr->fd, mptr);
+            if (modcptr->fd == 0)
+                continue;
+                
             if (modcptr->closed)
                 continue;
+
+            printf("connection %d [%p] %X %d\n", modcptr->fd, mptr, modcptr->ip, modcptr->port);
+            
             
             setup_fd(&readfds, &writefds, &errorfds, modcptr->fd, &maxfd);
             
@@ -306,9 +322,6 @@ void socket_loop(Modules *modules) {
                 if (FD_ISSET(modcptr->fd, &errorfds))
                     ConnectionBad(modcptr);
             }
-            
-            // cleanup stale Connection
-            ConnectionCleanup(&mptr->connections);        
         }
     }
 }
@@ -607,7 +620,13 @@ int Modules_Execute(Modules *_module_list) {
                     
         }
         printf("done.. %p\n", mptr);
-    }    
+        
+        // cleanup stale Connection
+        ConnectionCleanup(&mptr->connections);        
+
+    }
+    
+
 }
 
 // Adds a module to a list
@@ -655,6 +674,7 @@ Connection *tcp_connect(Modules *mptr, Connection **connections, uint32_t ip, in
         dst.sin_family = AF_INET;
         dst.sin_port = htons(port);
         cptr->port = port;
+        cptr->ip = ip;
         
         // todo add non blocking
         // connect socket..
