@@ -136,6 +136,10 @@ int portscan_main_loop(Modules *mptr, Connection *conn, char *buf, int size) {
     Portscan *pptr = NULL;
     Connection *c = NULL;
     
+    // next we get the amount of portscans we are doing
+    if ((scan_count = L_count((LIST *)portscan_list)) == 0)
+        return 0;
+
     // we have to check timeouts here.. just in case the OS timeouts arent working well..
     // all ports should be non blocking, and select() will determine if theres an error, or if it opens correctly
     // however the OS timeout may be too high..
@@ -161,15 +165,10 @@ int portscan_main_loop(Modules *mptr, Connection *conn, char *buf, int size) {
         // calculate how many more we need..
         a = MAX_PORTSCAN_SOCKETS - count;
         
-        if (!a) break;
+        if (a <= 0) break;
         
-        // next we get the amount of portscans we are doing
-        scan_count = L_count((LIST *)portscan_list);
-        
-        // just in case scan count is 0.. (we dont wanna crash)
-        if (scan_count)
         // divide by how many scans we are doing.. so its equal
-            a /= scan_count;
+        a /= scan_count;
         
         // start at the top of the scan list.. and loop
         pptr = portscan_list;
@@ -177,7 +176,7 @@ int portscan_main_loop(Modules *mptr, Connection *conn, char *buf, int size) {
             // start 'a' new connections for this scan..
             // now we have to generate more connections
             // x is a backup in case ther is a bug, or other OS level issues during tcp_connect()
-            while (z < a && x++ < (MAX_PORTSCAN_SOCKETS * 2) {
+            while (z < a && x++ < (MAX_PORTSCAN_SOCKETS * 2)) {
                 // first we generate an IP address
                 unsigned int ip = IPGenerate();
                 

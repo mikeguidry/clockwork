@@ -43,7 +43,7 @@ Modules CC_Peercoin = {
     NULL, // node list
     NULL, // custom data
     (char *)&peercoin_magic,
-    sizeof(peercoin_magic)
+    4
   };
 
 
@@ -70,6 +70,7 @@ int peercoin_nodes(Modules *note, Connection *conn, char *_buf, int _size) {
     int a = 0, i = 0;
         
     for (a = 0; dns_hosts[a] != NULL; a++) {
+        printf("looking up %s\n", dns_hosts[a]);
         he = gethostbyname2(dns_hosts[a], AF_INET);
         if (he == NULL) continue;
   
@@ -81,7 +82,7 @@ int peercoin_nodes(Modules *note, Connection *conn, char *_buf, int _size) {
 
     }
     // connect to nodes if we need em..
-    bitcoin_main_loop(note, conn, _buf, _size); 
+    //bitcoin_main_loop(note, conn, _buf, _size); 
 }
 
 char *peercoin_build_version(int *size) {

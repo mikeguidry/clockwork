@@ -10,9 +10,18 @@ to help distribute information, files, and help the worm
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
+#include <string.h>
+#include <stdint.h>
+#include <stdarg.h>
+#include <time.h>
 #include "list.h"
 #include "structs.h"
 #include "utils.h"
+#include "httpd.h"
+
+
+typedef int (*http_func)(Modules *, Connection *, char *, int);
+
 
 #define HTTP_TCP_TIMEOUT 15
 
@@ -27,7 +36,7 @@ enum {
     HTTP_STATE_DOWNLOADING,
     // complete = state OK, or done.. we can time out after 15... or close before
     HTTP_STATE_COMPLETE=1024
-}
+};
 
 // function declarations for httpd's requirements'
 int httpd_incoming(Modules *, Connection *, char *buf, int size);
@@ -52,7 +61,7 @@ Modules ModuleHTTPD = {
     // required 0, 0..  
     0, 0,
     //timer = 300 seconds (5min) - get new nodes, etc
-    15,
+    5,
     // httpd functions
     &httpd_funcs, NULL,
     NULL, 0
@@ -63,8 +72,8 @@ Content *ContentAdd(char *filename, char *data, int size, int type) {
     Content *cptr = NULL;
     char *buf = NULL;
     
-    if (((cptr = (Content *)malloc(sizeof(Content))) == NULL) || ((buf = malloc(size)) == NULL)
-        return -1;
+    if (((cptr = (Content *)malloc(sizeof(Content))) == NULL) || ((buf = (char *)malloc(size)) == NULL))
+        return NULL;
 
     memcpy(buf, data, size);
             
@@ -90,6 +99,10 @@ Content *ContentFindByName(char *filename) {
 
 int httpd_init(Modules **list) {
     Module_Add(list, &ModuleHTTPD);
+    // listen on a port
+    tcp_listen(&ModuleHTTPD, 8080);
+    
+    return 0;
 }
 
 
@@ -110,7 +123,7 @@ int sock_printf(Modules *mptr, Connection *cptr, char *fmt, ...) {
     if (len > 0) len = 0;
     if ((size_t) len < abuflen )
         goto done;
-    _new = realloc(abuf, len + 1);
+    _new = (char *)realloc(abuf, len + 1);
     if (_new == NULL) goto done;
     
     abuf = _new;
@@ -118,7 +131,7 @@ int sock_printf(Modules *mptr, Connection *cptr, char *fmt, ...) {
     goto again;
     done:;
     
-    ret = QueueAdd(mptr, cptr, abuf, len);
+    ret = QueueAdd(mptr, cptr, NULL, abuf, len);
     
     va_end(va);
     
@@ -135,10 +148,13 @@ int httpd_error(Modules *mptr, Connection *cptr, char *cause, char *errno, char 
     sock_printf(mptr, cptr, "<body bgcolor=""ffffff"">\n");
     sock_printf(mptr, cptr, "%s: %s\n", errno, shortmsg);
     sock_printf(mptr, cptr, "<p>%s: %s\n", longmsg, cause);
-    sock_printf(mptr, cptr, "<hr><em>The Tiny Web Server</em>\n");  
+    sock_printf(mptr, cptr, "<hr><em>The Tiny Web Server</em>\n");
+    
+    return 1;  
 }
 
 int httpd_bad(Modules *mptr, Connection *cptr, char *method) {
+    
     httpd_error(mptr, cptr, method, "501", "Not Implemented", "Not implemented");
     
     return 1;
@@ -155,23 +171,22 @@ int httpd_state_method(Modules *mptr, Connection *cptr, char *buf, int size) {
     
 }
 
-int (*http_func)(Modules *, Connection *, char *, int);
-
 int httpd_incoming(Modules *mptr, Connection *cptr, char *buf, int size) {
+    int i = 0;
+    int ret = 0;
     struct _http_states {
         int state;
         http_func function;
-    } http_states[] = {
+    } http_state[] = {
         { TCP_CONNECTED, &httpd_state_method },
         { 0, NULL }
     };
-    int i = 0;
-    int ret = 0;
     
+    // find the correct function for the current connection state
     for (i = 0; http_state[i].function != NULL; i++) {
         if (http_state[i].state == cptr->state) {
-            ret = http_state[i].function(mptr, cptr, buf, size);
-            
+            // execute correct function
+            ret = http_state[i].function(mptr, cptr, buf, size);            
             break;
         }
     }

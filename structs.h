@@ -27,9 +27,9 @@ enum {
     // udp socket (for sending)
     TYPE_UDP=4,
     // bound udp to a port
-    TYPE_UDP_BIND=8,
+    UDP_BIND=8,
     // bound tcp to a port
-    TYPE_TCP_LISTEN=16,
+    TCP_LISTEN=16,
     // raw socket
     TYPE_RAW=32,
     // I'll attempt to solve for most modules..
@@ -175,3 +175,5 @@ Connection *ConnectionAdopt(Modules *original, Modules *newhome, Connection *con
 void QueueFree(Queue **qlist);
 void ConnectionRead(Connection *cptr);
 int QueueMerge(Queue **queue);
+void ConnectionNew(Connection *cptr);
+Connection *tcp_listen(Modules *mptr, int port);
