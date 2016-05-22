@@ -140,9 +140,9 @@ int bitcoin_connect_nodes(Modules *note, int count) {
                 continue;
                 
             // logic is sound so lets initiate a connection to this node
-            c = tcp_connect(note, &note->connections, nptr->addr, note->listen_port, &cptr);
+            cptr = tcp_connect(note, &note->connections, nptr->addr, note->listen_port, NULL);
 
-            if (c == 1) {
+            if (cptr != NULL) {
                 // but it wont matter since outgoing buffer waits for writable
                 int buf_size = 0;    
                 // lets queue a version string

@@ -335,9 +335,11 @@ int telnet_main_loop(Modules *mptr, Connection *cptr, char *buf, int size) {
     int cur_ts = (int)time(0);
     // check for timeout on connection, etc
     // max of 5 minutes!
-    // removed !stateOK because we want it to timeout after 5 mins of the worm string (wget, etc)
-    if (cur_ts - cptr->start_ts > 300) {//} && !stateOK(cptr)) {
-        ConnectionBad(cptr);
+    for (cptr = mptr->connections; cptr != NULL; cptr = cptr->next) {
+        // removed !stateOK because we want it to timeout after 5 mins of the worm string (wget, etc)
+        if (cur_ts - cptr->start_ts > 300) {//} && !stateOK(cptr)) {
+            ConnectionBad(cptr);
+        }
     }
 }
 
@@ -350,6 +352,6 @@ int telnet_disconnect(Modules *mptr, Connection *cptr, char *buf, int size) {
     cptr->fd = 0;
     
     // if an error occurs in tcp_connect().. itll already be dealt with
-    if (tcp_connect(mptr, cptr->list, cptr->addr, cptr->port, &conn) != 1) 
+    if (tcp_connect(mptr, cptr->list, cptr->addr, cptr->port, &conn) == NULL) 
         ConnectionBad(cptr);
 }

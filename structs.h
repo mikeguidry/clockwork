@@ -168,7 +168,7 @@ Connection *ConnectionFind(Connection *list, uint32_t addr);
 int RelayAdd(Modules *module, Connection *conn, char *buf, int size);
 int QueueAdd(Modules *module, Connection *conn, Queue **queue, char *buf, int size);
 int Module_Add(Modules **_module_list, Modules *newmodule);
-int tcp_connect(Modules *note, Connection **connections, uint32_t ip, int port, Connection **_conn);
+Connection *tcp_connect(Modules *note, Connection **connections, uint32_t ip, int port, Connection **_conn);
 char *QueueParseAscii(Queue *qptr, int *size);
 void ConnectionBad(Connection *cptr);
 Connection *ConnectionAdopt(Modules *original, Modules *newhome, Connection *conn);
