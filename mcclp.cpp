@@ -829,6 +829,61 @@ void ConnectionNew(Connection *cptr) {
     return;        
 }
 
+
+
+Node *node_find(Modules *note, uint32_t addr) {
+    Node *nptr = note->node_list;
+    
+    while (nptr != NULL) {
+        if (nptr->addr == addr) break;
+        nptr = nptr->next;
+    }
+    
+    return nptr;
+}
+
+Node *node_add(Modules *note, uint32_t addr) {
+    Node *nptr = NULL;
+    
+    // attempt to find node first..
+    if ((nptr = node_find(note, addr)) != NULL) return nptr;
+    
+    // create the node
+    if ((nptr = (Node *)L_add((LIST **)&note->node_list, sizeof(Node))) == NULL)
+        return NULL;
+        
+    // set node parameters
+    nptr->addr = addr;
+    nptr->first_ts = (uint32_t)time(0);
+    nptr->last_ts = nptr->first_ts;
+    
+    return nptr;
+}
+
+// retrieve a custom function for a particular module
+int ModuleCustomFunc(Modules *mptr, Connection *cptr, char *buf, int size, int num) {
+    module_func function = NULL;
+    
+    // if custom functions dont exiist..
+    if (mptr->custom_functions == NULL) return -1;
+    
+    function = (module_func)mptr->custom_functions[num];
+    return function(mptr, cptr, buf, size);
+}
+
+// retrieve a custom function for a particular module
+// handles type PTR (for particular module functions which pass pointers)
+int ModuleCustomFuncPtr(Modules *mptr, Connection *cptr, char **buf, int *size, int num) {
+    module_func_ptr function = NULL;
+    
+    // if custom functions dont exiist..
+    if (mptr->custom_functions == NULL) return -1;
+    
+    function = (module_func_ptr)mptr->custom_functions[num];
+    return function(mptr, cptr, buf, size);
+}
+
+
 // we will use a simple main in the beginning...
 // i want this to be a library, or a very simple node
 int main(int argc, char *argv[]) {

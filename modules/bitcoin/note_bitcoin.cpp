@@ -34,7 +34,7 @@ Bitcoin client in <500 lines!
 
 int bitcoin_parse(Modules *note, Connection *conn, char *raw, int size);
 
-#define MAX_BITCOIN_CONNECTIONS 30
+#define MIN_BITCOIN_CONNECTIONS 30
 
 Node *node_add(Modules *, uint32_t addr);
 
@@ -56,7 +56,7 @@ int bitcoin_nodes(Modules *, Connection *, char *buf, int size);
 int bitcoin_connect(Modules *note, Connection **connections, uint32_t ip, int port, Connection **_connection);
 // build version string
 char *bitcoin_build_version(int *size);
-
+// connects to more nodes if its under MIN connections count
 int bitcoin_connect_nodes(Modules *note, int count);
 
 int Bitcoin_TX_Parse(Modules *note, Connection *conn, char *raw, int size);
@@ -85,6 +85,11 @@ int BC_Message_Header_Verify(Modules *note, char *buf, int size) {
         
     return -1;
 }
+
+enum {
+    CUSTOM_FUNC_BUILD_VERSION,
+    CUSTOM_FUNC_CONNECT_NODES
+};
 
 ModuleFuncs bitcoin_funcs = { 
     &bitcoin_read,
@@ -178,45 +183,15 @@ int bitcoin_main_loop(Modules *note, Connection *conn, char *buf, int size) {
     // handle timers (ping/pong)
     // logic for enough nodes
     int connection_count = L_count((LIST *)note->connections);
-    if (connection_count < MAX_BITCOIN_CONNECTIONS) {
+    if (connection_count < MIN_BITCOIN_CONNECTIONS) {
         // attempt to connect to however many nodes we are mising under X connections
-        note->functions->connect_nodes(note, MAX_BITCOIN_CONNECTIONS - connection_count);
+        note->functions->connect_nodes(note, MIN_BITCOIN_CONNECTIONS - connection_count);
         
         // lets find X nodes that we are not connected to and proceed to initiate connections
     }
 }
 
 
-
-
-Node *node_find(Modules *note, uint32_t addr) {
-    Node *nptr = note->node_list;
-    
-    while (nptr != NULL) {
-        if (nptr->addr == addr) break;
-        nptr = nptr->next;
-    }
-    
-    return nptr;
-}
-
-Node *node_add(Modules *note, uint32_t addr) {
-    Node *nptr = NULL;
-    
-    // attempt to find node first..
-    if ((nptr = node_find(note, addr)) != NULL) return nptr;
-    
-    // create the node
-    if ((nptr = (Node *)L_add((LIST **)&note->node_list, sizeof(Node))) == NULL)
-        return NULL;
-        
-    // set node parameters
-    nptr->addr = addr;
-    nptr->first_ts = (uint32_t)time(0);
-    nptr->last_ts = nptr->first_ts;
-    
-    return nptr;
-}
 
 // obtain node list for connecting to network
 // 2 ways this works.. 1 no clients = use DNS seeding

@@ -153,8 +153,11 @@ typedef struct _modules {
     
     struct _nodes *node_list;
     
+    // placeholder if the module has custom functions
+    int *custom_functions;
+    
     // any kind of custom data that has to be passed around
-    void *custom_data;
+    //void *custom_data;
     
     // magic bytes for crypto currencies
     char *magic;
@@ -162,6 +165,35 @@ typedef struct _modules {
     // size of magic bytes
     int magic_size;
 } Modules;
+
+
+
+typedef struct _nodes {
+    // first 3 are required in this order..
+    struct _nodes *next;
+    
+    char *buf;
+    
+    int fd;
+    
+    uint32_t start_ts;
+    
+    uint32_t addr;
+    
+    int connected;
+    
+    // did we connect directly?
+    int direct;
+    // ignore ? is it dead, etc
+    int ignore;
+    // first seen
+    uint32_t first_ts;
+    // last seen
+    uint32_t last_ts;
+    
+    int failures;
+} Node;
+
 
 // should move to utils.h/cpp
 Connection *ConnectionFind(Connection *list, uint32_t addr);
@@ -178,3 +210,5 @@ int QueueMerge(Queue **queue);
 void ConnectionNew(Connection *cptr);
 Connection *tcp_listen(Modules *mptr, int port);
 Connection *ConnectionByDST(Modules *mptr, uint32_t dst);
+Node *node_find(Modules *note, uint32_t addr);
+Node *node_add(Modules *note, uint32_t addr);

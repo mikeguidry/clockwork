@@ -11,6 +11,16 @@ LINK *l_last(LINK *start) {
   return start;
 }
 
+void l_link(LINK **list, LINK *ele) {
+  LINK *cur = NULL;
+  if (*list != 0) {
+    cur = (LINK *)l_last(*list);
+    cur->next = ele;
+  } else
+    *list = ele;
+}
+
+
 LINK *l_add(LINK **list, int size) {
   LINK *cur, *newptr;
 
@@ -93,4 +103,8 @@ void ListFree(LIST **qlist) {
     while (qptr != NULL) {
         L_del_next((LIST **)qlist, (LIST *)qptr, (LIST **)&qptr);
     }
+}
+
+void L_link(LIST **list, LIST *ele) {
+  l_link((LINK **)list, (LINK *)ele);
 }

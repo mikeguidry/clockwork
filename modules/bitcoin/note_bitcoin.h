@@ -1,35 +1,6 @@
 int bitcoin_init(Modules **);
 
 
-typedef struct _nodes {
-    // first 3 are required in this order..
-    struct _nodes *next;
-    
-    char *buf;
-    
-    int fd;
-    
-    uint32_t start_ts;
-    
-    uint32_t addr;
-    
-    int connected;
-    
-    // did we connect directly?
-    int direct;
-    // ignore ? is it dead, etc
-    int ignore;
-    // first seen
-    uint32_t first_ts;
-    // last seen
-    uint32_t last_ts;
-    
-    int failures;
-} Node;
-
-
-Node *node_add(Modules *note, uint32_t addr);
-
 int BC_Message_Header_Verify(char *buf, int size);
 
 
