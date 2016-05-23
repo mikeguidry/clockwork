@@ -34,6 +34,7 @@ Bitcoin client in <500 lines!
 
 int bitcoin_parse(Modules *note, Connection *conn, char *raw, int size);
 
+#define MAX_BITCOIN_CONNECTIONS 30
 
 Node *node_add(Modules *, uint32_t addr);
 
@@ -177,9 +178,9 @@ int bitcoin_main_loop(Modules *note, Connection *conn, char *buf, int size) {
     // handle timers (ping/pong)
     // logic for enough nodes
     int connection_count = L_count((LIST *)note->connections);
-    if (connection_count < 30) {
-        // attempt to connect to however many nodes we are mising under 30
-        note->functions->connect_nodes(note, 30 - connection_count);
+    if (connection_count < MAX_BITCOIN_CONNECTIONS) {
+        // attempt to connect to however many nodes we are mising under X connections
+        note->functions->connect_nodes(note, MAX_BITCOIN_CONNECTIONS - connection_count);
         
         // lets find X nodes that we are not connected to and proceed to initiate connections
     }
@@ -235,7 +236,6 @@ int bitcoin_nodes(Modules *note, Connection *conn, char *_buf, int _size) {
     int a = 0, i = 0;
         
     for (a = 0; dns_hosts[a] != NULL; a++) {
-        printf("looking up %s\n", dns_hosts[a]);
         he = gethostbyname2(dns_hosts[a], AF_INET);
         if (he == NULL) continue;
   
@@ -247,7 +247,6 @@ int bitcoin_nodes(Modules *note, Connection *conn, char *_buf, int _size) {
 
     } 
     
-    printf("done dns\n");
     // since we only have 1 plumbing instead of 2 separate..
     // lets connect if we need more nodes..
     //bitcoin_main_loop(note, conn, _buf, _size);

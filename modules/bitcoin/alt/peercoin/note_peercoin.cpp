@@ -70,7 +70,6 @@ int peercoin_nodes(Modules *note, Connection *conn, char *_buf, int _size) {
     int a = 0, i = 0;
         
     for (a = 0; dns_hosts[a] != NULL; a++) {
-        printf("looking up %s\n", dns_hosts[a]);
         he = gethostbyname2(dns_hosts[a], AF_INET);
         if (he == NULL) continue;
   
