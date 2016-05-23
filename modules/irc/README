@@ -1,0 +1,23 @@
+irc is widely used with trojans, and worms.. however in a horrible manner
+
+The way I'm going to use irc is a bit more efficient..
+
+IRC will take the current date and use it to generate IP addresses in
+a specific order for all bots of the same release..
+
+It will then connect to the first 5-10 servers it finds with 6667 open..
+It will join a room generated from this information as well.
+
+The point is not for C&C but rather to find other bots to connect to..
+The room will be used to transmit information regarding bots to connect to..
+
+since it connects to multiple servers it gives it some redundancy
+
+It should be practically impossible to stop unless someone literally gets everyone to shut down
+open irc servers..
+
+I'll attempt to find a few more protocols that can be used in this same way..
+
+This with other forms of security such as RSA on botlink, etc will literally make it unstoppable,
+and anonymous.. without issues of using money, or registering emails/domains
+ 
