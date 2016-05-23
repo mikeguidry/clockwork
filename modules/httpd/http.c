@@ -202,7 +202,7 @@ int main(int argc, char **argv) {
       /* print response header */
       fprintf(stream, "HTTP/1.1 200 OK\n");
       fprintf(stream, "Server: Tiny Web Server\n");
-      fprintf(stream, "Content-length: %d\n", (int)sbuf.st_size);
+      fprintf(stream, c (int)sbuf.st_size);
       fprintf(stream, "Content-type: %s\n", filetype);
       fprintf(stream, "\r\n"); 
       fflush(stream);

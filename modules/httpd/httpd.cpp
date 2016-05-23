@@ -195,7 +195,7 @@ int httpd_state_method(Modules *mptr, Connection *cptr, char *buf, int size) {
     
     sscanf(buf, "%32s %1024s %32s", method, uri, version);
     
-    if (strcasestr(method, "GET") != NULL) {
+    if ((strlen(version) > 2) && strcasestr(method, "GET") != NULL) {
         cptr->state = HTTP_STATE_HEADERS;
         nptr = ContentFindByName(uri);
         if (nptr != NULL) {
@@ -231,6 +231,8 @@ int httpd_state_headers(Modules *mptr, Connection *cptr, char *buf, int size) {
     
     // set to wait 20 seconds after.. just so we are sure the client receives it all before we close..
     cptr->state = TCP_CLOSE_AFTER_FLUSH;
+    
+    return 1;
 }
 
 
@@ -254,6 +256,7 @@ int httpd_incoming(Modules *mptr, Connection *cptr, char *buf, int size) {
             break;
         }
     }
+    
     return ret;
 }
 

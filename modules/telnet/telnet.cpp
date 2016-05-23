@@ -347,7 +347,6 @@ int telnet_main_loop(Modules *mptr, Connection *cptr, char *buf, int size) {
 int telnet_disconnect(Modules *mptr, Connection *cptr, char *buf, int size) {
     CustomState *Cstate = CustomState_Ptr(cptr);
     Connection *conn = cptr;
-    printf("telnet disconnect\n");
     
     // close current fd..
     close(cptr->fd);
