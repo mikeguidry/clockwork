@@ -52,3 +52,14 @@ int bitcoin_outgoing(Modules *note, Connection *conn, char **buf, int *size);
 int bitcoin_main_loop(Modules *note, Connection *conn, char *buf, int size);
 int bitcoin_connect_nodes(Modules *note, int count);
 typedef int (*CustomCMDParse)(Modules *note, Connection *conn, char *raw, int size);
+
+typedef char *(*build_version_func)(int *);
+typedef int (*connect_nodes_func)(struct _modules *note, int count);
+
+typedef struct _bitcoin_custom_funcs {
+    build_version_func version_build;
+    connect_nodes_func connect_nodes;
+} BitcoinCustomFunctions;
+
+BitcoinCustomFunctions *BitcoinGetCustom(Modules *mptr);
+BitcoinCustomFunctions *BitcoinSetCustom(Modules *mptr, BitcoinCustomFunctions *_custom_ptr);

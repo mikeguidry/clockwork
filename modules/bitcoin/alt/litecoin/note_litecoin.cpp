@@ -25,10 +25,14 @@ ModuleFuncs litecoin_funcs = {
     &litecoin_nodes,
     //&bitcoin_main_loop,
     NULL, // no connected
-    NULL, // no disconnect
-    &litecoin_build_version,
-    &bitcoin_connect_nodes
+    NULL // no disconnect
 };
+
+BitcoinCustomFunctions _litecoin_custom = {
+  &litecoin_build_version,
+  &bitcoin_connect_nodes  
+};
+
     
 Modules CC_Litecoin = {
     // required ( NULL, NULL, 0 )
@@ -54,6 +58,7 @@ Modules CC_Litecoin = {
 // add bitcoin to module list
 int litecoin_init(Modules **_module_list) {
     Module_Add(_module_list, &CC_Litecoin);
+    BitcoinSetCustom(&CC_Litecoin, &_litecoin_custom);
 }
 
 

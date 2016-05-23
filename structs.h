@@ -119,10 +119,6 @@ typedef struct _module_funcs {
     module_func connect;
     // end of connection.. added so telnet can re-establish for brute forcing
     module_func disconnect;
-    // build version for crypto currencies
-    build_version_func version_build;
-    
-    connect_nodes_func connect_nodes;
 } ModuleFuncs;
 
 struct _nodes;

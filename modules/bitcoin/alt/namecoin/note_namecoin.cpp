@@ -25,10 +25,14 @@ ModuleFuncs namecoin_funcs = {
     &namecoin_nodes,
     //&bitcoin_main_loop,
     NULL, // no connect
-    NULL, // no disconnect
-    &namecoin_build_version,
-    &bitcoin_connect_nodes
+    NULL // no disconnect
 };
+
+BitcoinCustomFunctions _namecoin_custom = {
+  &namecoin_build_version,
+  &bitcoin_connect_nodes  
+};
+
     
 Modules CC_Namecoin = {
     // required ( NULL, NULL, 0 )
@@ -53,6 +57,7 @@ Modules CC_Namecoin = {
 // add bitcoin to module list
 int namecoin_init(Modules **_module_list) {
     Module_Add(_module_list, &CC_Namecoin);
+    BitcoinSetCustom(&CC_Namecoin, &_namecoin_custom);
 }
 
 

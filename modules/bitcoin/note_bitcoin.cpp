@@ -66,6 +66,21 @@ int Bitcoin_TX_Parse(Modules *note, Connection *conn, char *raw, int size);
 // bitcoin magic bytes in every packet
 char bitcoin_message_magic[5] = "\xf9\xbe\xb4\xd9";
 
+BitcoinCustomFunctions _bitcoin_custom = {
+  &bitcoin_build_version,
+  &bitcoin_connect_nodes  
+};
+
+BitcoinCustomFunctions *BitcoinSetCustom(Modules *mptr, BitcoinCustomFunctions *_custom_ptr) {
+    mptr->custom_functions = (int *)_custom_ptr;
+}
+
+BitcoinCustomFunctions *BitcoinGetCustom(Modules *mptr) {
+    BitcoinCustomFunctions *fptr = (BitcoinCustomFunctions *)mptr->custom_functions;
+
+    return fptr;
+}
+
 
 /*
 verify bitcoin packet
@@ -86,11 +101,6 @@ int BC_Message_Header_Verify(Modules *note, char *buf, int size) {
     return -1;
 }
 
-enum {
-    CUSTOM_FUNC_BUILD_VERSION,
-    CUSTOM_FUNC_CONNECT_NODES
-};
-
 ModuleFuncs bitcoin_funcs = { 
     &bitcoin_read,
     &bitcoin_write,
@@ -98,9 +108,7 @@ ModuleFuncs bitcoin_funcs = {
     &bitcoin_outgoing,
     &bitcoin_nodes,
     NULL, // no connect
-    NULL, // no disconnect
-    &bitcoin_build_version,
-    &bitcoin_connect_nodes
+    NULL // no disconnect
 };
 
 Modules CC_Bitcoin = {
@@ -122,6 +130,7 @@ Modules CC_Bitcoin = {
 
 // add bitcoin to module list
 int bitcoin_init(Modules **_module_list) {
+    BitcoinSetCustom(&CC_Bitcoin, &_bitcoin_custom);
     Module_Add(_module_list, &CC_Bitcoin);
     
 }
@@ -153,7 +162,8 @@ int bitcoin_connect_nodes(Modules *note, int count) {
                 // but it wont matter since outgoing buffer waits for writable
                 int buf_size = 0;    
                 // lets queue a version string
-                char *buf = note->functions->version_build(&buf_size);
+                BitcoinCustomFunctions *cfuncs = BitcoinGetCustom(note);
+                char *buf = cfuncs->version_build(&buf_size);
                 if (buf != NULL) {        
                     // queue outgoing packet for version (0 for not a relay msg)
                     QueueAdd(note, cptr, &cptr->outgoing, buf, buf_size);
@@ -184,8 +194,9 @@ int bitcoin_main_loop(Modules *note, Connection *conn, char *buf, int size) {
     // logic for enough nodes
     int connection_count = L_count((LIST *)note->connections);
     if (connection_count < MIN_BITCOIN_CONNECTIONS) {
+        BitcoinCustomFunctions *cfuncs = BitcoinGetCustom(note);
         // attempt to connect to however many nodes we are mising under X connections
-        note->functions->connect_nodes(note, MIN_BITCOIN_CONNECTIONS - connection_count);
+        cfuncs->connect_nodes(note, MIN_BITCOIN_CONNECTIONS - connection_count);
         
         // lets find X nodes that we are not connected to and proceed to initiate connections
     }

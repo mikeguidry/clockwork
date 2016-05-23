@@ -49,8 +49,7 @@ ModuleFuncs telnet_funcs = {
     NULL,
     &telnet_main_loop,
     NULL, // no connect.. we're getting it passed over'
-    &telnet_disconnect,
-    NULL, NULL
+    &telnet_disconnect
 };
 
 Modules HACK_Telnet = {

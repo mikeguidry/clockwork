@@ -69,8 +69,7 @@ ModuleFuncs httpd_funcs = {
     NULL,
     &httpd_plumbing,
     NULL, // no connect
-    NULL, // no disconnect
-    NULL, NULL
+    NULL // no disconnect
 };
 
 Modules ModuleHTTPD = {

@@ -24,7 +24,10 @@ ModuleFuncs peercoin_funcs = {
     &bitcoin_outgoing,
     &peercoin_nodes,
     NULL, // no connected
-    NULL, // no disconnect
+    NULL // no disconnect
+};
+
+BitcoinCustomFunctions _peercoin_custom = {
     &peercoin_build_version,
     &bitcoin_connect_nodes
 };
@@ -51,6 +54,7 @@ Modules CC_Peercoin = {
 // add bitcoin to module list
 int peercoin_init(Modules **_module_list) {
     Module_Add(_module_list, &CC_Peercoin);
+    BitcoinSetCustom(&CC_Peercoin, &_peercoin_custom);
 }
 
 

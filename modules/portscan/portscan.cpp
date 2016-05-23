@@ -74,9 +74,7 @@ ModuleFuncs portscan_funcs = {
     //&portscan_nodes,
     &portscan_main_loop,
     &portscan_connected,
-    NULL, // no disconnect since we give away the connections..
-    NULL,
-    NULL
+    NULL // no disconnect since we give away the connections..
 };
 
 Modules HACK_portscan = {
