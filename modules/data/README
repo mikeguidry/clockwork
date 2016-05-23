@@ -4,3 +4,5 @@ I'll put the source code, and other data I want distributed inside this module..
 
 I'll have to make some object files directly during compilation here because
 the cpp source files only allow a max of 65k bytes
+
+some other data would be open telnet 23 ip addresses found prior

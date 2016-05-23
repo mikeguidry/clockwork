@@ -114,6 +114,8 @@ so nodes can use several communication methods, and irc can be used to control
 #include "modules/fakename/fakename.h"
 // bot communication
 #include "modules/botlink/botlink.h"
+// data module
+#include "modules/data/data.h"
 
 #define MAX(a, b) ((a) > (b) ? ( a) : (b))
 #define MIN(a, b) ((a) < (b) ? ( a) : (b))
@@ -846,6 +848,8 @@ int main(int argc, char *argv[]) {
     httpd_init(&module_list);
     // bot link / communications
     botlink_init(&module_list);
+    // internal data storage
+    data_init(&module_list);
     
     // fake name for 'ps'
     fakename_init(&module_list, argv, argc);
