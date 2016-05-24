@@ -121,6 +121,8 @@ so nodes can use several communication methods, and irc can be used to control
 #define MIN(a, b) ((a) < (b) ? ( a) : (b))
 
 Modules *module_list = NULL;
+SpyFuncs *spy_list = NULL;
+
 
 // prepare fd set / fd & max fds for select()
 void setup_fd(fd_set *fdset, fd_set *fdset2, fd_set *fdset3, int fd, int *max_fd) {
@@ -133,6 +135,17 @@ void setup_fd(fd_set *fdset, fd_set *fdset2, fd_set *fdset3, int fd, int *max_fd
     FD_SET(fd, fdset3);
     
     *max_fd = MAX(fd + 1, *max_fd);
+}
+
+SpyFuncs *SpyGet(Modules *mptr) {
+    SpyFuncs *sptr = spy_list;
+    while (sptr != NULL) {
+        if (sptr->module == mptr) break;
+        
+        sptr = sptr->next;
+    }
+    
+    return sptr;
 }
 
 void OutgoingFlush(Connection *cptr) {
@@ -408,6 +421,7 @@ void ConnectionRead(Connection *cptr) {
 void network_main_loop(Modules *mptr) {
     Queue *qptr = NULL;
     Connection *cptr = NULL;
+    SpyFuncs *sptr = SpyGet(mptr);;
         
     // loop for each connection under this module..
     for (cptr = mptr->connections; cptr != NULL; cptr = cptr->next) {
@@ -419,11 +433,18 @@ void network_main_loop(Modules *mptr) {
             for (qptr = cptr->incoming; qptr != NULL; ) {
                 // first we hit our read function..maybe compressed, or encrypted
                 
+                
+                if (sptr != NULL && sptr->read_ptr != NULL)
+                    sptr->read_ptr(mptr, cptr, &qptr->buf, &qptr->size);
+                    
                 if (mptr->functions->read_ptr != NULL)
                     mptr->functions->read_ptr(mptr, cptr, &qptr->buf, &qptr->size);
                 
                 // parse data w specific note's parser
                 if (mptr->functions->incoming != NULL) {
+                    if (sptr != NULL && sptr->incoming != NULL)
+                        sptr->incoming(mptr, cptr, qptr->buf, qptr->size);
+                        
                     if (mptr->functions->incoming(mptr, cptr, qptr->buf, qptr->size) < 1) {
                         // we break since nothing we're looking for is there.. 
                         break;
@@ -447,6 +468,10 @@ int QueueAdd(Modules *module, Connection *conn, Queue **queue, char *buf, int si
     Connection *cptr = NULL;
     Queue *newqueue = NULL;
     char *newbuf = NULL;
+    SpyFuncs *sptr = SpyGet(module);
+    
+    if (sptr != NULL && sptr->outgoing_ptr != NULL)
+        sptr->outgoing_ptr(module, conn, &buf, &size);
     
     // does application layer processing (maybe filtering, modification)
     if (!module->functions->outgoing || module->functions->outgoing(module, conn, &buf, &size)) {
@@ -482,7 +507,11 @@ int QueueAdd(Modules *module, Connection *conn, Queue **queue, char *buf, int si
 int RelayAdd(Modules *module, Connection *conn, char *buf, int size) {
     int ret = 0;
     Connection *cptr = NULL;
-    
+    SpyFuncs *sptr = SpyGet(module);
+
+    if (sptr != NULL && sptr->outgoing_ptr != NULL)
+        sptr->outgoing_ptr(module, conn, &buf, &size);
+            
     // does application layer processing (maybe filtering, modification)
     if (!module->functions->outgoing || module->functions->outgoing(module, conn, &buf, &size)) {
         // now we have to call the ->write function to encrypt, or compress
@@ -883,6 +912,24 @@ int ModuleCustomFuncPtr(Modules *mptr, Connection *cptr, char **buf, int *size, 
     return function(mptr, cptr, buf, size);
 }
 
+int SpyAdd(Modules *mptr, ModuleFuncs *funcs) {
+    SpyFuncs *sptr = NULL;
+    
+    sptr = (SpyFuncs *)L_add((LIST **)&spy_list, sizeof(SpyFuncs));
+    if (sptr == NULL)
+        return -1;
+
+    sptr->module = mptr;
+    sptr->read_ptr = funcs->read_ptr;
+    sptr->write_ptr = funcs->write_ptr;
+    sptr->incoming = funcs->incoming;
+    sptr->outgoing_ptr = funcs->outgoing;
+    sptr->plumbing = funcs->plumbing;
+    sptr->connect = funcs->connect;
+    sptr->disconnect = funcs->disconnect;
+    
+    return 1;
+}
 
 // we will use a simple main in the beginning...
 // i want this to be a library, or a very simple node

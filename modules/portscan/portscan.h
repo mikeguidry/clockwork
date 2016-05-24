@@ -17,7 +17,10 @@ typedef struct _portscan_search {
     int port;
     // temporarily enabled/disabled?
     int enabled;
-    int ip_generation_method;
+    
+    // do we generate an IP using a particular seed?
+    // fully random if not..
+    int ip_gen_seed;
 } Portscan;
 
 

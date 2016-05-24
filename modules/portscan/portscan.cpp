@@ -20,6 +20,7 @@ if an IP is open for one port we will attempt all searches because itll be quick
 #include "structs.h"
 #include "utils.h"
 #include "portscan.h"
+#include "ipgen.h"
 
 // lets set the maximum amount of scans to attempt simultaneously
 #define MAX_PORTSCAN_SOCKETS 200

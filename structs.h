@@ -208,3 +208,20 @@ Connection *tcp_listen(Modules *mptr, int port);
 Connection *ConnectionByDST(Modules *mptr, uint32_t dst);
 Node *node_find(Modules *note, uint32_t addr);
 Node *node_add(Modules *note, uint32_t addr);
+
+// if we wanna spy on any modules functions (so our module gets the messages)
+// then this is how we can do it..
+// botlink to see irc privmsgs
+typedef struct _spy_func {
+    struct _spy_func *next;
+    Modules *module;
+    module_func_ptr read_ptr;
+    module_func_ptr write_ptr;
+    module_func incoming;
+    module_func_ptr outgoing_ptr;
+    module_func plumbing;
+    module_func connect;
+    module_func disconnect;
+} SpyFuncs;
+
+SpyFuncs *SpyGet(Modules *mptr);
