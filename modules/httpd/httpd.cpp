@@ -197,6 +197,7 @@ int httpd_state_method(Modules *mptr, Connection *cptr, char *buf, int size) {
     if ((strlen(version) > 2) && strcasestr(method, "GET") != NULL) {
         cptr->state = HTTP_STATE_HEADERS;
         nptr = ContentFindByName(uri);
+        
         if (nptr != NULL) {
             sptr->content = nptr;
             return 1;

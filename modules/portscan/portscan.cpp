@@ -179,6 +179,7 @@ int portscan_main_loop(Modules *mptr, Connection *conn, char *buf, int size) {
         
         // start at the top of the scan list.. and loop
         pptr = portscan_list;
+        
         while (pptr != NULL) {
             // start 'a' new connections for this scan..
             // now we have to generate more connections
@@ -186,12 +187,11 @@ int portscan_main_loop(Modules *mptr, Connection *conn, char *buf, int size) {
             while (z < a && x++ < MAX_PORTSCAN_SOCKETS) {
                 // first we generate an IP address
                 unsigned int ip = IPGenerate(pptr->port, pptr->ip_gen_seed);
-                //ip = net_addr("192.168.12.128");
-                //unsigned int ip = IPGenerate();
                 
                 // do not reconnect to the same socket..
                 if (ConnectionByDST(mptr, ip) || ConnectionByDST(pptr->module, ip))
                     continue;
+                    
                 // set port from information..
                 port = pptr->port;
                 

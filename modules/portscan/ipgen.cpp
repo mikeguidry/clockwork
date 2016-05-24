@@ -22,6 +22,16 @@ generates 99% unique IP addresses with 1 million IPs.. i checked 10million and i
 #include "ipgen.h"
 #include "list.h"
 
+static uint32_t myrand_next = 1;
+
+int myrand(void) {
+    myrand_next = myrand_next * 1103515245 + 12345;
+    return (uint32_t)(myrand_next >> 16) & 0xffffffff;
+}
+
+void mysrand(unsigned int seed) {
+    myrand_next = seed;
+}
 
 // linked list for keeping states of the IP generator
 IPGeneratorConfig *gen_list = NULL;
@@ -53,7 +63,7 @@ IPGeneratorConfig *IPGenConfigGet(int id, int seed) {
 uint32_t IPGenerateAlgo(int id, int seed) {
     int i = 0;
     int use[4];
-    int z = 0, _catch_up = 0;
+    int z = 0;//, _catch_up = 0;
     uint32_t final = 0;
     char *raw = (char *)&final;
     struct sockaddr_in dst;
@@ -61,24 +71,24 @@ uint32_t IPGenerateAlgo(int id, int seed) {
     int a = 0, b = 0, c = 0, d = 0;
 
     if (params == NULL)
-        srand(params->seed);
+        mysrand(params->seed);
     else
-        srand(time(0)+rand()%0x0000ffff);
+        mysrand(time(0)+myrand()%0x0000ffff);
     
     // we want to catch up (to get the state the same due to random seed being used elsewhere in the application)
     // and then we want to add 1 so that it generates a new IP
-    _catch_up = params->current_count + 1;
+    //_catch_up = params->current_count + 1;
     
-    for (z = 0; z < _catch_up; z++) {
+    //for (z = 0; z < _catch_up; z++) {
         if (params->current == 0) {
             // generate a random IP using the seed
-            params->current = (rand() % 0xffffffff);
+            params->current = (myrand() % 0xffffffff);
         } else {
             // generate a new random IP using particulars
-            a = 1 + rand()%254;
-            b = (255 - rand()%254);
-            c = 1 + rand()%254;
-            d = 1 + rand()%254;
+            a = 1 + (myrand() % 254);
+            b = (255 - (myrand() % 254));
+            c = 1 + (myrand() % 254);
+            d = 1 + (myrand() % 254);
         }
 
         // use those prior numbers to modify particular portions of the IP address to generate a new one
@@ -92,7 +102,7 @@ uint32_t IPGenerateAlgo(int id, int seed) {
         
         // keep the current count.. so we can catch up to it later..
         params->current_count++;
-    }
+    //}
 
     // set the IP in the structure
     //dst.sin_addr.s_addr = final;

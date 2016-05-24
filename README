@@ -1,0 +1,24 @@
+This will be the new config giving overall concepts:
+
+IRC server will run on 25% of all bots.  It will allow other nodes to scan for 6667, and happen to hop on and retrieve
+addreses to connect to.  This will ensure resilency without requiring domain names, etc...
+
+The IRC algorithm will search using a specific seed from the date, and scan for 6667 in a particular order..
+it will connect to the first 5 it finds, and other hosts can do the same.. This means someone would have to shutdown all 5
+and considering the IPs are pretty random.. its nearly impossible.
+
+IRC -> botlink -> IRC will be available as well.. IRC will only be used for finding other nodes..
+not for command & control.. that will happen on botlink via encrypted etc
+
+IRC an be used to distribute addresses via botlink -> irc
+
+bots with a particular mission or long term goal may modify their ports, encryption keys, etc
+and solely rely on their own network to ensure nobody can modify their instructions
+
+bots will perform telnet brute force for routers/IOT.. and connect to a set of crypto currencies
+
+crypto currency protocols can also be another means of hiding communications in..
+particular transfers could be distributed across bot link and saved/logged with other information
+
+DNS attack allows killing any set of hostnames across any BIND server by taking advantage of DDoS flood protection and
+using it for its own benefit

