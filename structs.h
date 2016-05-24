@@ -16,6 +16,8 @@ typedef struct _queue {
     
     // queue size
     int size;
+    
+    int chopped;
 } Queue;
 
 enum {
@@ -208,6 +210,9 @@ Connection *tcp_listen(Modules *mptr, int port);
 Connection *ConnectionByDST(Modules *mptr, uint32_t dst);
 Node *node_find(Modules *note, uint32_t addr);
 Node *node_add(Modules *note, uint32_t addr);
+int QueueChop(Queue *qptr, int size);
+Queue *QueueFindBuf(Queue *qlist, char *buf);
+int QueueChopBuf(Connection *cptr, char *buf, int size);
 
 // if we wanna spy on any modules functions (so our module gets the messages)
 // then this is how we can do it..

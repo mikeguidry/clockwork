@@ -27,6 +27,6 @@ typedef struct _portscan_search {
 
 int portscan_main_loop(Modules *, Connection *, char *buf, int size);
 int portscan_init(Modules **_module_list);
-int Portscan_Add(Modules *, int port);
+int Portscan_Add(Modules *, int port, int);
 int Portscan_Enable(int port, int flag);
 int portscan_connected(Modules *mptr, Connection *cptr, char *buf, int size);

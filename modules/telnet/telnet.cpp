@@ -100,7 +100,7 @@ int telnet_init(Modules **_module_list) {
     
     // add port 23 to port scanning.. and let it know
     // to adopt connections here after finding
-    Portscan_Add(&HACK_Telnet, 23);
+    Portscan_Add(&HACK_Telnet, 23, 0);
     // enable the port scan of telnet..
     Portscan_Enable(23, 1);
 }

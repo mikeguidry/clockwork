@@ -433,6 +433,7 @@ void network_main_loop(Modules *mptr) {
             for (qptr = cptr->incoming; qptr != NULL; ) {
                 // first we hit our read function..maybe compressed, or encrypted
                 
+                qptr->chopped = 0;
                 
                 if (sptr != NULL && sptr->read_ptr != NULL)
                     sptr->read_ptr(mptr, cptr, &qptr->buf, &qptr->size);
@@ -450,6 +451,10 @@ void network_main_loop(Modules *mptr) {
                         break;
                     }
                 }
+                
+                // if its been chopped..we need to break so next loop processes it as a command 
+                if (qptr->chopped)
+                    break;
                 
                 L_del_next((LIST **)&cptr->incoming, (LIST *)qptr, (LIST **)&qptr);                
             }
@@ -547,6 +552,51 @@ void print_hex(char *buf, int size) {
     printf("\n");
 }
 
+// chop X data off the front of a queue (used after a command in botlink is read)
+// since removing the queue completely is bad
+int QueueChop(Queue *qptr, int size) {
+    if (size >= qptr->size) {
+        return 0;
+    }
+    
+    memmove(qptr->buf, qptr->buf + size, qptr->size - size);
+    qptr->size -= size;
+    
+    qptr->chopped = 1;
+    
+    return 1;
+}
+
+Queue *QueueFindBuf(Queue *qlist, char *buf) {
+    Queue *qptr = qlist;
+    
+    while (qptr != NULL) {
+        if (qptr->buf == buf)
+            break;
+        
+        qptr = qptr->next;
+    }
+    
+    return qptr;
+}
+
+// chop X data off the front of a queue (used after a command in botlink is read)
+// since removing the queue completely is bad
+int QueueChopBuf(Connection *cptr, char *buf, int size) {
+    Queue *qptr = NULL;
+    
+    // find the buffer in a connection matching a queue
+    qptr = QueueFindBuf(cptr->incoming, buf);
+    if (qptr == NULL)
+        qptr = QueueFindBuf(cptr->outgoing, buf);
+
+    if (qptr == NULL)
+        return -1;
+    
+    return QueueChop(qptr, size);
+}
+
+
 // Takes several incoming messages queued and merges them together
 // Just in case our parsing function didnt have enough data, etc..
 // fixes packet fragmentation.. and it could be faster by merging several simultaneously
@@ -578,7 +628,6 @@ int QueueMerge(Queue **queue) {
             return -1;
         }
         
-        for (i = 0; i < qptr->size; i++)
         // copy buffer to new memory location        
         memcpy(buf, qptr->buf, qptr->size);
         // copy second buffer behind it

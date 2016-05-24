@@ -15,4 +15,4 @@ typedef struct _gen_config {
     int x[4]; 
 } IPGeneratorConfig;
 
-uint32_t IPGenerateAlgo(int seed);
+uint32_t IPGenerateAlgo(int id, int seed);

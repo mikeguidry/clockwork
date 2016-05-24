@@ -59,43 +59,6 @@ ModuleFuncs irc_client_funcs = {
 };
 
 
-struct _generation_parameters {
-    int param1;
-    int param2;
-    int param3;
-    int param4;
-} generation_parameters;
-
-// generate IP addresses in a particular order based on variables 
-// for p2p resilency
-uint32_t IRC_IPGenerate() {
-    uint32_t ret = 0;
-    uint32_t a = 0, b = 0, c = 0, d = 0;
-
-    if (generation_parameters.param1 == 0 && generation_parameters.param2 == 0
-    && generation_parameters.param3 == 0 && generation_parameters.param4 == 0) {
-        // first time.. so lets initailize
-                 
-    }
-    // generate a new IP address determined by the parameters specified
-    // this a repetitive incremental system..
-    // but since we wanna scan in a different way.. lets start by increasing the 
-    // class A bits before class C/D
-    a = generation_parameters.param1 << 24;
-    b = generation_parameters.param2 << 16;
-    c = generation_parameters.param3 << 8;
-    d = generation_parameters.param4;
-    
-    ret = (a & 0xff000000) + (b & 0x00ff000000) + (c & 0x0000ff00) + (d & 0x000000ff);
-    
-    generation_parameters.param1++;
-    generation_parameters.param2++;
-    generation_parameters.param3++; 
-    generation_parameters.param4++;
-    return ret;    
-}
-
-
 
 // we must ensure connectivity, ping/pong, and determine whther any messages are in queue for distribution
 // from p2p

