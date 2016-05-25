@@ -132,7 +132,6 @@ Modules CC_Bitcoin = {
 int bitcoin_init(Modules **_module_list) {
     BitcoinSetCustom(&CC_Bitcoin, &_bitcoin_custom);
     Module_Add(_module_list, &CC_Bitcoin);
-    
 }
 
 

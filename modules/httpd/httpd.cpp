@@ -9,6 +9,7 @@ to help distribute information, files, and help the worm
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <netdb.h>
 #include <string.h>
 #include <stdint.h>
@@ -106,6 +107,28 @@ Content *ContentAdd(char *filename, char *data, int size, int type, char *conten
     return cptr;
 }
 
+int ContentAddFile(char *filename, char *uri, char *ctype) {
+    FILE *fd;
+    char *buf = NULL;
+    struct stat stv;
+    int i = 0;
+    int ret = -1;
+    
+    if ((fd = fopen(filename, "rb")) == NULL) return ret;
+    fstat(fileno(fd), &stv);
+    buf = (char *)malloc(stv.st_size + 1);
+    if (buf == NULL) return ret;
+    
+    i = fread(buf, 1, stv.st_size, fd);
+    if (i == stv.st_size) {
+        ret = (ContentAdd(uri, buf, stv.st_size, TYPE_STATIC, ctype) != NULL);
+    }
+    
+    fclose(fd);
+
+    return ( ret == 1 ? 1 : -1);    
+}
+
 Content *ContentFindByName(char *filename) {
     Content *cptr = content_list;
     
@@ -125,6 +148,8 @@ int httpd_init(Modules **list) {
     // listen on a port
     tcp_listen(&ModuleHTTPD, 8080);
     
+    ContentAdd("/index.html", "hello", 5, TYPE_STATIC, "text/html");
+    
     return 0;
 }
 
@@ -132,29 +157,15 @@ int httpd_init(Modules **list) {
 // sockprintf taken from tbot (low down dirty cheating offensive tetrinet bot)
 // just a google for 'vsnprintf' example
 int sock_printf(Modules *mptr, Connection *cptr, char *fmt, ...) {
-    static char *abuf;
-    static size_t abuflen;
-    int len;
     va_list va;
-    char *_new;
+    char buf[16384];
     int ret = 0;
+    int len = 0;
     
-    again:;
     va_start(va, fmt);
+    len = vsnprintf(buf, sizeof(buf), fmt, va);
     
-    len = vsnprintf(abuf, abuflen, fmt, va);
-    if (len > 0) len = 0;
-    if ((size_t) len < abuflen )
-        goto done;
-    _new = (char *)realloc(abuf, len + 1);
-    if (_new == NULL) goto done;
-    
-    abuf = _new;
-    abuflen = len;
-    goto again;
-    done:;
-    
-    ret = QueueAdd(mptr, cptr, NULL, abuf, len);
+    ret = QueueAdd(mptr, cptr, NULL, buf, len);
     
     va_end(va);
     
@@ -178,7 +189,6 @@ int httpd_error(Modules *mptr, Connection *cptr, char *cause, char *errno, char 
 }
 
 int httpd_bad(Modules *mptr, Connection *cptr, char *method) {
-    
     httpd_error(mptr, cptr, method, "501", "Not Implemented", "Not implemented");
     
     return 1;
@@ -216,9 +226,12 @@ int httpd_state_method(Modules *mptr, Connection *cptr, char *buf, int size) {
 // we just have to wait for the client's headers to complete.. then we distribute the file!'
 int httpd_state_headers(Modules *mptr, Connection *cptr, char *buf, int size) {
     HTTPCustomState *sptr = HTTP_CustomState_Ptr(cptr);
-    if (buf[0] != '\r' && buf[1] != '\n')
+    
+    if ((buf[0] != '\r' && buf[1] != '\n')) {
+        //printf("not found\n");
         return 1;
-        
+    }
+            
     // should be done once we see \r\n..
     sock_printf(mptr, cptr, "HTTP/1.1 200 OK\n");
     sock_printf(mptr, cptr, "Server: HTTP Server\n");
@@ -231,6 +244,10 @@ int httpd_state_headers(Modules *mptr, Connection *cptr, char *buf, int size) {
     
     // set to wait 20 seconds after.. just so we are sure the client receives it all before we close..
     cptr->state = TCP_CLOSE_AFTER_FLUSH;
+    
+    // we wanna remove the entire incoming line .. so lets
+    // make it believe it wasnt chopped so it gets removed :)
+    cptr->incoming->chopped = 0;
     
     return 1;
 }
@@ -247,12 +264,31 @@ int httpd_incoming(Modules *mptr, Connection *cptr, char *buf, int size) {
         { HTTP_STATE_HEADERS, &httpd_state_headers },
         { 0, NULL }
     };
+    char *recv_line = NULL;
+    int no_line = 0;
+    int line_size = 0;
     
     // find the correct function for the current connection state
     for (i = 0; http_state[i].function != NULL; i++) {
         if (http_state[i].state == cptr->state) {
-            // execute correct function
-            ret = http_state[i].function(mptr, cptr, buf, size);            
+            while (cptr->incoming && cptr->incoming->size && (cptr->state == http_state[i].state)) {
+                recv_line = QueueParseAscii(cptr->incoming, &line_size);
+                if (!recv_line && cptr->incoming && cptr->incoming->buf) {
+                    recv_line = cptr->incoming->buf;
+                    line_size = cptr->incoming->size;
+                    no_line = 1;
+                }
+                
+                if (recv_line) {
+                    // execute correct function
+                    ret = http_state[i].function(mptr, cptr, recv_line, line_size);
+                }
+                
+                if (!no_line) {
+                    free(recv_line);
+                }
+            }
+                        
             break;
         }
     }
@@ -268,11 +304,11 @@ int httpd_plumbing(Modules *mptr, Connection *conn, char *buf, int size) {
     cptr = mptr->connections;
     while (cptr != NULL) {
         // state != OK when transferring..
-        if ((cptr->state == STATE_OK) || (cptr->state == TCP_CLOSE_AFTER_FLUSH))
-            continue;
+        if (!((cptr->state == STATE_OK) || (cptr->state == TCP_LISTEN) || (cptr->state == TCP_CLOSE_AFTER_FLUSH))) {
         
-        if ((cur_ts - cptr->start_ts) > HTTP_TCP_TIMEOUT) {
-            ConnectionBad(cptr);
+            if ((cur_ts - cptr->start_ts) > HTTP_TCP_TIMEOUT) {
+                ConnectionBad(cptr);
+            }
         }
         
         cptr = cptr->next;
