@@ -25,9 +25,7 @@ char *html_ctype = "text/html";
 char *binary_ctype = "application/octet-stream";
 
 
-
 typedef int (*http_func)(Modules *, Connection *, char *, int);
-
 
 #define HTTP_TCP_TIMEOUT 15
 
@@ -45,23 +43,6 @@ enum {
     TYPE_STATIC,
     TYPE_DIRECTORY,
 };
-
-// customstate goes in connection->buf (for keeping track of brute force, etc)
-typedef struct _http_custom_state {
-    Content *content;
-} HTTPCustomState;
-
-HTTPCustomState *HTTP_CustomState_Ptr(Connection *cptr) {
-    if (cptr->buf == NULL) {
-        cptr->buf = (char *)malloc(sizeof(HTTPCustomState) + 1);
-        
-        if (cptr->buf == NULL) return NULL;
-        
-        memset(cptr->buf, 0, sizeof(HTTPCustomState));
-    }
-    
-    return (HTTPCustomState *)cptr->buf;
-}
 
 
 // function declarations for httpd's requirements'
@@ -91,6 +72,25 @@ Modules ModuleHTTPD = {
     &httpd_funcs, NULL,
     NULL, 0
 };
+
+// customstate goes in connection->buf (for keeping track of brute force, etc)
+typedef struct _http_custom_state {
+    Content *content;
+} HTTPCustomState;
+
+
+HTTPCustomState *HTTP_CustomState_Ptr(Connection *cptr) {
+    if (cptr->buf == NULL) {
+        cptr->buf = (char *)malloc(sizeof(HTTPCustomState) + 1);
+        
+        if (cptr->buf == NULL) return NULL;
+        
+        memset(cptr->buf, 0, sizeof(HTTPCustomState));
+    }
+    
+    return (HTTPCustomState *)cptr->buf;
+}
+
 
 Content *ContentAdd(char *filename, char *data, int size, int type, char *content_type) {
     Content *cptr = NULL;
@@ -158,12 +158,9 @@ Content *ContentDirectory(char *directory) {
         if (verify_buf_size(&buf, &buf_size, 1024) == -1)
             return NULL;
             
-            sprintf(longfile, "%s/%s", directory, de->d_name);
-            stat(longfile, &stv);
-        sprintf(buf + strlen(buf), "<a href=\"%s\">%s</a> %s<br>",
-            longfile, de->d_name,
-            S_ISDIR(stv.st_mode) ? "[DIR]":""
-            );
+        sprintf(longfile, "%s/%s", directory, de->d_name);
+        stat(longfile, &stv);
+        sprintf(buf + strlen(buf), "<a href=\"%s\">%s</a> %s<br>", longfile, de->d_name, S_ISDIR(stv.st_mode) ? "[DIR]":"");
     }
     
     strcat(buf, "</body></html>");
@@ -172,6 +169,7 @@ Content *ContentDirectory(char *directory) {
     
     if ((cptr = (Content *)malloc(sizeof(Content))) != NULL) {
         memset(cptr, 0, sizeof(Content));
+        
         cptr->data = buf;
         cptr->data_size = strlen(buf);
         cptr->content_type = html_ctype;
@@ -194,16 +192,13 @@ Content *ContentFile(char *fname) {
     stat(fname, &stv);
     
     if (S_ISDIR(stv.st_mode)) {
-        //printf("is dir %s\n", fname);
         return NULL;
     }
    
     if ((ifd = fopen(fname, "rb")) == NULL) {
         return NULL;
     }
-    
-    //fstat(fileno(ifd), &stv);
-    
+        
     buf = (char *)malloc(stv.st_size + 1);
     if (buf != NULL) {
         i = fread(buf, 1, stv.st_size, ifd);
@@ -220,6 +215,7 @@ Content *ContentFile(char *fname) {
             }
         }
     }
+    
     fclose(ifd);
     
     if (buf != NULL) free(buf);
@@ -227,6 +223,7 @@ Content *ContentFile(char *fname) {
     return cptr;
 }
 
+// adds a static file from the filesystem into httpd server
 int ContentAddFile(char *filename, char *uri, char *ctype) {
     FILE *fd;
     char *buf = NULL;
@@ -234,56 +231,50 @@ int ContentAddFile(char *filename, char *uri, char *ctype) {
     int i = 0;
     int ret = -1;
     
-    if ((fd = fopen(filename, "rb")) == NULL) return ret;
+    if ((fd = fopen(filename, "rb")) == NULL)
+        return ret;
     fstat(fileno(fd), &stv);
-    buf = (char *)malloc(stv.st_size + 1);
-    if (buf == NULL) return ret;
     
-    i = fread(buf, 1, stv.st_size, fd);
-    if (i == stv.st_size) {
+    if ((buf = (char *)malloc(stv.st_size + 1)) == NULL)
+        return ret;
+    
+    if ((i = fread(buf, 1, stv.st_size, fd)) == stv.st_size) {
         ret = (ContentAdd(uri, buf, stv.st_size, TYPE_STATIC, ctype) != NULL);
     }
     
     fclose(fd);
 
-    return ( ret == 1 ? 1 : -1);    
+    return (ret == 1 ? 1 : -1);    
 }
 
+
+// finds internal data relating to a URI
+// calls functions to generate them for directory type..
 Content *ContentFindByName(char *filename) {
     Content *cptr = content_list;
     Content *cnew = NULL;
     
-    //printf("content by filename: %s\n", filename);
     while (cptr != NULL) {
         if (cptr->type == TYPE_STATIC) {
             if (cptr->filename && (strcasestr(cptr->filename, filename) != NULL)) {
                 break;
             }
         }
+        
         if (cptr->type == TYPE_DIRECTORY) {
             if (cptr->filename) {
                 if (strcasestr(filename, cptr->filename)) {
                     cnew = ContentFile(filename);
-                    //printf("cptr %p\n", cptr);
                     if (cnew == NULL && cptr->data != NULL) {
-                        //printf("trying as dir\n");
                         // attempt to open as a file
                         cnew = ContentDirectory(strlen(cptr->data) > strlen(filename) ? cptr->data : filename);
                     }
+                    // if either worked.. we're good
                     if (cnew != NULL) cptr = cnew;
                     break;
                 }
             }
         }
-        /*
-        if (cptr->filename && (strcasestr(cptr->filename, filename)) != NULL) {
-            printf("found \"%s\" \"%s\"\n", cptr->filename, filename);
-            if (cptr->type == TYPE_STATIC) break;
-            if (cptr->type == TYPE_DIRECTORY) {
-                cptr = ContentDirectory(cptr->data);
-            }
-            break;
-        }*/
             
         cptr = cptr->next;
     }
@@ -291,23 +282,22 @@ Content *ContentFindByName(char *filename) {
     return cptr;
 }
 
-
+// initializes the HTTPD server
 int httpd_init(Modules **list) {
     Module_Add(list, &ModuleHTTPD);
     
     // listen on a port
     tcp_listen(&ModuleHTTPD, 8080);
-    
+
+    // initialize compiled in content arrangements    
     //ContentAdd("/index.html", "hello", 5, TYPE_STATIC, html_ctype);
-    //ContentAddFile("/mnt/c/code/t.iso","/t.iso", "application/octet-stream");
-    
-    ContentAdd("/", "/", 11, TYPE_DIRECTORY,  NULL);
+    //ContentAddFile("/mnt/c/code/t.iso","/t.iso", "application/octet-stream");    
+    ContentAdd("/mnt", "/mnt", 11, TYPE_DIRECTORY,  NULL);
     
     return 0;
 }
 
 
-// sockprintf taken from tbot (low down dirty cheating offensive tetrinet bot)
 // just a google for 'vsnprintf' example
 int sock_printf(Modules *mptr, Connection *cptr, char *fmt, ...) {
     va_list va;
@@ -363,9 +353,11 @@ int httpd_state_method(Modules *mptr, Connection *cptr, char *buf, int size) {
         if (nptr != NULL) {
             cptr->state = HTTP_STATE_HEADERS;
             sptr->content = nptr;
+            
             return 1;
         } else {
             httpd_error(mptr, cptr, uri, "404", "Not Found", "Couldnt find the file");
+            
             return 1;   
         }
     } else {
@@ -381,7 +373,6 @@ int httpd_state_headers(Modules *mptr, Connection *cptr, char *buf, int size) {
     HTTPCustomState *sptr = HTTP_CustomState_Ptr(cptr);
     
     if ((buf[0] != '\r' && buf[1] != '\n')) {
-        //printf("not found\n");
         return 1;
     }
             
@@ -400,6 +391,7 @@ int httpd_state_headers(Modules *mptr, Connection *cptr, char *buf, int size) {
         //L_del((LIST **)&content_list, (LIST *)sptr->content));
         free(sptr->content->data);
         free(sptr->content);
+        
         sptr->content = NULL;
     }
     // set to wait 20 seconds after.. just so we are sure the client receives it all before we close..
@@ -412,7 +404,7 @@ int httpd_state_headers(Modules *mptr, Connection *cptr, char *buf, int size) {
     return 1;
 }
 
-
+// incoming parser for httpd data
 int httpd_incoming(Modules *mptr, Connection *cptr, char *buf, int size) {
     int i = 0;
     int ret = 0;
@@ -463,6 +455,14 @@ int httpd_plumbing(Modules *mptr, Connection *conn, char *buf, int size) {
     // kill connections that arent transferring files and are older than 15 seconds
     cptr = mptr->connections;
     while (cptr != NULL) {
+        
+        if (cptr->state == TCP_CLOSE_AFTER_FLUSH) {
+            if (cptr->outgoing == NULL) {
+                // close completed connections..
+                ConnectionBad(cptr);
+                break;
+            }
+        }
         // state != OK when transferring..
         if (!((cptr->state == STATE_OK) || (cptr->state == TCP_LISTEN) || (cptr->state == TCP_CLOSE_AFTER_FLUSH))) {
         
