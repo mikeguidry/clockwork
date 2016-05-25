@@ -6,3 +6,4 @@ void put_str(char **bptr, char *str, int size);
 
 //int Note_Add(CryptoNotes *note);
 int stateOK(Connection *cptr);
+uint32_t getOurIPv4();

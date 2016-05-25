@@ -5,6 +5,7 @@ typedef struct _offered_files {
     char *data;
     char *content_type;
     int data_size;
+    int temporary;
     int type; // static file, or real directory
 } Content;
 
