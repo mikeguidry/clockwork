@@ -19,16 +19,37 @@ void put_int32(char **bptr, int32_t a) {
     *bptr += sizeof(int32_t);
 }
 
+int32_t get_int32(char **bptr) {
+    int32_t *b = (int32_t *)*bptr;
+    int32_t ret = *b;
+    *bptr += sizeof(int32_t);
+    return ret;
+}
+
 void put_int64(char **bptr, int64_t a) {
     int64_t *b = (int64_t *)*bptr;
     *b = a;
     *bptr += sizeof(int64_t);
 }
 
+int64_t get_int64(char **bptr) {
+    int64_t *b = (int64_t *)*bptr;
+    int64_t ret = *b;
+    *bptr += sizeof(int64_t);
+    return ret;
+}
+
 void put_uint64(char **bptr, uint64_t a) {
     uint64_t *b = (uint64_t *)*bptr;
     *b = a;
     *bptr += sizeof(uint64_t);
+}
+
+uint64_t get_uint64(char **bptr) {
+    uint64_t *b = (uint64_t *)*bptr;
+    uint64_t ret = *b;
+    *bptr += sizeof(uint64_t);
+    return ret;
 }
 
 void put_str(char **bptr, char *str, int size) {
@@ -122,4 +143,16 @@ int sock_printf(Modules *mptr, Connection *cptr, char *fmt, ...) {
     va_end(va);
     
     return ret;
+}
+
+
+
+void print_hex(char *buf, int size) {
+    int i = 0;
+    
+    for (; i < size; i++) {
+        printf("%02x", (unsigned char)buf[i]);
+    }
+    
+    printf("\n");
 }

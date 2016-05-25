@@ -149,16 +149,17 @@ Content *ContentDirectory(char *directory) {
     struct stat stv;
     char fmt[]="<html><head><title>%s</title></head><body><h3>%s</h3><br>";
     char longfile[1024];
+    int need = strlen(fmt) + (strlen(directory) * 2);
     
     // initialize buffer
-    if (verify_buf_size(&buf, &buf_size, 1024) == -1) return NULL;
+    if (verify_buf_size(&buf, &buf_size, need + 1024) == -1) return NULL;
     sprintf(buf, fmt, directory, directory);
     
     //printf("buf: \"%s\"\n", buf);
     if ((dp = opendir(directory)) == NULL) return NULL;
     
     while (de = readdir(dp)) {
-        if (verify_buf_size(&buf, &buf_size, 1024) == -1)
+        if (verify_buf_size(&buf, &buf_size, need + 1024) == -1)
             return NULL;
             
         sprintf(longfile, "%s/%s", directory, de->d_name);
@@ -336,6 +337,7 @@ int httpd_error(Modules *mptr, Connection *cptr, char *cause, char *errno, char 
     sock_printf(mptr, cptr, "<hr><em>HTTPD</em>\n");
     
     cptr->state = TCP_CLOSE_AFTER_FLUSH;
+    
     return 1;  
 }
 

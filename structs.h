@@ -214,13 +214,8 @@ typedef struct _spy_func {
     uint32_t start_ts;
     
     Modules *module;
-    module_func_ptr read_ptr;
-    module_func_ptr write_ptr;
-    module_func incoming;
-    module_func_ptr outgoing_ptr;
-    module_func plumbing;
-    module_func connect;
-    module_func disconnect;
+    
+    ModuleFuncs funcs;
 } SpyFuncs;
 
 SpyFuncs *SpyGet(Modules *mptr);

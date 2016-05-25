@@ -22,3 +22,17 @@ particular transfers could be distributed across bot link and saved/logged with 
 
 DNS attack allows killing any set of hostnames across any BIND server by taking advantage of DDoS flood protection and
 using it for its own benefit
+
+
+
+this entire platform will become the 'base' so to speak (p2p, networking, etc) for a much larger project
+it will find its own exploits, and develop its own custom backdoors, etc
+it will generate its own attacks, and find its own logic vulnerabilities in applications, and platforms
+
+before i extend it that far ill add a neural network so a few basic things can take place.. ill generate a 'super node'
+platform where bots decide they have enough.. they will separate, and change their encryption keys, and other facotrs
+and then begin to build child networks on their own (with the original instructions in mind)
+
+ill create worm opcodes so each set of worms (children, or parent) can have different characteristics, targets, etc
+the entire point is to be able to attack a particular country and automatically infiltrate their infrastructure and citizens
+while being completely self reliant.. or company rather than country.. or protocols (such as bitcoin, etc)
