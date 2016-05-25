@@ -706,11 +706,12 @@ char *QueueParseAscii(Queue *qptr, int *size) {
             if (i < qptr->size) {
                 n = qptr->size - i + 1;
                 newbuf = (char *)malloc(n+1);
-                memset(newbuf, 0, n);
+                
                 if (newbuf == NULL) {
                     //printf("couldnt alloc %d - %d\n", n, errno);
                     return NULL;
                 }
+                memset(newbuf, 0, n);
                 memcpy(newbuf, qptr->buf + i, qptr->size - i);
                 
                 qptr->buf = newbuf;

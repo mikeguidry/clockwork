@@ -34,7 +34,8 @@ ip generate seed can be used to ensure different bots scan different IPs
 #include "modules/bitcoin/note_bitcoin.h"
 
 #define BOT_PORT 4843
-#define BOT_MAGIC 0xAABBCCDD
+#define BOT_MAGIC 0xDABCADAA
+#define BOT_PKT 0xAABBCCDD
 #define MIN_BOT_CONNECTIONS 15
 
 // various states of bot communication
@@ -60,7 +61,9 @@ int BotMSGVerify(char *buf, int size) {
     // ensure it has enough of the packet
     if (size < sizeof(BotMSGHdr)) return 0;
     // check if the magic is correct
-    if (_hdr->magic != BOT_MAGIC) return -1;
+    if (_hdr->magic != BOT_PKT) return -1;
+    
+    // add checksum here..
     
     // now verify we have the entire packet..
     if (size < (sizeof(BotMSGHdr) + _hdr->len)) {
@@ -262,7 +265,7 @@ int bot_pushpkt(Modules *mptr, Connection *cptr, char *pkt, int pktsize) {
     }
     
     hdr = (BotMSGHdr *)buf;
-    hdr->magic = BOT_MAGIC;
+    hdr->magic = BOT_PKT;
     hdr->len = pktsize;
     //hdr->checksum = 0;
     
