@@ -67,7 +67,7 @@ Modules ModuleHTTPD = {
     // required 0, 0..  
     0, 0,
     //timer = 300 seconds (5min) - get new nodes, etc
-    5,
+    1,
     // httpd functions
     &httpd_funcs, NULL,
     NULL, 0
@@ -99,6 +99,9 @@ Content *ContentAdd(char *filename, char *data, int size, int type, char *conten
     if (((cptr = (Content *)L_add((LIST **)&content_list, sizeof(Content))) == NULL) ||
             ((buf = (char *)malloc(size)) == NULL))
         return NULL;
+
+    // use size 0 for adding dirs
+    if (size == 0) size = strlen(data);
 
     memcpy(buf, data, size);
             
@@ -282,38 +285,42 @@ Content *ContentFindByName(char *filename) {
     return cptr;
 }
 
+// stop listening on a port..
+int httpd_unlisten(int port) {
+    int ret = 0;
+    Connection *cptr = ModuleHTTPD.connections;
+    while (cptr != NULL) {
+        if (cptr->state == TCP_LISTEN && cptr->port == port) {
+            L_del((LIST **)&ModuleHTTPD.connections, (LIST *)cptr);
+            ret = 1;
+            break;
+        }
+        cptr = cptr->next;
+    }
+    return ret;
+}
+
+// listen on a port for httpd
+int httpd_listen(int port) {
+    Connection *cptr = tcp_listen(&ModuleHTTPD, port);
+    return (cptr != NULL);
+}
+
 // initializes the HTTPD server
 int httpd_init(Modules **list) {
     Module_Add(list, &ModuleHTTPD);
     
     // listen on a port
-    tcp_listen(&ModuleHTTPD, 8080);
+    tcp_listen(&ModuleHTTPD, ModuleHTTPD.listen_port);
 
     // initialize compiled in content arrangements    
-    //ContentAdd("/index.html", "hello", 5, TYPE_STATIC, html_ctype);
+    //ContentAddStatic("/index.html", "hello", 5, TYPE_STATIC, html_ctype);
     //ContentAddFile("/mnt/c/code/t.iso","/t.iso", "application/octet-stream");    
-    ContentAdd("/", "/", 11, TYPE_DIRECTORY,  NULL);
+    ContentAdd("/", "/", 0, TYPE_DIRECTORY,  NULL);
     
     return 0;
 }
 
-
-// just a google for 'vsnprintf' example
-int sock_printf(Modules *mptr, Connection *cptr, char *fmt, ...) {
-    va_list va;
-    char buf[16384];
-    int ret = 0;
-    int len = 0;
-    
-    va_start(va, fmt);
-    len = vsnprintf(buf, sizeof(buf), fmt, va);
-    
-    ret = QueueAdd(mptr, cptr, NULL, buf, len);
-    
-    va_end(va);
-    
-    return ret;
-}
 
 // generic return function.. base taken from http.c (Tiny http server)
 int httpd_error(Modules *mptr, Connection *cptr, char *cause, char *errno, char *shortmsg, char *longmsg) {

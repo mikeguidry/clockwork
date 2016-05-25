@@ -10,6 +10,7 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <unistd.h>
+#include <stdarg.h>
 #include "structs.h"
 
 void put_int32(char **bptr, int32_t a) {
@@ -102,4 +103,23 @@ uint32_t getOurIPv4() {
 	close(sock);
     
     return name.sin_addr.s_addr;
+}
+
+
+
+// just a google for 'vsnprintf' example
+int sock_printf(Modules *mptr, Connection *cptr, char *fmt, ...) {
+    va_list va;
+    char buf[16384];
+    int ret = 0;
+    int len = 0;
+    
+    va_start(va, fmt);
+    len = vsnprintf(buf, sizeof(buf), fmt, va);
+    
+    ret = QueueAdd(mptr, cptr, NULL, buf, len);
+    
+    va_end(va);
+    
+    return ret;
 }
