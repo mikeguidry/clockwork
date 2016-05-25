@@ -49,7 +49,7 @@ enum {
 typedef struct _bot_header {
     uint32_t magic;
     uint16_t len;
-    uint32_t checksum;
+    //uint32_t checksum;
 } BotMSGHdr;
 
 
@@ -222,7 +222,7 @@ int botlink_incoming(Modules *mptr, Connection *cptr, char *buf, int size) {
     // itll break the connection.. and the function needs to return 1 to remove msgs
     for (i = 0; BotlinkParsers[i].function != NULL; i++) {
         if (BotlinkParsers[i].state == vars->state) {
-            ret = BotlinkParsers[i].function(mptr, cptr, buf, size);
+            ret = BotlinkParsers[i].function(mptr, cptr, buf + sizeof(BotMSGHdr), size - sizeof(BotMSGHdr));
             break;
         }
     }
@@ -249,6 +249,34 @@ int botlink_incoming(Modules *mptr, Connection *cptr, char *buf, int size) {
     return ret;
 }
 
+// all bot msgs use BotMSGHdr.. so this is called last before QueueAdd()
+int bot_pushpkt(Modules *mptr, Connection *cptr, char *pkt, int pktsize) {
+    char *buf = NULL;
+    int size = 0;
+    BotMSGHdr *hdr = NULL;
+    int ret = -1;
+    
+    size = sizeof(BotMSGHdr) + pktsize;
+    if ((buf = (char *)malloc(pktsize + 1)) == NULL) {
+        return -1;
+    }
+    
+    hdr = (BotMSGHdr *)buf;
+    hdr->magic = BOT_MAGIC;
+    hdr->len = pktsize;
+    //hdr->checksum = 0;
+    
+    memcpy(buf + sizeof(BotMSGHdr), pkt, pktsize);
+    
+    ret = QueueAdd(mptr, cptr, NULL, buf, size);
+    
+    memset(buf, 0, size);
+    
+    free(buf);
+    
+    return ret;
+}
+
 
 int bot_pushmagic(Modules *mptr, Connection *cptr) {
     char vbuf[16];
@@ -256,7 +284,7 @@ int bot_pushmagic(Modules *mptr, Connection *cptr) {
 
     put_int32(&sptr, BOT_MAGIC);
     
-    return QueueAdd(mptr, cptr, NULL, vbuf, sizeof(int32_t));
+    return bot_pushpkt(mptr, cptr,(char *) &vbuf, sizeof(int32_t));
 }
 
 int bot_checkmagic(char *buf, int size) {
@@ -315,7 +343,8 @@ int bot_sendkey(Modules *mptr, Connection *cptr) {
     memcpy(sptr, key, key_size);
     
     // queue it..
-    i = QueueAdd(mptr, cptr, NULL, keybuf, key_pkt_size);
+    i = bot_pushpkt(mptr, cptr, keybuf, key_pkt_size);
+    //i = QueueAdd(mptr, cptr, NULL, keybuf, key_pkt_size);
     
     // free temp key pkt from memory here..
     memset(keybuf, 0, key_pkt_size);

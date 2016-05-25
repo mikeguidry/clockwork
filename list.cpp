@@ -84,7 +84,10 @@ LIST *L_add(LIST **list, int size) {
 
 int L_count(LIST *l_ptr) { return l_count((LINK *)l_ptr); }
 void L_del(LIST **l_ptr, LIST *rem) {
-  if (rem->buf != NULL) free(rem->buf);
+  if (rem->buf != NULL) {
+    // later we should keep track of sizes.. so we can zero the memory
+    free(rem->buf);
+  }
   
   // close sock.. make this os independent for win32 , etc
   if (rem->fd > 0) close(rem->fd);
