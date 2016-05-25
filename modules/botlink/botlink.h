@@ -13,6 +13,6 @@ int botlink_outgoing(Modules *mptr, Connection *cptr, char **buf, int *size);
 int botlink_connect(Modules *mptr, Connection *cptr, char *buf, int size);
 int botlink_disconnect(Modules *mptr, Connection *cptr, char *buf, int size);
 
-int botlink_new(Modules *mptr, Connection *cptr, char *buf, int size);
+int botlink_handshake(Modules *mptr, Connection *cptr, char *buf, int size);
 int botlink_keyexchange(Modules *mptr, Connection *cptr, char *buf, int size);
 int botlink_message(Modules *mptr, Connection *cptr, char *buf, int size);

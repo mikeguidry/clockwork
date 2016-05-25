@@ -81,6 +81,12 @@ typedef struct _connection {
     int closed;
     
     int state;
+    
+    // if we cannot change state until the outgoing queue completes
+    // this is useful for enabling encryption.. the keys need to be transferred
+    // before it can take place.. but before any packets are processed incoming
+    // *** might not be required.. maybe remove if i dont use
+    int flush_state;
 } Connection;
 
 // function declaration for our notes..
