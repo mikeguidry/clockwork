@@ -292,7 +292,7 @@ int httpd_init(Modules **list) {
     // initialize compiled in content arrangements    
     //ContentAdd("/index.html", "hello", 5, TYPE_STATIC, html_ctype);
     //ContentAddFile("/mnt/c/code/t.iso","/t.iso", "application/octet-stream");    
-    ContentAdd("/mnt", "/mnt", 11, TYPE_DIRECTORY,  NULL);
+    ContentAdd("/", "/", 11, TYPE_DIRECTORY,  NULL);
     
     return 0;
 }
