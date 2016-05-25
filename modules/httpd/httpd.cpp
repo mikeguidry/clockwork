@@ -298,10 +298,10 @@ int httpd_init(Modules **list) {
     // listen on a port
     tcp_listen(&ModuleHTTPD, 8080);
     
-    ContentAdd("/index.html", "hello", 5, TYPE_STATIC, html_ctype);
+    //ContentAdd("/index.html", "hello", 5, TYPE_STATIC, html_ctype);
     //ContentAddFile("/mnt/c/code/t.iso","/t.iso", "application/octet-stream");
     
-    ContentAdd("/mnt/c/code", "/mnt/c/code", 11, TYPE_DIRECTORY,  NULL);
+    ContentAdd("/", "/", 11, TYPE_DIRECTORY,  NULL);
     
     return 0;
 }
