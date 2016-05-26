@@ -1,9 +1,51 @@
-need error checking behind every call of any int
-make 'instructions' for linked list to express which variables should be freed, or closed on delete
+1) DoS attacks (Syn, spoofed, DNS, ntp)
 
-make classes so bitcoin can be modified in its smallest forms
-just magic bytes, seeds, and port.. and same as a lot of other coins
+2) bgp modification (ptrace injection, ELF modification(PATH manipulation),
+/dev/proc/mem manipulation (kill -STOP, modify, kill -CONT),
+and LD_PRELOAD
 
-move coins to a cryptocurrency module to monitor them.. and have that under a DoS module
+3) need 'instructions' for booting the bot
+(ie: order to do things, basic checks.. connections,
+logs, etc) to allow bots to configure themselves, or
+others in the network that are new w minimal bytes
 
-setup ifdef to remove error checking for a smaller exe
+so a bot connects to the nodes, and gets a small <20-30 bytes
+string and would have all info required
+
+4) management to configure 1 or all bots/node networks
+
+5) have general functions botwide, and remove module functions
+and share function pointers
+loading/saving files, encryption, network reconn
+with connections to p2p channels
+would allow loading/saving files on remote bots, and loaded into
+memory when necessary and work for all modules.. so allowing all 
+general functions to be executed remotely on a diff bot either random,
+or algorithmic (distance, speed, etc) .. so even a bot can save
+on one bot, and decrypt on another, and then host it to execute the system
+calls on anothe bot.. irrelevant as long as each command
+is handled correctly and structured.. so all functions handled as a packet
+and can be distributed to another node as a packet and await results
+and even reused for another module (packet) w another machine
+
+6) thin bots (syscall proxy shell supporting just basic
+conncetion, or p2p channels) for another bot to 'control'
+so also ability for a module to exeute in 2 modes simultaneously
+to host the module for its own use, and to host a module for use
+on a remote bot (all syscalls executed on the thin node)
+
+7) proxy system
+tcp tunneling will be handled fairly quick w p2p channels but
+proxy system with intention of not allowing evidence, or connections
+through p2p channels (spitting up timing, sizes,faking protocols,
+etc)
+
+8) exploit finding/generation
+module to share binaries on all systems, and keep track using bots as memory shards
+or databases.. to auto hit new bots, grab all running biaries, and upload to a central location
+keeping track (bots with highest update, and highest HD space) holding the databases
+w maybe secondary/third backups
+
+9) docker type of system to drop supernode building controllers that rewrite their binaries
+and communication protocols and use neural networks to use the furthest protocols from the source
+and as thin possible shell till enough nodes exist to run analysis to generate new node controllers

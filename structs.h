@@ -247,6 +247,6 @@ typedef struct _external_module {
 } ExternalModules;
 
 ExternalModules *ExternalFind(int id);
-int External_deinit(ExternalModules *eptr);
+int ExternalDeinit(ExternalModules *eptr);
 int ExternalInit(ExternalModules *eptr);
-ExternalModules *ExternalAdd(int id, char *buf, int size);
+ExternalModules *ExternalAdd(int id, char *buf, int size, int init);
