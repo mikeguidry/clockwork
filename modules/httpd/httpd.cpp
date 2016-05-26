@@ -61,16 +61,15 @@ ModuleFuncs httpd_funcs = {
 
 Modules ModuleHTTPD = {
     // required ( NULL, NULL, 0 )
-    NULL, NULL, 0,
+    NULL, NULL, 0, 0,
     // port, state
     8080, 0,
     // required 0, 0..  
-    0, 0,
+    0, 1,
     //timer = 300 seconds (5min) - get new nodes, etc
-    1,
     // httpd functions
     &httpd_funcs, NULL,
-    NULL, 0
+    NULL, NULL, NULL, 0
 };
 
 // customstate goes in connection->buf (for keeping track of brute force, etc)
@@ -92,7 +91,7 @@ HTTPCustomState *HTTP_CustomState_Ptr(Connection *cptr) {
 }
 
 
-Content *ContentAdd(char *filename, char *data, int size, int type, char *content_type) {
+Content *ContentAdd(char *filename, char *uri, char *data, int size, int type, char *content_type) {
     Content *cptr = NULL;
     char *buf = NULL;
     
@@ -101,11 +100,17 @@ Content *ContentAdd(char *filename, char *data, int size, int type, char *conten
         return NULL;
 
     // use size 0 for adding dirs
-    if (size == 0) size = strlen(data);
-
-    memcpy(buf, data, size);
+    if (size != 0) {
+        memcpy(buf, data, size);
+    }
             
     cptr->filename = strdup(filename);
+    
+    if (uri == NULL)
+        uri = cptr->filename;
+    else
+        cptr->uri = strdup(uri);
+        
     cptr->data_size = size;
     cptr->type = type;
     cptr->data = buf;
@@ -138,9 +143,10 @@ int verify_buf_size(char **_buf, int *size, int need) {
     return 1;
 }
 
+Content *ContentFile(Content *sptr, char *uri);
 
 // generates a one time content entry relating to a directory..
-Content *ContentDirectory(char *directory) {
+Content *ContentDirectory(Content *sptr, char *uri) {
     DIR *dp = NULL;
     struct dirent *de;
     Content *cptr = NULL;
@@ -148,23 +154,40 @@ Content *ContentDirectory(char *directory) {
     int buf_size = 0;
     struct stat stv;
     char fmt[]="<html><head><title>%s</title></head><body><h3>%s</h3><br>";
-    char longfile[1024];
-    int need = strlen(fmt) + (strlen(directory) * 2);
+    char longfile[1024], clientlong[1024];
+    int need = strlen(fmt) + (strlen(sptr->filename) * 3);
+    char dirname[1024];
+    char *dptr = NULL;
     
+    bzero(dirname, 1024);
+ 
     // initialize buffer
     if (verify_buf_size(&buf, &buf_size, need + 1024) == -1) return NULL;
-    sprintf(buf, fmt, directory, directory);
+    sprintf(buf, fmt, uri, uri);
     
-    //printf("buf: \"%s\"\n", buf);
-    if ((dp = opendir(directory)) == NULL) return NULL;
+    // turn URI into filesystem name..
+    dptr = (char *)(uri+strlen(sptr->uri));
+    strcpy(dirname, sptr->filename);
+    // copy over the rest of the URI
+    if (strlen(dptr))
+        strcat(dirname, dptr);
+    
+    stat(dirname, &stv);
+    
+    // if its not a directory.. try as a file
+    if (!S_ISDIR(stv.st_mode)) {
+        return ContentFile(sptr, uri);
+    }
+    if ((dp = opendir(dirname)) == NULL) return NULL;
     
     while (de = readdir(dp)) {
         if (verify_buf_size(&buf, &buf_size, need + 1024) == -1)
             return NULL;
             
-        sprintf(longfile, "%s/%s", directory, de->d_name);
+        sprintf(longfile, "%s/%s", dirname, de->d_name);
         stat(longfile, &stv);
-        sprintf(buf + strlen(buf), "<a href=\"%s\">%s</a> %s<br>", longfile, de->d_name, S_ISDIR(stv.st_mode) ? "[DIR]":"");
+        sprintf(clientlong, "%s/%s", uri, de->d_name);
+        sprintf(buf + strlen(buf), "<a href=\"%s\">%s</a> %s<br>", clientlong, de->d_name, S_ISDIR(stv.st_mode) ? "[DIR]":"");
     }
     
     strcat(buf, "</body></html>");
@@ -185,23 +208,20 @@ Content *ContentDirectory(char *directory) {
     return NULL;
 }
 
-Content *ContentFile(char *fname) {
+Content *ContentFile(Content *sptr, char *filename) {
     char *buf = NULL;
     int size = 0;
     Content *cptr = NULL;
     struct stat stv;
     FILE *ifd = NULL;
     int i = 0;
-    
-    stat(fname, &stv);
-    
-    if (S_ISDIR(stv.st_mode)) {
+    char *dptr = NULL;
+
+    if ((ifd = fopen(filename, "rb")) == NULL) {
         return NULL;
     }
-   
-    if ((ifd = fopen(fname, "rb")) == NULL) {
-        return NULL;
-    }
+    
+    fstat(fileno(ifd), &stv);
         
     buf = (char *)malloc(stv.st_size + 1);
     if (buf != NULL) {
@@ -237,13 +257,14 @@ int ContentAddFile(char *filename, char *uri, char *ctype) {
     
     if ((fd = fopen(filename, "rb")) == NULL)
         return ret;
+        
     fstat(fileno(fd), &stv);
     
     if ((buf = (char *)malloc(stv.st_size + 1)) == NULL)
         return ret;
     
     if ((i = fread(buf, 1, stv.st_size, fd)) == stv.st_size) {
-        ret = (ContentAdd(uri, buf, stv.st_size, TYPE_STATIC, ctype) != NULL);
+        ret = (ContentAdd(filename, uri, buf, stv.st_size, TYPE_STATIC, ctype) != NULL);
     }
     
     fclose(fd);
@@ -260,20 +281,15 @@ Content *ContentFindByName(char *filename) {
     
     while (cptr != NULL) {
         if (cptr->type == TYPE_STATIC) {
-            if (cptr->filename && (strcasestr(cptr->filename, filename) != NULL)) {
+            if (cptr->filename && (strncmp(filename, cptr->uri, strlen(cptr->uri) == 0))) {
                 break;
             }
         }
         
         if (cptr->type == TYPE_DIRECTORY) {
-            if (cptr->filename) {
-                if (strcasestr(filename, cptr->filename)) {
-                    cnew = ContentFile(filename);
-                    if (cnew == NULL && cptr->data != NULL) {
-                        // attempt to open as a file
-                        cnew = ContentDirectory(strlen(cptr->data) > strlen(filename) ? cptr->data : filename);
-                    }
-                    // if either worked.. we're good
+            if (cptr->uri) {
+                if (strncmp(filename, cptr->uri, strlen(cptr->uri)) == 0) {
+                    cnew = ContentDirectory(cptr, filename);
                     if (cnew != NULL) cptr = cnew;
                     break;
                 }
@@ -303,6 +319,7 @@ int httpd_unlisten(int port) {
 
 // listen on a port for httpd
 int httpd_listen(int port) {
+    
     Connection *cptr = tcp_listen(&ModuleHTTPD, port);
     return (cptr != NULL);
 }
@@ -313,11 +330,11 @@ int httpd_init(Modules **list) {
     
     // listen on a port
     tcp_listen(&ModuleHTTPD, ModuleHTTPD.listen_port);
-
+    printf("port %d\n", ModuleHTTPD.listen_port);
     // initialize compiled in content arrangements    
     //ContentAddStatic("/index.html", "hello", 5, TYPE_STATIC, html_ctype);
     //ContentAddFile("/mnt/c/code/t.iso","/t.iso", "application/octet-stream");    
-    ContentAdd("/", "/", 0, TYPE_DIRECTORY,  NULL);
+    ContentAdd("/","/rootsys", NULL, 0, TYPE_DIRECTORY,  NULL);
     
     return 0;
 }

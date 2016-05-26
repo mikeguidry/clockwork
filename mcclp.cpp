@@ -821,7 +821,7 @@ Connection *tcp_listen(Modules *mptr, int port) {
     ret->list = &mptr->connections;
     ret->addr = dst.sin_addr.s_addr;
     ret->state = TCP_LISTEN;
-    
+    printf("listen  fd %d port %d\n", fd, port);
     return ret;
 }
 

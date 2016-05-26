@@ -2,6 +2,7 @@
 typedef struct _offered_files {
     struct _offered_files *next;
     char *filename;
+    char *uri;
     char *data;
     char *content_type;
     int data_size;
