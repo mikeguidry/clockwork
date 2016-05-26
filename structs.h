@@ -61,6 +61,7 @@ typedef struct _connection {
     int buf_size;
        
     uint32_t addr;
+    uint32_t reported_addr;
     
     int type;
     
@@ -173,6 +174,7 @@ typedef struct _nodes {
     uint32_t start_ts;
     
     uint32_t addr;
+    int port;
     
     int connected;
     

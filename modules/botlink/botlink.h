@@ -4,7 +4,11 @@ typedef struct CmdHdr {
     uint32_t authorization;
 } CMDHdr;
 
-
+typedef struct _peerinfo {
+        uint32_t addr;
+        unsigned short port;
+    } PeerInfo;
+    
 int botlink_init(Modules **);
 int botlink_main_loop(Modules *mptr, Connection *cptr, char *buf, int size);
 int botlink_write(Modules *mptr, Connection *cptr, char **buf, int *size);
@@ -27,3 +31,7 @@ int botlink_cmd_execute(Modules *mptr, Connection *cptr, char *buf, int size);
 int botlink_cmd_control_module(Modules *mptr, Connection *cptr, char *buf, int size);
 
 int botlink_broadcast(Modules *mptr, Connection *cptr, char *buf, int size);
+int botlink_cmd_report_ip(Modules *mptr, Connection *cptr, char *buf, int size);
+int botlink_cmd_want_peers(Modules *mptr, Connection *cptr, char *buf, int size);
+int botlink_cmd_peer_info(Modules *mptr, Connection *cptr, char *buf, int size);
+int bot_pushcmd(Modules *mptr, Connection *cptr, unsigned char cmd, char *pkt, int pktsize);

