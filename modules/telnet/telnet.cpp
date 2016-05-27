@@ -82,15 +82,7 @@ typedef struct _custom_state {
 } CustomState;
 
 CustomState *CustomState_Ptr(Connection *cptr) {
-    if (cptr->buf == NULL) {
-        cptr->buf = (char *)malloc(sizeof(CustomState) + 1);
-        
-        if (cptr->buf == NULL) return NULL;
-        
-        memset(cptr->buf, 0, sizeof(CustomState));
-    }
-    
-    return (CustomState *)cptr->buf;
+    return (CustomState *)CustomPtr(cptr, sizeof(CustomState));    
 }
 
 

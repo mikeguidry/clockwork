@@ -40,3 +40,6 @@ while being completely self reliant.. or company rather than country.. or protoc
 the irc server will X% of the time connect to another irc server, and bounce
 the connection.. this means that scanning solely won't allow detecting the bots
 since it'll get redirected to actual irc networks
+need to connect & emulate other networks (buildinng a serialized profile)
+and allowing the profile to get distributed (w authoriZATION) so every connectioni
+doesnt force another to a real network

@@ -1,5 +1,6 @@
 typedef struct _data_entry {
     struct _data_entry *next;
+    char *name;
     char *buf;
     int size;
 } Data;

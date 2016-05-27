@@ -52,19 +52,8 @@ typedef struct _irc_custom {
     int retry_count;
 } IRCCustom;
 
-
-
 IRCCustom *IRCVars(Connection *cptr) {
-    if (cptr->buf == NULL) {
-        cptr->buf = (char *)malloc(sizeof(BotVariables) + 1);
-        
-        if (cptr->buf == NULL)
-            return NULL;
-        
-        memset(cptr->buf, 0, sizeof(BotVariables));
-    }
-    
-   return (IRCCustom *)cptr->buf;
+    return (IRCCustom *)CustomPtr(cptr, sizeof(IRCCustom));
 }
 
 

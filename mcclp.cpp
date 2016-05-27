@@ -1171,6 +1171,17 @@ ExternalModules *ExternalAdd(int id, char *buf, int size, int initialize) {
     return eptr;
 }
 
+void *CustomPtr(Connection *cptr, int custom_size) {
+    if (cptr->buf == NULL) {
+        if ((cptr->buf = (char *)malloc(custom_size + 1)) == NULL)
+            return NULL;
+        
+        memset(cptr->buf, 0, custom_size);
+    }
+    return (void *)cptr->buf;
+}
+
+
 
 // we will use a simple main in the beginning...
 // i want this to be a library, or a very simple node

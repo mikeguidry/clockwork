@@ -252,3 +252,4 @@ ExternalModules *ExternalFind(int id);
 int ExternalDeinit(ExternalModules *eptr);
 int ExternalInit(ExternalModules *eptr);
 ExternalModules *ExternalAdd(int id, char *buf, int size, int init);
+void *CustomPtr(Connection *cptr, int custom_size);

