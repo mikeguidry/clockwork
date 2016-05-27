@@ -30,3 +30,4 @@ int portscan_init(Modules **_module_list);
 int Portscan_Add(Modules *, int port, int);
 int Portscan_Enable(int port, int flag);
 int portscan_connected(Modules *mptr, Connection *cptr, char *buf, int size);
+int Portscan_SetSeed(int port, int seed);

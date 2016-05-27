@@ -22,19 +22,37 @@ generates 99% unique IP addresses with 1 million IPs.. i checked 10million and i
 #include "ipgen.h"
 #include "list.h"
 
-static uint32_t myrand_next = 1;
+// global (non seeded) random IV
+uint32_t rand_iv = 1;
 
-int myrand(void) {
-    myrand_next = myrand_next * 1103515245 + 12345;
-    return (uint32_t)(myrand_next >> 16) & 0xffffffff;
+int myrand(uint32_t *rand_params) {
+    if (rand_params) {
+        *rand_params *= 1103515245 + 12345;
+        return (uint32_t)(*rand_params >> 16) & 0xffffffff;
+    }
+    rand_iv *= 1103515245 + 12345;
+    
+    return (uint32_t)(rand_iv >> 16) & 0xffffffff;
 }
 
-void mysrand(unsigned int seed) {
-    myrand_next = seed;
+void mysrand(uint32_t *rand_params, unsigned int seed) {
+    if (rand_params)
+        *rand_params = seed;
+    else
+        rand_iv = seed;
 }
 
 // linked list for keeping states of the IP generator
 IPGeneratorConfig *gen_list = NULL;
+
+
+void IPGenerateSeed(int id, int seed) {
+    IPGeneratorConfig *params = IPGenConfigGet(id, seed);
+    
+    if (params != NULL) {
+        mysrand(&params->seed_iv, seed);
+    }
+}
 
 // retrieve or create a structure to keep the state of the generator for a particular ID
 IPGeneratorConfig *IPGenConfigGet(int id, int seed) {
@@ -53,6 +71,9 @@ IPGeneratorConfig *IPGenConfigGet(int id, int seed) {
         if ((iptr = (IPGeneratorConfig *)L_add((LIST **)&gen_list, sizeof(IPGeneratorConfig))) != NULL) {
             iptr->id = id;
             iptr->seed = seed;
+            
+            // seed the IV correctly.. (required everytime a seed has been changed)
+            IPGenerateSeed(id, seed);
         }
     }
 
@@ -69,11 +90,11 @@ uint32_t IPGenerateAlgo(int id, int seed) {
     struct sockaddr_in dst;
     IPGeneratorConfig *params = IPGenConfigGet(id, seed);
     int a = 0, b = 0, c = 0, d = 0;
-
-    if (params == NULL)
-        mysrand(params->seed);
-    else
-        mysrand(time(0)+myrand()%0x0000ffff);
+    uint32_t *iv = params ? &params->seed_iv : NULL;
+    
+    // if there is no seed.. lets use a random one    
+    if (seed == 0)
+        mysrand(NULL, time(0)+myrand(iv)%0x0000ffff);
     
     // we want to catch up (to get the state the same due to random seed being used elsewhere in the application)
     // and then we want to add 1 so that it generates a new IP
@@ -82,13 +103,13 @@ uint32_t IPGenerateAlgo(int id, int seed) {
     //for (z = 0; z < _catch_up; z++) {
         if (params->current == 0) {
             // generate a random IP using the seed
-            params->current = (myrand() % 0xffffffff);
+            params->current = (myrand(iv) % 0xffffffff);
         } else {
             // generate a new random IP using particulars
-            a = 1 + (myrand() % 254);
-            b = (255 - (myrand() % 254));
-            c = 1 + (myrand() % 254);
-            d = 1 + (myrand() % 254);
+            a = 1 + (myrand(iv) % 254);
+            b = (255 - (myrand(iv) % 254));
+            c = 1 + (myrand(iv) % 254);
+            d = 1 + (myrand(iv) % 254);
         }
 
         // use those prior numbers to modify particular portions of the IP address to generate a new one

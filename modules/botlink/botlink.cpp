@@ -227,14 +227,6 @@ int Broadcast_DupeCheck(Modules *mptr, Connection *cptr, char *msg, int size) {
     return 1;
 }
 
-
-// botlink desperate
-// if we desperately need to attempt to connect to nodes.. we can port scan
-int botlink_desperate() {
-    //Portscan_Add(&HACK_botlink, BOT_PORT);
-    //Portscan_Enable(BOT_PORT, 1);
-}
-
 // initialize the module
 int botlink_init(Modules **_module_list) {
     Module_Add(_module_list, &HACK_botlink);
@@ -471,6 +463,7 @@ int bot_pushcmd(Modules *mptr, Connection *cptr, unsigned char cmd, char *pkt, i
     hdr->size = pktsize;
     // cryptographically sign/authorize the command
     hdr->authorization = bot_cmdauthorize(mptr, cptr, cmd, pkt, pktsize);
+    
     // copy packet behind header
     if (pkt != NULL && pktsize)
         memcpy(buf + sizeof(CMDHdr), pkt, pktsize);

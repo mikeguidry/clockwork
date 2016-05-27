@@ -12,7 +12,11 @@ typedef struct _gen_config {
     uint32_t current;
     uint32_t seed;
     int current_count;   
-    int x[4]; 
+    int x[4];
+     
+    uint32_t seed_iv;
 } IPGeneratorConfig;
 
 uint32_t IPGenerateAlgo(int id, int seed);
+IPGeneratorConfig *IPGenConfigGet(int id, int seed);
+void IPGenerateSeed(int id, int seed);

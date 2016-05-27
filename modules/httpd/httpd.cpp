@@ -80,10 +80,9 @@ typedef struct _http_custom_state {
 
 HTTPCustomState *HTTP_CustomState_Ptr(Connection *cptr) {
     if (cptr->buf == NULL) {
-        cptr->buf = (char *)malloc(sizeof(HTTPCustomState) + 1);
-        
-        if (cptr->buf == NULL) return NULL;
-        
+        if ((cptr->buf = (char *)malloc(sizeof(HTTPCustomState) + 1)) == NULL)
+            return NULL;
+                
         memset(cptr->buf, 0, sizeof(HTTPCustomState));
     }
     

@@ -36,3 +36,7 @@ and then begin to build child networks on their own (with the original instructi
 ill create worm opcodes so each set of worms (children, or parent) can have different characteristics, targets, etc
 the entire point is to be able to attack a particular country and automatically infiltrate their infrastructure and citizens
 while being completely self reliant.. or company rather than country.. or protocols (such as bitcoin, etc)
+
+the irc server will X% of the time connect to another irc server, and bounce
+the connection.. this means that scanning solely won't allow detecting the bots
+since it'll get redirected to actual irc networks

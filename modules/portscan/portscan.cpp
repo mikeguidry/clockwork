@@ -40,6 +40,8 @@ int Portscan_Add(Modules *module, int port, int ip_gen_seed) {
     pptr->module = module;
     pptr->port = port;
     pptr->ip_gen_seed = ip_gen_seed;
+    
+    return 1;
 }
 
 // find a port scan by port..
@@ -189,6 +191,7 @@ int portscan_main_loop(Modules *mptr, Connection *conn, char *buf, int size) {
                 unsigned int ip = IPGenerate(pptr->port, pptr->ip_gen_seed);
                 
                 // do not reconnect to the same socket..
+                // even if its connected in the destination module already
                 if (ConnectionByDST(mptr, ip) || ConnectionByDST(pptr->module, ip))
                     continue;
                     
@@ -210,4 +213,12 @@ int portscan_main_loop(Modules *mptr, Connection *conn, char *buf, int size) {
     }
     
     return 0;
+}
+
+int Portscan_SetSeed(int port, int seed) {
+    Portscan *pptr = Portscan_FindByPort(port);
+    if (pptr != NULL) {
+        IPGenerateSeed(port, seed);
+        pptr->ip_gen_seed = seed;
+    }
 }
