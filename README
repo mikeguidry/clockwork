@@ -24,7 +24,6 @@ DNS attack allows killing any set of hostnames across any BIND server by taking 
 using it for its own benefit
 
 
-
 this entire platform will become the 'base' so to speak (p2p, networking, etc) for a much larger project
 it will find its own exploits, and develop its own custom backdoors, etc
 it will generate its own attacks, and find its own logic vulnerabilities in applications, and platforms
@@ -43,3 +42,25 @@ since it'll get redirected to actual irc networks
 need to connect & emulate other networks (buildinng a serialized profile)
 and allowing the profile to get distributed (w authoriZATION) so every connectioni
 doesnt force another to a real network
+
+make an infector that increases a section, or creates a new.. or modifies another
+and inserts itself into the main loop of the application by heuristically
+spotting it, or the return of some functions
+like the function that gets values from read(), or some other recv()
+and this could be the 'main loop' (1 iteration) of the application
+which would allow to infect anytjhing
+
+modules are going to allow .so, .py, and maybe perl
+with an easy roadmap to extend yourself
+
+it wil give ability for modules to add their own socket handlers (to take advantage
+of the system w same structure (plumbing)) etc
+
+for now itll just add an external module to plumbing.. it can select() etc its own sockets
+this gives a huge variety of options to begin with.. later ill use some functions in C, and each language to share
+ability to copy FDs over, and relinguish or replace select() (maybe just remove)
+
+the external modules cannot run in an infinite loop, and the function of their plumbing needs to only run a single loop
+of the application
+
+for IRC: i'll add the ability for it to copy "bot" messages to botlink somehow

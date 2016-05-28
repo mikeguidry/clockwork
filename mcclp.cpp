@@ -91,6 +91,7 @@ so nodes can use several communication methods, and irc can be used to control
 #include <fcntl.h>
 #include <errno.h>
 #include <dlfcn.h>
+#include <Python.h>
 #include "structs.h"
 #include "list.h"
 #include "utils.h"
@@ -428,7 +429,7 @@ void ConnectionRead(Connection *cptr) {
     
     }
     
-    if ((newqueue = (Queue *)L_add((LIST **)&cptr->incoming, sizeof(Queue))) == NULL) {
+    if ((newqueue = (Queue *)L_add_ordered((LIST **)&cptr->incoming, sizeof(Queue))) == NULL) {
         // error!
         ConnectionBad(cptr);
     }
@@ -513,7 +514,7 @@ int QueueAdd(Modules *module, Connection *conn, Queue **queue, char *buf, int si
             memcpy(newbuf, buf, size);
 
             // where to add queue.. if we specify use it, otherwise outgoing         
-            if ((newqueue = (Queue *)L_add((LIST **)(queue ? queue : &conn->outgoing), sizeof(Queue))) == NULL)
+            if ((newqueue = (Queue *)L_add_ordered((LIST **)(queue ? queue : &conn->outgoing), sizeof(Queue))) == NULL)
                 return -1;
         
             newqueue->buf = newbuf;   
@@ -637,7 +638,7 @@ int QueueMerge(Queue **queue) {
         // calculate size of both
         size = qptr->size + qptr2->size;
         
-        if ((buf = (char *)malloc(size + 1)) == NULL) {
+        if ((buf = (char *)calloc(size + 1, 1)) == NULL) {
             return -1;
         }
         
@@ -740,6 +741,7 @@ int Modules_Execute(Modules *_module_list, int *sleep_time) {
     unsigned int ts = time(0);
     Modules *mptr = NULL;
     int active_count = 0;
+    ExternalModules *eptr = NULL;
     
     // first handle all socket I/O...
     socket_loop(_module_list);
@@ -763,7 +765,15 @@ int Modules_Execute(Modules *_module_list, int *sleep_time) {
         ConnectionCleanup(&mptr->connections);        
 
     }
-
+    
+    // now we must take care of our external modules
+    for (eptr = external_list; eptr != NULL; eptr = eptr->next) {
+        if (eptr->type == MODULE_TYPE_SO) {
+            eptr->plumbing(_module_list, NULL, 0, 0);
+        } else if (eptr->type == MODULE_TYPE_PYTHON) {
+            ExternalExecutePython(eptr->id, NULL, "loop");
+        }
+    }
     // lets calculate how much time to sleep.. if we have connections
     // then we wanna execute faster..    
     //*sleep_time = c - MIN((active_count * 250000), 750000);
@@ -1100,34 +1110,39 @@ int ExternalInit(ExternalModules *eptr) {
   
   // now write the buffer..
   i = fwrite(eptr->buf, eptr->size, 1, ofd);
-  if (i == eptr->size) {   
-     dl_handle = (void *)dlopen(filename, RTLD_GLOBAL);
-     
-     if (dl_handle != NULL) {
-         // get function handles from dlsym()
-         _init = (void *)dlsym(dl_handle, "init");
-         _deinit = (void *)dlsym(dl_handle, "deinit");
-         _plumbing = (void *)dlsym(dl_handle, "plumbing");
+  if (i == eptr->size) {
+      if (eptr->type == MODULE_TYPE_SO) {
+        dl_handle = (void *)dlopen(filename, RTLD_GLOBAL);
+        
+        if (dl_handle != NULL) {
+            // get function handles from dlsym()
+            _init = (void *)dlsym(dl_handle, "init");
+            _deinit = (void *)dlsym(dl_handle, "deinit");
+            _plumbing = (void *)dlsym(dl_handle, "plumbing");
 
-        // prepare the module structure         
-         eptr->init = (external_func)_init;
-         eptr->deinit = (external_func)_deinit;
-         eptr->plumbing = (module_func)_plumbing;
-         eptr->dl_handle = dl_handle;
-         
-         // execute the module's initialization routine
-         ret = eptr->init();
+            // prepare the module structure         
+            eptr->init = (external_func)_init;
+            eptr->deinit = (external_func)_deinit;
+            eptr->plumbing = (module_func)_plumbing;
+            eptr->dl_handle = dl_handle;
+            
+            // execute the module's initialization routine
+            ret = eptr->init();
+        }
+     } else if (eptr->type == MODULE_TYPE_PYTHON) {
+            // python is fairly simple..
+            ret = ExternalExecutePython(eptr->id, filename, "init");       
      } 
   }
   
   if (ret != 1) {
       if (dl_handle != NULL) {
         dlclose(dl_handle);
-        
-        eptr->plumbing = NULL;
-        
-        close(eptr->outfd);
       }
+        
+      eptr->plumbing = NULL;
+        
+      close(eptr->outfd);
   }
   
   return ret;
@@ -1136,7 +1151,7 @@ int ExternalInit(ExternalModules *eptr) {
 
 // adds an external function to the list (and initializes it)
 // to be used from P2P, etc.. passes the file data, and size
-ExternalModules *ExternalAdd(int id, char *buf, int size, int initialize) {
+ExternalModules *ExternalAdd(int type, int id, char *buf, int size, int initialize) {
     int ret = 0;
     ExternalModules *eptr = ExternalFind(id);
  
@@ -1152,7 +1167,9 @@ ExternalModules *ExternalAdd(int id, char *buf, int size, int initialize) {
         eptr->id = id;
     }
     
+    eptr->type = type;
     eptr->size = size;
+    
     if ((eptr->buf = (char *)malloc(size + 1)) == NULL) {
         L_del((LIST **)&external_list, (LIST *)eptr);
         return NULL;
@@ -1179,6 +1196,110 @@ void *CustomPtr(Connection *cptr, int custom_size) {
 
     return (void *)cptr->buf;
 }
+
+
+
+typedef struct _python_varsa {
+    struct _python_varsa *next;
+    
+    int id;
+    PyObject *pModule = NULL;
+} PythonVarsA;
+
+
+PythonVarsA *pyvars_list = NULL;
+
+PythonVarsA *ExtVarsFind(int id) {
+    PythonVarsA *pptr = pyvars_list;
+    
+    while (pptr != NULL) {
+        if (pptr->id == id) break;
+    }
+    
+    return pptr;
+}
+
+PythonVarsA *ExtVars(int id) {
+    PythonVarsA *pptr = ExtVarsFind(id);
+
+    if (pptr != NULL) return pptr;
+    
+    // first time running.. ever
+    if (pyvars_list == NULL) {
+        Py_Initialize();
+    }
+    pptr = (PythonVarsA *)L_add((LIST **)&pyvars_list, sizeof(PythonVarsA));
+    pptr->id = id;
+
+    pptr->next = (PythonVarsA *)pyvars_list;
+    pyvars_list = pptr;
+
+    return pptr;    
+}
+
+
+// execute a python function from a file..
+// it will load into memory the first execution, and then use the original handle
+// for subsequent.. so the first should execute an 'init' function, and following
+// a loop (sockets, read, etc)
+// global variables are itchy.. 
+// check ircs.py for example of how i had it work.. I did 
+// global = class_init() and made initfunc bind using a 'start' function (which used the globla handler)
+// and the plumbing function then can access it correctly
+// i wasnt able to get the init function to declare the globla variable using the class, and have it 
+// work with the sequential calls.. so this works and ill stick with it..
+// i suggest using the function externally to test..
+int ExternalExecutePython(int id, char *script, char *func_name) {
+    PyObject *pName=NULL, *pModule=NULL, *pFunc=NULL;
+    PyObject *pValue=NULL;
+    int ret = 0;
+    PythonVarsA *pptr = ExtVars(id);
+    char fmt[] = "sys.path.append(\"%s\")";
+    char *dirs[] = { "/tmp", "/var/tmp", ".", NULL };
+    char buf[1024];
+    int i = 0;
+    
+    if (pptr == NULL) return -1;
+    
+
+    if (!pptr->pModule) {
+        // initialize python paths etc that we require for operating
+        PyRun_SimpleString("import sys");
+        for (i = 0; dirs[i] != NULL; i++) {
+            sprintf(buf, fmt, dirs[i]);
+            PyRun_SimpleString(buf);
+        }
+
+        // specify as a python object the name of the file we wish to load
+        pName = PyString_FromString(script);
+        // perform the loading
+        pModule = PyImport_Import(pName);
+        Py_DECREF(pName);
+        // keep for later (for the plumbing/loop)
+        pptr->pModule = pModule;
+    } 
+    pModule = pptr->pModule;
+
+    if (pModule == NULL) goto end;
+    
+    // we want to execute a particular function under this module we imported
+	pFunc = PyObject_GetAttrString(pModule, func_name);
+    // now we must verify that the function is accurate
+    if (!(pFunc && PyCallable_Check(pFunc))) {
+        goto end;
+    }
+    pValue = PyObject_CallObject(pFunc, NULL);
+    if (pValue != NULL) {
+        ret = 1;
+    }
+        
+end:;
+    Py_XDECREF(pFunc);
+    Py_XDECREF(pValue);
+
+    return ret;
+}
+
 
 
 
@@ -1209,6 +1330,8 @@ int main(int argc, char *argv[]) {
     // fake name for 'ps'
     //fakename_init(&module_list, argv, argc);
     
+    
+    //PySys_SetArgv(argc, argv);    
     // main loop
     while (1) {
         Modules_Execute(module_list, &sleep_time);
@@ -1216,4 +1339,7 @@ int main(int argc, char *argv[]) {
        usleep(sleep_time);
         //sleep(5);
     }
+    
+    if (pyvars_list != NULL)
+        Py_Finalize();
 }

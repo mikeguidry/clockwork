@@ -6,88 +6,72 @@
 #include <time.h>
 #include "list.h"
 
-LINK *l_last(LINK *start) {
-  while (start->next != 0) start = start->next;
+
+LIST *L_last(LIST *list) {
+  while (list->next != NULL) {
+    list = list->next;
+  }
   
-  return start;
+  return list;
 }
 
-void l_link(LINK **list, LINK *ele) {
+int L_count(LIST *ele) {
+  int count = 0;
+  
+  while (ele != NULL) {
+    count++;
+    ele = ele->next;
+  }
+  
+  return count;
+}
+
+void L_link(LIST **list, LIST *ele) {
   ele->next = *list;
+  
   *list = ele;
 }
 
+// order the linking (so its FIFO) instead of LIFO
+void L_link_ordered(LIST **list, LIST *ele) {
+  LIST *_last = NULL;
+  
+  if (*list == NULL) {
+    *list = ele;
+    return;
+  }
+  
+  _last = L_last(*list);
+  _last->next = ele;
+}
 
-LINK *l_add(LINK **list, int size) {
-  LINK *cur, *newptr;
 
-  newptr = (LINK *)calloc(size,1);
+LIST *L_add_0(LIST **list, int size, int ordered) {
+  LIST *newptr;
+
+  newptr = (LIST *)calloc(size,1);
   if (newptr == NULL) return NULL;
 
-  l_link(list, newptr);
+  if (!ordered) 
+    L_link(list, newptr);
+  else
+    L_link_ordered(list, newptr);
   
-  cur->next = *list;
-  *list = cur;
-
   return newptr;
 }
 
-void l_del(LINK **l_ptr, LINK *rem) {
-  
-  while ((*l_ptr) != rem) {
-    l_ptr = &(*l_ptr)->next;
-  }
-  
-  *l_ptr = rem->next;
-  
-}
-
-int l_count(LINK *l_ptr) {
-        int i = 0;
-
-        while (l_ptr != 0) {
-                i++;
-
-                l_ptr = l_ptr->next;
-        }
-
-        return i;
-}
-// end linked functions
-
-
-LIST *L_last(LIST *start) {
-  return (LIST *)l_last((LINK *)start);
-}
-
-LINK *l_new(int size) {
-  LINK *ret = (LINK *)calloc(size, 1);
-  
-  return ret;
-}
-
-LINK *L_new(int size) {
-  return (LINK *)l_new(size);
-}
 
 LIST *L_add(LIST **list, int size) {
-  LIST *ret = (LIST *)L_new(size);
-  
-  if (ret) {
-    L_link((LIST **)list, (LIST *)ret);
-    
-    ret->start_ts = time(0);
-  }
-   
-  return ret;
+  return L_add_0(list, size, 0);
 }
 
-int L_count(LIST *l_ptr) {
-  return l_count((LINK *)l_ptr);
+LIST *L_add_ordered(LIST **list, int size) {
+  return L_add_0(list, size, 1);
 }
+
 
 void L_del(LIST **l_ptr, LIST *rem) {
-  if (rem->buf != NULL) {
+ if (rem->buf != NULL) {
     // later we should keep track of sizes.. so we can zero the memory
     free(rem->buf);
   }
@@ -95,8 +79,12 @@ void L_del(LIST **l_ptr, LIST *rem) {
   // close sock.. make this os independent for win32 , etc
   if (rem->fd > 0)
     close(rem->fd);
-    
-  l_del((LINK **)l_ptr, (LINK *)rem);
+   
+  while ((*l_ptr) != rem) {
+    l_ptr = &(*l_ptr)->next;
+  }
+  
+  *l_ptr = rem->next;
 }
 
 void L_del_next(LIST **l_ptr, LIST *rem, LIST **l_next) {
@@ -115,6 +103,3 @@ void ListFree(LIST **qlist) {
     }
 }
 
-void L_link(LIST **list, LIST *ele) {
-  l_link((LINK **)list, (LINK *)ele);
-}

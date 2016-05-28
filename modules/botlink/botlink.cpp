@@ -849,8 +849,9 @@ int botlink_cmd_loadmodule(Modules *mptr, Connection *cptr, char *buf, int size)
     int ret = 0;
     
     int32_t module_id = get_int32(&buf);
+    int32_t module_type = get_int32(&buf);
     
-    eptr = ExternalAdd(module_id, buf, size - sizeof(int32_t), 1);
+    eptr = ExternalAdd(module_type, module_id, buf, size - sizeof(int32_t), 1);
     
     return (eptr != NULL);
 }

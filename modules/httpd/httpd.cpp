@@ -199,7 +199,7 @@ Content *ContentDirectory(Content *sptr, char *uri) {
         sprintf(buf + strlen(buf), "<a href=\"%s\">%s</a> %s<br>", clientlong, de->d_name, S_ISDIR(stv.st_mode) ? "[DIR]":"");
     }
     
-    strcat(buf, "</body></html>");
+    strcat(buf, "</body></html>\0");
     
     closedir(dp);
     
