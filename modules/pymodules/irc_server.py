@@ -1,7 +1,8 @@
 #! /usr/bin/env python
 #miniircd modified so that you can continue to call the loop after embedding it into another
 #application.. so i could load this into a worm without coding the entire irc server in C
-
+# ill make messages from the channel go backwards, and ability to write to channels from c
+# so the bot hosting can give address information to clients.. or link networks together
 
 import os
 import re
