@@ -8,54 +8,38 @@
 
 LINK *l_last(LINK *start) {
   while (start->next != 0) start = start->next;
+  
   return start;
 }
 
 void l_link(LINK **list, LINK *ele) {
-  LINK *cur = NULL;
-  if (*list != 0) {
-    cur = (LINK *)l_last(*list);
-    cur->next = ele;
-  } else
-    *list = ele;
+  ele->next = *list;
+  *list = ele;
 }
 
 
 LINK *l_add(LINK **list, int size) {
   LINK *cur, *newptr;
 
-  newptr = (LINK *)malloc(size);
-  memset(newptr, 0, size);
+  newptr = (LINK *)calloc(size,1);
+  if (newptr == NULL) return NULL;
 
-  if (*list != 0) {
-    cur = (LINK *)l_last(*list);
-    cur->next = newptr;
-  } else
-    *list = newptr;
+  l_link(list, newptr);
+  
+  cur->next = *list;
+  *list = cur;
 
   return newptr;
 }
 
 void l_del(LINK **l_ptr, LINK *rem) {
-  LINK *cur = *l_ptr, *last;
-
-  if (*l_ptr == rem) {
-    if (cur->next != 0)
-      *l_ptr = cur->next;
-    else
-      *l_ptr = 0;
-  } else {
-    while ((cur != rem) && (cur != 0)) {
-      last = cur;
-      cur = cur->next;
-    }
-      if (cur->next != 0)
-        last->next = cur->next;
-      else
-        last->next = 0;
- }
- free(rem);
- 
+  
+  while ((*l_ptr) != rem) {
+    l_ptr = &(*l_ptr)->next;
+  }
+  
+  *l_ptr = rem->next;
+  
 }
 
 int l_count(LINK *l_ptr) {
@@ -72,17 +56,36 @@ int l_count(LINK *l_ptr) {
 // end linked functions
 
 
-LIST *L_last(LIST *start) { return (LIST *)l_last((LINK *)start); }
+LIST *L_last(LIST *start) {
+  return (LIST *)l_last((LINK *)start);
+}
 
-LIST *L_add(LIST **list, int size) {
-  LIST *ret = (LIST *)l_add((LINK **)list, size);
-  if (ret) {
-    ret->start_ts = time(0);
-  } 
+LINK *l_new(int size) {
+  LINK *ret = (LINK *)calloc(size, 1);
+  
   return ret;
 }
 
-int L_count(LIST *l_ptr) { return l_count((LINK *)l_ptr); }
+LINK *L_new(int size) {
+  return (LINK *)l_new(size);
+}
+
+LIST *L_add(LIST **list, int size) {
+  LIST *ret = (LIST *)L_new(size);
+  
+  if (ret) {
+    L_link((LIST **)list, (LIST *)ret);
+    
+    ret->start_ts = time(0);
+  }
+   
+  return ret;
+}
+
+int L_count(LIST *l_ptr) {
+  return l_count((LINK *)l_ptr);
+}
+
 void L_del(LIST **l_ptr, LIST *rem) {
   if (rem->buf != NULL) {
     // later we should keep track of sizes.. so we can zero the memory
@@ -90,13 +93,17 @@ void L_del(LIST **l_ptr, LIST *rem) {
   }
   
   // close sock.. make this os independent for win32 , etc
-  if (rem->fd > 0) close(rem->fd);
+  if (rem->fd > 0)
+    close(rem->fd);
+    
   l_del((LINK **)l_ptr, (LINK *)rem);
 }
 
 void L_del_next(LIST **l_ptr, LIST *rem, LIST **l_next) {
   LIST *lnext = rem->next;
+  
   L_del((LIST **)l_ptr, rem);
+  
   *l_next = lnext;
 }
 

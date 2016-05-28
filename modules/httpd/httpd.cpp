@@ -231,7 +231,7 @@ Content *ContentFile(Content *sptr, char *filename) {
     }
     
     fstat(fileno(ifd), &stv);
-        
+
     buf = (char *)malloc(stv.st_size + 1);
     if (buf != NULL) {
         i = fread(buf, 1, stv.st_size, ifd);
@@ -455,7 +455,7 @@ int httpd_incoming(Modules *mptr, Connection *cptr, char *buf, int size) {
     char *recv_line = NULL;
     int no_line = 0;
     int line_size = 0;
-    
+        
     // find the correct function for the current connection state
     for (i = 0; http_state[i].function != NULL; i++) {
         if (http_state[i].state == cptr->state) {

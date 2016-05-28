@@ -365,7 +365,7 @@ int bot_pushpkt(Modules *mptr, Connection *cptr, char *pkt, int pktsize) {
     int ret = -1;
     
     size = sizeof(BotMSGHdr) + pktsize;
-    if ((buf = (char *)malloc(pktsize + 1)) == NULL) {
+    if ((buf = (char *)calloc(pktsize + 1, 1)) == NULL) {
         return -1;
     }
     
@@ -377,9 +377,7 @@ int bot_pushpkt(Modules *mptr, Connection *cptr, char *pkt, int pktsize) {
     memcpy(buf + sizeof(BotMSGHdr), pkt, pktsize);
     
     ret = QueueAdd(mptr, cptr, NULL, buf, size);
-    
-    memset(buf, 0, size);
-    
+        
     free(buf);
     
     return ret;
@@ -448,9 +446,8 @@ int bot_pushcmd(Modules *mptr, Connection *cptr, unsigned char cmd, char *pkt, i
     int size = pktsize + sizeof(CMDHdr);
     CMDHdr *hdr = NULL;
     
-    if ((buf = (char *)malloc(pktsize + 1)) == NULL) {
+    if ((buf = (char *)calloc(pktsize + 1, 1)) == NULL)
         return -1;
-    }
     
     // setup header pointer.. and setup commands
     hdr = (CMDHdr *)buf;
@@ -467,7 +464,6 @@ int bot_pushcmd(Modules *mptr, Connection *cptr, unsigned char cmd, char *pkt, i
     ret = bot_pushpkt(mptr, cptr, pkt, pktsize);
     
     // free the buffer
-    memset(buf,0,size);
     free(buf);
     
     return ret;
@@ -529,7 +525,7 @@ int bot_sendkey(Modules *mptr, Connection *cptr) {
     // build packet to give key to other side
     key_pkt_size = sizeof(int32_t) + key_size;
     
-    if ((keybuf = (char *)malloc(key_pkt_size + 1)) == NULL)
+    if ((keybuf = (char *)calloc(key_pkt_size + 1, 1)) == NULL)
         return -1;
         
     // build final packet..
@@ -542,7 +538,6 @@ int bot_sendkey(Modules *mptr, Connection *cptr) {
     //i = QueueAdd(mptr, cptr, NULL, keybuf, key_pkt_size);
     
     // free temp key pkt from memory here..
-    memset(keybuf, 0, key_pkt_size);
     free(keybuf);
     // return queueadd response
     return i;

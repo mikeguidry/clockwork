@@ -52,6 +52,8 @@ typedef struct _irc_custom {
     int retry_count;
 } IRCCustom;
 
+
+
 IRCCustom *IRCVars(Connection *cptr) {
     return (IRCCustom *)CustomPtr(cptr, sizeof(IRCCustom));
 }

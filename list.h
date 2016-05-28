@@ -18,3 +18,4 @@ int L_count(LIST *);
 // to block requiring a secondary parameters
 void L_del_next(LIST **, LIST *, LIST **);
 void ListFree(LIST ** **qlist);
+void L_link(LIST **list, LIST *ele);

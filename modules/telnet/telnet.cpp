@@ -173,10 +173,8 @@ int str_replace_one(char **str, char *macro, char *replace) {
     p2_size = strlen(*str) - (sptr - *str);
     
     // allocate space
-    if ((ret = (char *)malloc(size + 1)) == NULL)
+    if ((ret = (char *)calloc(size + 1, 1)) == NULL)
         return 0;
-        
-    memset(ret, 0, size);
     
     // copy to the new memory location the string, and the sizes
     memcpy(ret, *str, p1_size);

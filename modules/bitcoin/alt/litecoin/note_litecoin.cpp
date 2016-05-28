@@ -97,10 +97,9 @@ char *litecoin_build_version(int *size) {
     char *buf = NULL;
     char *bptr = NULL;
     
-    if ((buf = bptr = (char *)malloc(1024)) == NULL) {
+    if ((buf = bptr = (char *)calloc(1024, 1)) == NULL) {
         return NULL;
     }
-    memset(buf,0,1024);
     
     // build version parameters for initial packet
     put_int32(&bptr, spoof_version);
