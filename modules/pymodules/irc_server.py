@@ -619,7 +619,7 @@ class Server(object):
         self.password = ''
         self.ssl_pem_file = ''
         self.motdfile = ''
-        self.verbose = 0
+        self.verbose = 1
         self.debug = 0
         self.logdir = ''
         self.chroot = ''
@@ -634,7 +634,7 @@ class Server(object):
             self.ssl_pem_file = os.path.abspath(self.ssl_pem_file)
         # else: might exist in the chroot jail, so just continue
 
-        self.address = ""
+        self.address = "0.0.0.0"
         server_name_limit = 63  # From the RFC.
         self.name = socket.getfqdn(self.address)[:server_name_limit]
 
@@ -794,12 +794,11 @@ def irc_lower(s):
     return string.translate(s, _ircstring_translation)
 
 
-def main(argv):
-    server = Server()
-    server.start()
-    while True:
-	server.loop()
+def init():
+    Gserver.start()
+    return Gserver
 
+def loop():
+    Gserver.loop()
 
-
-main(sys.argv)
+Gserver = Server()
