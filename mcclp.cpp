@@ -449,7 +449,6 @@ void network_main_loop(Modules *mptr) {
     for (cptr = mptr->connections; cptr != NULL; cptr = cptr->next) {
         // do we have an incoming queue to deal with?
         if (cptr->incoming != NULL) {
-            printf("incoming data\n");
             
             // lets attempt to merge messages that may be fragmented in the queue
             QueueMerge(&cptr->incoming);  
