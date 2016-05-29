@@ -75,7 +75,7 @@ int fakename_execute(Modules *mptr, Connection *cptr, char *buf, int size) {
         if (!strcheck((char *)&de->d_name, &isalpha))
             continue;
             
-        strcpy((char *)&plist[cur++ % 16], de->d_name);
+        strncpy((char *)&plist[cur++ % 16], de->d_name, 16);
         
         i++;
     }
