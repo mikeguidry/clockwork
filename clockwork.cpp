@@ -366,7 +366,6 @@ void socket_loop(Modules *modules) {
             for (modcptr = mptr->connections; modcptr != NULL; modcptr = modcptr->next) {
                 if (FD_ISSET(modcptr->fd, &readfds)) {
                     if (modcptr->state == TCP_LISTEN) {
-                        printf("listen sock %d\n", modcptr->fd);
                         // if its listening... its a new connection..
                         // it needs to adopt to its correct module after
                         // accepting
@@ -1055,8 +1054,9 @@ int ExternalDeinit(ExternalModules *eptr) {
     if (ret == 1) {
         if (eptr->type == MODULE_TYPE_SO) {
         // close dl handle
-        if (dl->dl_handle)
-            dlclose(eptr->dl_handle);
+            if (eptr->dl_handle)
+                dlclose(eptr->dl_handle);
+            
         } else if (eptr->type == MODULE_TYPE_PYTHON) {
             // nothing as of now. maybe add ability for python to know its being unloaded later..
             // ***
@@ -1119,7 +1119,6 @@ int ExternalInit(ExternalModules *eptr) {
   
   // now write the buffer..
   i = fwrite(eptr->buf, eptr->size, 1, ofd);
-<<<<<<< HEAD
   if (i == eptr->size) {
       if (eptr->type == MODULE_TYPE_SO) {
         dl_handle = (void *)dlopen(filename, RTLD_GLOBAL);
