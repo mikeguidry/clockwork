@@ -1,3 +1,23 @@
+immediate:
+to launch worm:
+
+telnet needs to replace the IP for worm from httpd/main IP (our IP)
+the IP should be verified, and checksum verified by itself (to ensure its connecting to itself using the IP its assuming)
+this should only happen once, or a new bot can give it an IP to ensure it gets logged
+
+data needs to load data files (source code, binaries for worm, other information) from other nodes on start, or
+built in via compiled (from scripts to inject them into source files, and loaded into data pointers)
+
+botlink needs to function, and transmit main commands over irc servers + irc clients
+irc clients needs to feed checksum information to botlink incoming parser
+irc server needs to feed checksum valid information to botlink incoming parser
+
+need to verify external module adding works for .so, and for python modules remotely using botlink commands
+
+
+longterm:
+
+
 1) DoS attacks (Syn, spoofed, DNS, ntp)
 
 2) bgp modification (ptrace injection, ELF modification(PATH manipulation),
