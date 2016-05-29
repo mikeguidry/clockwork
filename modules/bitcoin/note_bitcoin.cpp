@@ -116,6 +116,7 @@ ModuleFuncs bitcoin_funcs = {
 Modules CC_Bitcoin = {
     // required ( NULL, NULL, 0 )
     NULL, NULL, 0, 0,
+    BITCOIN_MODULE_ID,
     // port, state
     8333, 0,
     // required 0, 0..  

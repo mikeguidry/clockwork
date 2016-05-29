@@ -25,7 +25,7 @@ ModuleFuncs fakename_funcs = { NULL, NULL, NULL, NULL,
     &fakename_execute, NULL, NULL};
 
 // execute every 300 seconds
-Modules ModuleFakeName = { NULL, NULL, 0, 0, 0, 0, 0, 300,
+Modules ModuleFakeName = { NULL, NULL, 0, 12, 0, 0, 0, 0, 300,
     &fakename_funcs, NULL, NULL, 0 };
 
 

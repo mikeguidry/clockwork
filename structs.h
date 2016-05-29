@@ -139,6 +139,7 @@ typedef struct _modules {
     
     // identifiers so botlink, and other functions can direct messages to a particular module
     int id;
+    
     // if we are attempting to listen
     int listen_port;
     // state of crypto currency (our connections, etc)
@@ -259,11 +260,11 @@ typedef struct _external_module {
 } ExternalModules;
 
 
-ExternalModules *ExternalFind(int id);
+ExternalModules *ExternalFind(ExternalModules *,int id);
 int ExternalDeinit(ExternalModules *eptr);
 int ExternalInit(ExternalModules *eptr);
 int ExternalEnable(ExternalModules *eptr);
 int ExternalDisable(ExternalModules *eptr);
-ExternalModules *ExternalAdd(int type, int id, char *buf, int size, int init);
+ExternalModules *ExternalAdd(ExternalModules **, int type, int id, char *buf, int size, int init);
 void *CustomPtr(Connection *cptr, int custom_size);
-int ExternalExecutePython(int id, char *script, char *func_name);
+

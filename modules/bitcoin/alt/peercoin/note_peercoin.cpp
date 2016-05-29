@@ -15,6 +15,7 @@ most functions are using the same as bitcoin.. this can work for all similarly d
 #include "note_bitcoin.h"
 #include "note_peercoin.h"
 
+#define PEERCOIN_MODULE_ID 23
 char peercoin_magic[] = "ABCD";
 
 ModuleFuncs peercoin_funcs = { 
@@ -35,6 +36,7 @@ BitcoinCustomFunctions _peercoin_custom = {
 Modules CC_Peercoin = {
     // required ( NULL, NULL, 0 )
     NULL, NULL, 0, 0,
+    PEERCOIN_MODULE_ID,
     // port, state
     9902, 0,
     // required 0, 0..  

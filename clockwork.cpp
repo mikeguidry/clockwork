@@ -732,6 +732,7 @@ char *QueueParseAscii(Queue *qptr, int *size) {
     return ret;
 }
 
+int ExternalExecutePython(int id, char *script, char *func_name, PyObject *pVars);
 
 // main loop of the application.. iterate and execute each module
 // ive made it easy to pass a list argument so modules themselves can
@@ -1034,6 +1035,8 @@ int various_init() {
 ExternalModules *ExternalFind(ExternalModules *external_module_list, int id) {
     ExternalModules *eptr = external_module_list;
     
+    if (eptr == NULL) eptr = external_list;
+    
     while (eptr != NULL) {
         if (eptr->id == id) break;
         eptr = eptr->next;
@@ -1140,7 +1143,7 @@ int ExternalInit(ExternalModules *eptr) {
         }
      } else if (eptr->type == MODULE_TYPE_PYTHON) {
             // python is fairly simple..
-            ret = ExternalExecutePython(eptr->id, filename, "init");       
+            ret = ExternalExecutePython(eptr->id, filename, "init", NULL);       
      } 
   }
   
@@ -1162,8 +1165,16 @@ int ExternalInit(ExternalModules *eptr) {
 // to be used from P2P, etc.. passes the file data, and size
 ExternalModules *ExternalAdd(ExternalModules **external_module_list, int type, int id, char *buf, int size, int initialize) {
     int ret = 0;
-    ExternalModules *eptr = ExternalFind(external_module_list, id);
- 
+    ExternalModules *eptr = NULL;
+    
+    // following is hack due to botlink not having a passed pointer
+    // to external module list..
+    if (eptr == NULL) {
+        eptr = ExternalFind(external_list, id);
+    } else {
+        eptr = ExternalFind(*external_module_list, id);
+    }
+    
     if (eptr != NULL) {
         if (eptr->buf != NULL) {
             free(eptr->buf);
@@ -1303,7 +1314,7 @@ int ExternalExecutePython(int id, char *script_file, char *func_name, PyObject *
         goto end;
     }
     
-    pValue = PyObject_CallObject(pFunc, NULL);
+    pValue = PyObject_CallObject(pFunc, pArgs);
     if (pValue != NULL && !PyErr_Occurred()) {
         // we must extract the integer and return it.. 
         // for init it will contain the module identifier for
@@ -1347,7 +1358,7 @@ int MessageModule(int module_id, Modules *module_list, ExternalModules *external
     
     // first we check if the module exists within the normal set of modules (compiled in)
     while (mptr != NULL) {
-        if (mptr->id == id) {
+        if (mptr->id == module_id) {
             break;
         }
         mptr = mptr->next;
@@ -1355,7 +1366,7 @@ int MessageModule(int module_id, Modules *module_list, ExternalModules *external
     
     if (mptr == NULL)
     while (eptr != NULL) {
-        if (eptr->id == id) {
+        if (eptr->id == module_id) {
             break;
         }
         eptr = eptr->next;

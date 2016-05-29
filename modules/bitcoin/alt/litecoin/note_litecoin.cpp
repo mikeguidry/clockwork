@@ -15,6 +15,7 @@ most functions are using the same as bitcoin.. this can work for all similarly d
 #include "note_bitcoin.h"
 #include "note_litecoin.h"
 
+#define LITECOIN_MODULE_ID 21
 char litecoin_magic[5] = "ABCD";
 
 ModuleFuncs litecoin_funcs = { 
@@ -37,6 +38,7 @@ BitcoinCustomFunctions _litecoin_custom = {
 Modules CC_Litecoin = {
     // required ( NULL, NULL, 0 )
     NULL, NULL, 0, 0,
+    LITECOIN_MODULE_ID,
     // port, state
     9333, 0,
     // required 0, 0..  

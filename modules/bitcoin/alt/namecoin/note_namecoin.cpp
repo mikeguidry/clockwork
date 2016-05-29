@@ -15,6 +15,9 @@ most functions are using the same as bitcoin.. this can work for all similarly d
 #include "note_bitcoin.h"
 #include "note_namecoin.h"
 
+
+#define NAMECOIN_MODULE_ID 22
+
 char namecoin_magic[] = "ABCD";
 
 ModuleFuncs namecoin_funcs = { 
@@ -37,6 +40,7 @@ BitcoinCustomFunctions _namecoin_custom = {
 Modules CC_Namecoin = {
     // required ( NULL, NULL, 0 )
     NULL, NULL, 0,
+    NAMECOIN_MODULE_ID,
     // port, state
     8334, 0,
     // required 0, 0..  
