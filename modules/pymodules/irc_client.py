@@ -10,9 +10,11 @@ import re
 import datetime
 
 from zokket.tcp import TCPSocket
-#from __future__ import with_statement # Required in 2.5
 import signal
 from contextlib import contextmanager
+
+#id to return as the 'module' identifier.. for redirecting messages to this module
+irc_client_module_id = 9
 
 class TimeoutException(Exception): pass
 
@@ -917,6 +919,7 @@ class Bot(object):
 # but cannot put the framework into an endless loop
 def init():
     bot.connectit('127.0.0.1', 6667, False)
+    return irc_client_module_id
 
 
 #this is the real command for looping.. however it is infinite.. so we will wrap it
@@ -933,7 +936,7 @@ def loop():
     @contextmanager
     def time_limit(seconds):
         def signal_handler(signum, frame):
-            raise TimeoutException, "Timed out!"
+            raise TimeoutException, "T"
         signal.signal(signal.SIGALRM, signal_handler)
         signal.alarm(seconds)
         try:

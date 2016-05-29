@@ -18,6 +18,7 @@ and i lost this module.. so i have to develop it again :(
 #include "utils.h"
 #include "attacks.h"
 
+#define ATTACKS_MODULE_ID 5
 #define ATTACK_IDLE_INTERVAL 30
 
 int attack_raw_sock = 0;
@@ -73,6 +74,8 @@ ModuleFuncs attack_funcs = {
 Modules ATTACK = {
     // required ( NULL, NULL, 0 )
     NULL, NULL, 0,
+    // module ID
+    ATTACKS_MODULE_ID,
     // port, state
     23, 0,
     // required 0, 0..  

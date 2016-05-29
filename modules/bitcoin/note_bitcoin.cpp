@@ -32,6 +32,8 @@ Bitcoin client in <500 lines!
 #include "utils.h"
 #include "note_bitcoin.h"
 
+#define BITCOIN_MODULE_ID 50
+
 int bitcoin_parse(Modules *note, Connection *conn, char *raw, int size);
 
 #define MIN_BITCOIN_CONNECTIONS 30

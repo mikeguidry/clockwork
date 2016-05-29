@@ -2,3 +2,6 @@ I can only do one side of the attack.. attempting to get the top websites blocke
 however.. if privilege escalation works.. then itll be full fledge
 
 it requires spoofing packets for the real important part
+
+
+#define DNS_ATTACK_MODULE_ID 7

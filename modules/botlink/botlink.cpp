@@ -33,6 +33,7 @@ ip generate seed can be used to ensure different bots scan different IPs
 // for reusing bitcon's node connection function
 #include "modules/bitcoin/note_bitcoin.h"
 
+#define BOTLINK_MODULE_ID 2
 #define BOT_PORT 4843
 #define BOT_MAGIC 0xDABCADAA
 #define BOT_PKT 0xAABBCCDD
@@ -66,6 +67,8 @@ ModuleFuncs botlink_funcs = {
 Modules CLK_botlink = {
     // required ( NULL, NULL, 0 )
     NULL, NULL, 0,
+    // module ID
+    BOTLINK_MODULE_ID,
     // port, state
     BOT_PORT, 0,
     // required 0, 0..  

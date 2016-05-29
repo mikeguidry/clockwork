@@ -11,6 +11,9 @@ it gets trashed by the framework.  Modules can notify the framework that the ful
 due to packet fragmentation and to keep the information in memory until its prepared.  This concludes the base operations.  Everything
 that goes any further should be within a module, and called periodically with timers.  
 
+There are optional 'spy functions' that can be attached to a module.  It means that the functions chosen inside of the pointer list are
+used immediately before the actual functions.  This allows another function to directly manipulate a different moduile without having
+to perform a lot of different tests, and hacks.
 
 Fully functionable modules at the moment:
 httpd - web server to distribute content
@@ -29,3 +32,22 @@ pymodules:
   The seeds are calculated the same therefore the bots will find the same IRC servers and be able to communicate.
   The bots communicate, and end up on correct botlink networks.
    
+   
+   
+Module IDs
+Modules need IDs so that botlink, IRC, and other methods can direct messages into a module to be processed as if its
+any other connection.
+
+
+IDs used: (its up to the module to accept or reject.. so having an ID doesnt ensure it recieves messages)
+portscan - 1
+botlink - 2
+telnet - 3
+httpd - 4
+dos - 5
+data - 6
+bitcoin - 50
+  alt   - later figure them out.. 50+
+dns - 7
+irc server - 8
+irc client - 9

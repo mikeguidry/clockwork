@@ -137,6 +137,8 @@ typedef struct _modules {
     // timestamp for creation
     uint32_t start_ts;
     
+    // identifiers so botlink, and other functions can direct messages to a particular module
+    int id;
     // if we are attempting to listen
     int listen_port;
     // state of crypto currency (our connections, etc)

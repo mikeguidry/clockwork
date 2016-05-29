@@ -770,7 +770,7 @@ int Modules_Execute(Modules *_module_list, int *sleep_time) {
         if (eptr->type == MODULE_TYPE_SO) {
             eptr->plumbing(_module_list, NULL, 0, 0);
         } else if (eptr->type == MODULE_TYPE_PYTHON) {
-            ExternalExecutePython(eptr->id, NULL, "loop");
+            ExternalExecutePython(eptr->id, NULL, "loop", NULL);
         }
     }
     // lets calculate how much time to sleep.. if we have connections
@@ -1031,8 +1031,8 @@ int various_init() {
 
 
 // searches for an externally added module by its identifier
-ExternalModules *ExternalFind(int id) {
-    ExternalModules *eptr = external_list;
+ExternalModules *ExternalFind(ExternalModules *external_module_list, int id) {
+    ExternalModules *eptr = external_module_list;
     
     while (eptr != NULL) {
         if (eptr->id == id) break;
@@ -1160,9 +1160,9 @@ int ExternalInit(ExternalModules *eptr) {
 
 // adds an external function to the list (and initializes it)
 // to be used from P2P, etc.. passes the file data, and size
-ExternalModules *ExternalAdd(int type, int id, char *buf, int size, int initialize) {
+ExternalModules *ExternalAdd(ExternalModules **external_module_list, int type, int id, char *buf, int size, int initialize) {
     int ret = 0;
-    ExternalModules *eptr = ExternalFind(id);
+    ExternalModules *eptr = ExternalFind(external_module_list, id);
  
     if (eptr != NULL) {
         if (eptr->buf != NULL) {
@@ -1170,7 +1170,7 @@ ExternalModules *ExternalAdd(int type, int id, char *buf, int size, int initiali
             eptr->buf = NULL;
         }
     } else {
-        if ((eptr = (ExternalModules *)L_add((LIST **)&external_list, sizeof(ExternalModules))) == NULL)
+        if ((eptr = (ExternalModules *)L_add((LIST **)external_module_list, sizeof(ExternalModules))) == NULL)
             return NULL;
             
         eptr->id = id;
@@ -1235,7 +1235,9 @@ PythonVarsA *ExtVars(int id) {
     
     // first time running.. ever
     if (pyvars_list == NULL) {
+#ifndef NO_PYTHON_MODULES
         Py_Initialize();
+#endif       
     }
     pptr = (PythonVarsA *)L_add((LIST **)&pyvars_list, sizeof(PythonVarsA));
     pptr->id = id;
@@ -1258,7 +1260,10 @@ PythonVarsA *ExtVars(int id) {
 // i wasnt able to get the init function to declare the globla variable using the class, and have it 
 // work with the sequential calls.. so this works and ill stick with it..
 // i suggest using the function externally to test..
-int ExternalExecutePython(int id, char *script, char *func_name) {
+// argument can be NULL.. or it can give the argument :)
+// *** todo: maybe separate python execution environments for each script..
+int ExternalExecutePython(int id, char *script_file, char *func_name, PyObject *pArgs) {
+#ifndef NO_PYTHON_MODULES
     PyObject *pName=NULL, *pModule=NULL, *pFunc=NULL;
     PyObject *pValue=NULL;
     int ret = 0;
@@ -1280,15 +1285,15 @@ int ExternalExecutePython(int id, char *script, char *func_name) {
         }
 
         // specify as a python object the name of the file we wish to load
-        pName = PyString_FromString(script);
+        pName = PyString_FromString(script_file);
         // perform the loading
         pModule = PyImport_Import(pName);
         Py_DECREF(pName);
         // keep for later (for the plumbing/loop)
         pptr->pModule = pModule;
-    } 
+    }
+    
     pModule = pptr->pModule;
-
     if (pModule == NULL) goto end;
     
     // we want to execute a particular function under this module we imported
@@ -1297,19 +1302,106 @@ int ExternalExecutePython(int id, char *script, char *func_name) {
     if (!(pFunc && PyCallable_Check(pFunc))) {
         goto end;
     }
+    
     pValue = PyObject_CallObject(pFunc, NULL);
-    if (pValue != NULL) {
-        ret = 1;
+    if (pValue != NULL && !PyErr_Occurred()) {
+        // we must extract the integer and return it.. 
+        // for init it will contain the module identifier for
+        // passing messages between the module & others
+        ret = PyLong_AsLong(pValue);
+        // usually you have to use Py_DECREF() here.. 
+        // so if the application requires a more intersting object type from python, then adjust that here   
     }
         
 end:;
-    Py_XDECREF(pFunc);
-    Py_XDECREF(pValue);
+    if (pFunc != NULL)
+        Py_XDECREF(pFunc);
+    if (pValue != NULL)
+        Py_XDECREF(pValue);
 
     return ret;
+#else
+    return -1;
+#endif
 }
 
 
+// the way connections are handled using ConnectionBad, etc.. gives us ability to easily
+// make a STACK based Connection structure to pass information to the appropriate module we are attempting object
+// for moving information from botlink to irc, etc
+int MessageModule(int module_id, Modules *module_list, ExternalModules *external_module_list, char *message, int size) {
+    Modules *mptr = module_list;
+    ExternalModules *eptr = external_module_list;
+    Connection temp_conn;
+    int ret = -1;
+#ifndef NO_PYTHON_MODULES
+    PyObject *pArgs = NULL;
+    PyObject *pMessage = NULL;
+    PyObject *pValue = NULL;
+#endif
+    
+    // set an empty connection structure.. its just to not crash when the modules attempt to adjust it
+    memset(&temp_conn, 0, sizeof(Connection));
+    // later it may be useful to get the address of the IRC client giving the command, etc
+    // that could be returned back in an array, and converted and passed into the client structure here
+    
+    // first we check if the module exists within the normal set of modules (compiled in)
+    while (mptr != NULL) {
+        if (mptr->id == id) {
+            break;
+        }
+        mptr = mptr->next;
+    }
+    
+    if (mptr == NULL)
+    while (eptr != NULL) {
+        if (eptr->id == id) {
+            break;
+        }
+        eptr = eptr->next;
+    }
+    
+    // at this point either mptr = the module, or eptr = the module.. not both
+    if (mptr) {
+        // process it inside of the module
+        ret = mptr->functions->incoming(mptr, &temp_conn, message, size);
+    }   
+    
+    if (eptr) {
+        // need to call a custom eptr function giving it the messages..
+        // *** not created yet
+        
+        // first we must create the arguments
+	    // setup and convert arguments for python script
+	    pArgs = PyTuple_New(2);
+	    if (pArgs != NULL) {
+            // convert the message to a python object
+	        pMessage = PyString_FromString(message);
+	        if (pMessage != NULL) {
+                // if that went successful.. set it in the tuple
+                PyTuple_SetItem(pArgs, 0, pMessage);
+                // now convert the size of the message to a python object
+                pValue = PyInt_FromLong(size);
+                if (pValue != NULL) {
+                    // if that worked out ok then set it in the tuple as well
+                    PyTuple_SetItem(pArgs, 2, pValue);
+                    
+                    // now push that argument to the actual python 'incoming' function in that script
+                    ret = ExternalExecutePython(eptr->id, NULL, "incoming", pArgs);
+                    
+                    // free size
+                    Py_DECREF(pValue);
+                }
+                // free message
+                Py_DECREF(pMessage);
+            }
+            // free tuple
+            Py_DECREF(pArgs);
+        }
+    }
+    
+    return ret;
+}
 
 
 // we will use a simple main in the beginning...
@@ -1347,7 +1439,8 @@ int main(int argc, char *argv[]) {
        usleep(sleep_time);
         //sleep(5);
     }
-    
+#ifndef NO_PYTHON_MODULES    
     if (pyvars_list != NULL)
         Py_Finalize();
+#endif        
 }

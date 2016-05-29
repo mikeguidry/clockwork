@@ -20,6 +20,8 @@ which could be behind the binary, or other ways of storing it such as statically
 #include "data.h"
 #include "modules/httpd/httpd.h"
 
+// module ID
+#define DATA_MODULE_ID 6
 #define DATA_HTTP_DIR "/a"
 Data *data_list = NULL;
 

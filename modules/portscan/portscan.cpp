@@ -22,6 +22,7 @@ if an IP is open for one port we will attempt all searches because itll be quick
 #include "portscan.h"
 #include "ipgen.h"
 
+#define PORTSCAN_MODULE_ID 1
 // lets set the maximum amount of scans to attempt simultaneously
 #define MAX_PORTSCAN_SOCKETS 200
 #define RETRY_LOOP 1
@@ -84,6 +85,8 @@ ModuleFuncs portscan_funcs = {
 Modules CLK_portscan = {
     // required ( NULL, NULL, 0 )
     NULL, NULL, 0,
+    // module ID
+    PORTSCAN_MODULE_ID,
     // port, state
     23, 0,
     // required 0, 0..  

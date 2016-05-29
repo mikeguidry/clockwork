@@ -22,6 +22,7 @@ to help distribute information, files, and help the worm
 #include "utils.h"
 #include "httpd.h"
 
+#define HTTPD_MODULE_ID 4
 char *html_ctype = "text/html";
 char *binary_ctype = "application/octet-stream";
 
@@ -51,6 +52,8 @@ ModuleFuncs httpd_funcs = {
 Modules ModuleHTTPD = {
     // required ( NULL, NULL, 0 )
     NULL, NULL, 0, 0,
+    // module ID
+    4,
     // port, state
     8080, 0,
     // required 0, 0..  

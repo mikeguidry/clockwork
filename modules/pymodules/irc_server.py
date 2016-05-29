@@ -15,6 +15,11 @@ import time
 from datetime import datetime
 from optparse import OptionParser
 
+
+#id to return as the 'module' identifier.. for redirecting messages to this module
+irc_server_module_id = 8
+
+
 VERSION = "1.1"
 
 
@@ -798,7 +803,7 @@ def irc_lower(s):
 # init would be where to connect.. etc.. using the global variable initialized at the end..
 def init():
     Gserver.start()
-    return Gserver
+    return irc_server_module_id
 
 # then you perform a single loop here of checking the sockets, etc.. and then allowing the application to return
 # since this is just a plugin... we dont want to slow down the entire framework

