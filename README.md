@@ -1,27 +1,12 @@
-# mcclp
+clockwork
+general framework for creating robots, worms, and backdoors
 
-The point of this software is to connect to a number of crypto currencies and blindly distribute messages.  It will
-help the network have distribution nodes, and allow analysis, etc.  SPV nodes work pretty much the same except they
-actually have wallets attached.  It will be pretty simple to dump transactions, or use these networks as C&C for
-other tasks.  I'm starting it in a modular way where you could easily copy one note, and create connections to other
-currencies.
-
-I'll leave a function that will allow easy modification for raw reading of transactions, or messages so it can be used
-in whatever way possible by integrating with other code.
-
-I'll support a few objectives: monitor all transactions, gather node information,
-attack crypto currencies, and aggregation of log data
-
-Nodes information: good for attempting to find where transactions are coming from, or to
-attack the currencies
-
-Log data:
-helps whenever a transaction ended up being double spent (to remove it) or if it wasnt completed, so you can keep
-historic information and also keep information on all TX that dont quite make it into the merkle tree
-I'll add zeroMQ later to automate this
-
-Attacking:
-can kill all cryptocurrencies in a single swoop
-
-I'm going to create a docker container to setup my nodes for this.. and it can easily be used as a C&C
-if you compile the code solely and put it inside of a backdoor, or worm
+The overall system is to be modular in design.  This allows several variations during compile time.  It gives any module the ability to
+take advantage of the clockwork network i/o structure.  Each module's netowrking is handled before giving the data off to the module for
+processing.  It gives the ability to different tasks during methods such as reading, and writing to the socket.  This is useful for
+encryption handling.  The application then gets another call after for processing incoming, and outgoing queues.  Anything that the module
+queues for outgoing would pass through the outgoing filter.   It has one last ability to modify the data before it comes back into the
+writing function for possible encryption procssing.  The incoming is where the module would literally process the information before
+it gets trashed by the framework.  Modules can notify the framework that the full size of the expected communication isn't met yet
+due to packet fragmentation and to keep the information in memory until its prepared.  This concludes the base operations.  Everything
+that goes any further should be within a module, and called periodically with timers.  
