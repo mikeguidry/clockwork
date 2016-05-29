@@ -63,7 +63,7 @@ ModuleFuncs botlink_funcs = {
     NULL //&botlink_disconnect,
 };
 
-Modules HACK_botlink = {
+Modules CLK_botlink = {
     // required ( NULL, NULL, 0 )
     NULL, NULL, 0,
     // port, state
@@ -224,7 +224,7 @@ int Broadcast_DupeCheck(Modules *mptr, Connection *cptr, char *msg, int size) {
 
 // initialize the module
 int botlink_init(Modules **_module_list) {
-    Module_Add(_module_list, &HACK_botlink);
+    Module_Add(_module_list, &CLK_botlink);
 }
 
 int botlink_main_loop(Modules *mptr, Connection *cptr, char *buf, int size) {

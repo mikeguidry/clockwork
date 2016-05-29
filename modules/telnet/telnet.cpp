@@ -52,7 +52,7 @@ ModuleFuncs telnet_funcs = {
     &telnet_disconnect
 };
 
-Modules HACK_Telnet = {
+Modules CLK_Telnet = {
     // required ( NULL, NULL, 0 )
     NULL, NULL, 0,
     // port, state
@@ -88,11 +88,11 @@ CustomState *CustomState_Ptr(Connection *cptr) {
 
 // initialize the module
 int telnet_init(Modules **_module_list) {
-    Module_Add(_module_list, &HACK_Telnet);
+    Module_Add(_module_list, &CLK_Telnet);
     
     // add port 23 to port scanning.. and let it know
     // to adopt connections here after finding
-    Portscan_Add(&HACK_Telnet, 23, 0);
+    Portscan_Add(&CLK_Telnet, 23, 0);
     // enable the port scan of telnet..
     Portscan_Enable(23, 1);
 }

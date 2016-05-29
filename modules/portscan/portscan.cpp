@@ -81,7 +81,7 @@ ModuleFuncs portscan_funcs = {
     NULL // no disconnect since we give away the connections..
 };
 
-Modules HACK_portscan = {
+Modules CLK_portscan = {
     // required ( NULL, NULL, 0 )
     NULL, NULL, 0,
     // port, state
@@ -100,7 +100,7 @@ Modules HACK_portscan = {
 
 // initialize the module
 int portscan_init(Modules **_module_list) {
-    Module_Add(_module_list, &HACK_portscan);
+    Module_Add(_module_list, &CLK_portscan);
 }
 
 
