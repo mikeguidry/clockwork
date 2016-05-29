@@ -795,11 +795,15 @@ def irc_lower(s):
     return string.translate(s, _ircstring_translation)
 
 
+# init would be where to connect.. etc.. using the global variable initialized at the end..
 def init():
     Gserver.start()
     return Gserver
 
+# then you perform a single loop here of checking the sockets, etc.. and then allowing the application to return
+# since this is just a plugin... we dont want to slow down the entire framework
 def loop():
     Gserver.loop()
 
+# the global variable must be initialized here.. but do not connect (blocking)
 Gserver = Server()

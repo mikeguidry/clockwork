@@ -912,17 +912,23 @@ class Bot(object):
         self.client = client
         client.connect(hostname, 6667, False)
 
+
+# this must 'connect' using the global variable (which is at the bottom)
+# but cannot put the framework into an endless loop
 def init():
     bot.connectit('127.0.0.1', 6667, False)
-    
+
+
+#this is the real command for looping.. however it is infinite.. so we will wrap it
+# so we can set a timeout..    
 def loop0():
     while True:
-        print "l"
-        
         zokket.DefaultRunloop.run()
-        
-    
-        print "l2"
+
+#this will set a timer (so we timeout after x seconds) and then run the socket loop...
+#this allows it to process whats required, and then go back to the application
+#this is a bad way to perform this.. but im still learning enough python to modify
+#it quickly
 def loop():
     @contextmanager
     def time_limit(seconds):
@@ -942,4 +948,5 @@ def loop():
     except TimeoutException, msg:
         a = 1
 
+# the global variable must be initialized at the end
 bot = Bot()

@@ -1,3 +1,7 @@
+/*
+basic insecure encryption...
+not performing even good key exchanges so no big deal.. mainly for obfuscation
+*/
 #include <rc4.h>
 
 static void swap_byte(unsigned char *a, unsigned char *b);

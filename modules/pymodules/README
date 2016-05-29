@@ -2,3 +2,6 @@ these are the modules that i didn't wanna develop in C.. so i found safe ones (i
 finish this project faster.. itll be useful in the future to be able to extend the bots in any way possible
 using just python as well. :)
 
+
+if you read the bottom of these two python modules then you'll see how to setup the scripts so that they can
+become inserted
