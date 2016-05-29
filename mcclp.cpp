@@ -366,6 +366,7 @@ void socket_loop(Modules *modules) {
             for (modcptr = mptr->connections; modcptr != NULL; modcptr = modcptr->next) {
                 if (FD_ISSET(modcptr->fd, &readfds)) {
                     if (modcptr->state == TCP_LISTEN) {
+                        printf("listen sock %d\n", modcptr->fd);
                         // if its listening... its a new connection..
                         // it needs to adopt to its correct module after
                         // accepting
@@ -710,7 +711,6 @@ char *QueueParseAscii(Queue *qptr, int *size) {
             if (i < qptr->size) {
                 n = qptr->size - i + 1;
                 newbuf = (char *)calloc(n+1, 1);
-                
                 if (newbuf == NULL) {
                     //printf("couldnt alloc %d - %d\n", n, errno);
                     return NULL;
@@ -832,6 +832,7 @@ Connection *tcp_listen(Modules *mptr, int port) {
     ret->addr = dst.sin_addr.s_addr;
     ret->state = TCP_LISTEN;
     printf("listen  fd %d port %d\n", fd, port);
+    
     return ret;
 }
 
@@ -1052,15 +1053,23 @@ int ExternalDeinit(ExternalModules *eptr) {
     ret = eptr->deinit();
     
     if (ret == 1) {
+        if (eptr->type == MODULE_TYPE_SO) {
         // close dl handle
-        dlclose(eptr->dl_handle);
+        if (dl->dl_handle)
+            dlclose(eptr->dl_handle);
+        } else if (eptr->type == MODULE_TYPE_PYTHON) {
+            // nothing as of now. maybe add ability for python to know its being unloaded later..
+            // ***
+        }
         // close file descriptor
         close(eptr->outfd);
         // null out plumbing so we know its not initialized
         eptr->plumbing = NULL;
         
     }
-    
+
+    if (eptr->plumbing == NULL) return 0;
+        
     return 1;    
 }
 
@@ -1110,6 +1119,7 @@ int ExternalInit(ExternalModules *eptr) {
   
   // now write the buffer..
   i = fwrite(eptr->buf, eptr->size, 1, ofd);
+<<<<<<< HEAD
   if (i == eptr->size) {
       if (eptr->type == MODULE_TYPE_SO) {
         dl_handle = (void *)dlopen(filename, RTLD_GLOBAL);
@@ -1329,7 +1339,6 @@ int main(int argc, char *argv[]) {
     
     // fake name for 'ps'
     //fakename_init(&module_list, argv, argc);
-    
     
     //PySys_SetArgv(argc, argv);    
     // main loop
