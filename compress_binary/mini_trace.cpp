@@ -51,8 +51,19 @@ int i = 0;
 uint64_t raddr = 0;
 int in = 0, out = 0;
 
+if (argc != 3) {
+	printf("%s input output\n", argv[1], argv[2]);
+	exit(-1);
+}
+
 fd = fopen(argv[1], "rb");
 ofd = fopen(argv[2], "wb");
+
+if ((fd == NULL) || (ofd == NULL)) {
+	printf("cannot open files.. in -> %p out -> %p\n", fd, ofd);
+	exit(-1);
+}
+
 while (fread(&raddr, sizeof(uint64_t), 1, fd)) {
 in++;
 	if (addr_check(raddr)) {
@@ -64,7 +75,7 @@ in++;
 fclose(fd);
 fclose(ofd);
 
-printf("in: %d out: %d\n", in, out);
+printf("Count\n\tin: %d out: %d\n", in, out);
 
 return -1;
 }

@@ -3,7 +3,7 @@ Someone had said on irc it will be +6megs.  It seems to be pretty accurate, and 
 
 Solution?
 
-Remove unused code, and compress it.
+Remove unused code, and compress it.  (32bit only supported.. I had issues with my version of x86_emulate() and RIP..maybe unicorn later)
 
 You must realize that this is a pretty sincere hack.  It could cause random crashes, and at a later date I could add a loader to
 download the rest remotely, although for a backdoor thats hardly what anyone wants.
@@ -38,3 +38,25 @@ I had came up with something similar to this to mitigate ROP exploitation.  The 
 blackhat talk regarding removing unused code to mitigate against ROP as well.  That was on a real process during execution and isn't
 the same.  This binary may have ways to easily find it in memory although it will take awhile for first responders.  It can be resolved
 later by removing all unused code, and realigning the assembly code.
+
+Extra notes:
+
+So I've been thinking about automated ways of dynamically ensuring parts required do not get stripped out even without tracing it extensively.
+It's going to be a huge headache to just believe an average person will take care to extensively test every build... less coffee, etc..
+
+Idea:
+execute it and do your best to at least give strings, or trigger functions (such as a networking function.. ie: logging in, and getting data moving
+should be enough) and it can process all instructions inside of the function and find all paths relating to that data..
+so take read (file), recv(socket), and any other known data transferring sockets and tag them.. any functions afterwards that uses that data
+before free() (so those need to be tagged as well.. so it dynamically adds, and removes the information depending on that) and it will
+follow all paths regardless of compares, etc as long as the path relates to the data.. and this would ensure any path possible FROM that data
+specifically would be 'white listed' to stay in the code
+
+I'll give it 2-3 more days and i believe i migth have a full solution to developing 'statically stripped' binaries that make sense..
+the good thing about these techniques are that they could easily be put inside of LLVM, or a realigner..i do not however know how
+effective it would be on a % scale to compare to crashes, etc without tracing (training) at all.. i would also like to 
+use these same concepts with a neural network to determine if it can help the circumstances
+Call backs may be a problem when we dont actually trigger a call back unless we are tracing
+the general read,recv,etc might work for all programs in general as well
+
+to be continued...
