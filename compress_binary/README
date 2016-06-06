@@ -1,0 +1,40 @@
+Since python is involved in this project then it'll have to be statically compiled which will take an enormous amount of space.
+Someone had said on irc it will be +6megs.  It seems to be pretty accurate, and even after stripping it down isn't enough.
+
+Solution?
+
+Remove unused code, and compress it.
+
+You must realize that this is a pretty sincere hack.  It could cause random crashes, and at a later date I could add a loader to
+download the rest remotely, although for a backdoor thats hardly what anyone wants.
+
+How?
+
+This will execute ptrace() on the application using some sample code I had found on google, and then use a portion of XEN's framework
+to emulate the instructions as it single steps.  This will give all information about memory addresses accessed during execution as well
+as the instructions.  The rest of the code can be discarded.  The first compressor that I'll modify to use this trace file is going to be
+UPX.  It's known, public, open source, and easy to modify.  I'll load the trace log in so that memory addresses can be assessed before
+compression to remove them.  This means the compression algorithm will take the NULL bytes, and compress them down drastically.  The ratio
+depends on the framework however it should be substantial.  Remember.. It comes with the cost of possibly crashing some portion of your
+code that you forgot, or couldn't trigger.  You could load your file into IDA pro, and create a script to dump further memory addresses,
+and they wouldn't be stripped.
+
+Problem?
+
+You have to trigger every part of the application that you want to work later.  If you have a particular C function that only gets called
+sometimes, and you do not trigger it during your trace then it will not exist the application gets compressed.  I'm considering a way
+to heuristically determine a few factors.  It is imperitive that you use all features in your application, and possibly even error triggering.
+This means that you should get the password wrong, and send it some bad data.  If you know your code has some paths (if then else) that haven't
+been executed then during the trace is the time they should.
+
+I'll see how much time I spend on this for an alpha build but I'll include all code inside of a function that is listed with an executed
+instruction.  It should cover most if then else, but if one of those logic paths calls another function that is not then its a problem. This
+could be a major issue with python which is why test cases, or some other scenarios should be used.  It might be simple enough to really
+execute the software on a machine and wait a few days, and then build the final stripped down version.
+
+Relatative?
+
+I had came up with something similar to this to mitigate ROP exploitation.  The only thing I've seen public that can relate is some
+blackhat talk regarding removing unused code to mitigate against ROP as well.  That was on a real process during execution and isn't
+the same.  This binary may have ways to easily find it in memory although it will take awhile for first responders.  It can be resolved
+later by removing all unused code, and realigning the assembly code.
