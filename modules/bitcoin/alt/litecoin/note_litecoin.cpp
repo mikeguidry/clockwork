@@ -26,7 +26,8 @@ ModuleFuncs litecoin_funcs = {
     &litecoin_nodes,
     //&bitcoin_main_loop,
     NULL, // no connected
-    NULL // no disconnect
+    NULL, // no disconnect
+    NULL
 };
 
 BitcoinCustomFunctions _litecoin_custom = {
@@ -37,12 +38,12 @@ BitcoinCustomFunctions _litecoin_custom = {
     
 Modules CC_Litecoin = {
     // required ( NULL, NULL, 0 )
-    NULL, NULL, 0, 0,
+    NULL, NULL, 0, 0, 1,
     LITECOIN_MODULE_ID,
     // port, state
     9333, 0,
     // required 0, 0..  
-    0,
+    0, 0, 0,
     //timer = 300 seconds (5min) - get new nodes, etc
     300,
     // litecoin functions

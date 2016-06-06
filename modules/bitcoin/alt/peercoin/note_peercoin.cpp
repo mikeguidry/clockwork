@@ -25,7 +25,8 @@ ModuleFuncs peercoin_funcs = {
     &bitcoin_outgoing,
     &peercoin_nodes,
     NULL, // no connected
-    NULL // no disconnect
+    NULL, // no disconnect
+    NULL
 };
 
 BitcoinCustomFunctions _peercoin_custom = {
@@ -35,12 +36,12 @@ BitcoinCustomFunctions _peercoin_custom = {
     
 Modules CC_Peercoin = {
     // required ( NULL, NULL, 0 )
-    NULL, NULL, 0, 0,
-    PEERCOIN_MODULE_ID,
+    NULL, NULL, 0, 0, 1,
+    PEERCOIN_MODULE_ID, 0,
     // port, state
     9902, 0,
     // required 0, 0..  
-    0, 
+    0, 0,
     //timer = 300 seconds (5min) - get new nodes, etc
     300,
     // litecoin functions

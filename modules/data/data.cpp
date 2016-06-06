@@ -52,15 +52,26 @@ int data_prepare_httpd(int remove) {
     return count;    
 }
 
+// timer for anything in data..
+// this could be attempting to download FILES that were added to the database via botlink by p2p,
+// other bots httpd, etc
+int data_plumbing(Modules *mptr, Connection *cptr, char *buf, int size) {
+    
+}
+
 // load our own external data
 // load from the binary
 int data_load_binnary() {
     
 }
+
 // scan the temp directory and decrypt
+// can get a temp file from a prefix and strstr it, then replace with ...
+// and bots can share anything in this directory automaticaly
 int data_load_tmp() {
     
 }
+
 // request data from peers
 int data_load_botlink() {
     

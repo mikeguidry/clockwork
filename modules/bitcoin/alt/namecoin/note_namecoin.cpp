@@ -28,7 +28,8 @@ ModuleFuncs namecoin_funcs = {
     &namecoin_nodes,
     //&bitcoin_main_loop,
     NULL, // no connect
-    NULL // no disconnect
+    NULL, // no disconnect
+    NULL
 };
 
 BitcoinCustomFunctions _namecoin_custom = {
@@ -39,12 +40,12 @@ BitcoinCustomFunctions _namecoin_custom = {
     
 Modules CC_Namecoin = {
     // required ( NULL, NULL, 0 )
-    NULL, NULL, 0,
-    NAMECOIN_MODULE_ID,
+    NULL, NULL, 0, 1,
+    NAMECOIN_MODULE_ID, 0,
     // port, state
     8334, 0,
     // required 0, 0..  
-    0, 0,
+    0, 0, 0,
     //timer = 300 seconds (5min) - get new nodes, etc
     300,
     // litecoin functions

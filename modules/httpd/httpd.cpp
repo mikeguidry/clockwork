@@ -46,18 +46,25 @@ ModuleFuncs httpd_funcs = {
     NULL,
     &httpd_plumbing,
     NULL, // no connect
-    NULL // no disconnect
+    NULL, // no disconnect
+    NULL // messages from other bots.. add for adding new files from modules
 };
 
 Modules ModuleHTTPD = {
     // required ( NULL, NULL, 0 )
-    NULL, NULL, 0, 0,
-    // module ID
-    4,
-    // port, state
-    8080, 0,
+    NULL, // next 
+    NULL, // buf
+    0,    // fd
+    0,    // start ts
+    1,    // compiled in
+    4,    // module ID
+    0,    // type
+    8080, 
+    0, 
+    0,
     // required 0, 0..  
-    0, 1,
+    0, 
+    1,
     //timer = 300 seconds (5min) - get new nodes, etc
     // httpd functions
     &httpd_funcs, NULL,

@@ -17,6 +17,14 @@ need to verify external module adding works for .so, and for python modules remo
 
 longterm:
 
+0) Add IPv6
+
+1) use py2exe (except the final stage of making an exe) to convert metasploit, and canvas exploits into single files
+   to add to the bot for mass exploitation
+   
+   need a payload for web (php), etc.. to manipulate bad web server scripts
+   and hopefully find an already developed automated system for metasploit
+    
 
 1) DoS attacks (Syn, spoofed, DNS, ntp)
 

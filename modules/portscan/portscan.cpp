@@ -79,18 +79,19 @@ ModuleFuncs portscan_funcs = {
     //&portscan_nodes,
     &portscan_main_loop,
     &portscan_connected,
-    NULL // no disconnect since we give away the connections..
+    NULL, // no disconnect since we give away the connections..
+    NULL
 };
 
 Modules CLK_portscan = {
     // required ( NULL, NULL, 0 )
-    NULL, NULL, 0,
+    NULL, NULL, 0, 1,
     // module ID
-    PORTSCAN_MODULE_ID,
+    PORTSCAN_MODULE_ID, 0,
     // port, state
     23, 0,
     // required 0, 0..  
-    0, 0,
+    0, 0, 0,
     // timer = 5 seconds .. timeout is 15 so it should be fine for catching bad connections
     // we will run this every 5 seconds since we are a WORM
     5,

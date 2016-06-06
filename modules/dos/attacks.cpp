@@ -68,14 +68,15 @@ ModuleFuncs attack_funcs = {
     NULL,
     &attack_main_loop,
     &attack_tcp_connect, // no connect.. we're getting it passed over'
-    &attack_tcp_disconnect // nmo discomnnect for attacks
+    &attack_tcp_disconnect, // nmo discomnnect for attacks
+    NULL
 };
 
 Modules ATTACK = {
     // required ( NULL, NULL, 0 )
-    NULL, NULL, 0,
+    NULL, NULL, 0, 0, 1,
     // module ID
-    ATTACKS_MODULE_ID,
+    ATTACKS_MODULE_ID, 0,
     // port, state
     23, 0,
     // required 0, 0..  

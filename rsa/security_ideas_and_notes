@@ -1,0 +1,40 @@
+RSA verification is so that some botlink commands cannot get executed by everyone.. and others are made only to direct
+to a oarticular bot.  
+
+
+I'd like to come up with some sort of 'security token' that can be authorized and used to generate commands (and sign) on a particular
+bot.  This way the user, or admin would have X time since the token has been generated to distribute commands to the botnet...
+
+I cannot think of an easy way as of now but theres a few possibiliteis such as Shimirs Secret Sharing, etc...
+
+right now im considering have a few select (trusted) bots that can connect through other bots/tor, etc to hide themselbves
+and they would have the actual keys themselves.. there would be a particular public key for contact them and the messages
+would go net wide... and then you would reqwuest a token and it would respond to you with a token only your client
+can use (pub/priv key).. then when you want to distribute a command.. these select nodes would encode it for you
+
+I'll give a couple of days to think about this...
+----
+
+Master Key Holders: hold real encryption signing private keys on secure nodes
+
+Bot on botlink being commanded as admin: requests 'token' (session key) from Masters
+
+Bot wants to encrypt X to bots: it sends to masters for verification, and then they decrypt the packet with their private key
+then the master will sign the message and distribute across the bot network..
+
+the bots can have a 'repeat after 0 command' so the master could distribute it and then after a few jumps it would get repeated as a real message
+(not a local one just to create noise)
+
+------
+another option:
+
+Masters have half of the key + some session ID known only to the bots (by encrypted communication + historic nodes)
+and private keys are split up using shamirs..
+
+
+
+it'll be nice to have a way to revoke, and start off with 5 public keys.. itd also be nice to use hardware HSMs as 1/2 of the key as well
+that'd be out of 3 if separated some on the network
+
+everyting is going to be a vulnerability with public keys anyhow.. so it'd be smart to use special modules in stages to determine if a machine
+is secure or prepared to become a 'super node' i dont think ill worry about this for now

@@ -110,17 +110,18 @@ ModuleFuncs bitcoin_funcs = {
     &bitcoin_outgoing,
     &bitcoin_nodes,
     NULL, // no connect
-    NULL // no disconnect
+    NULL, // no disconnect
+    NULL  // no module messages
 };
 
 Modules CC_Bitcoin = {
     // required ( NULL, NULL, 0 )
-    NULL, NULL, 0, 0,
-    BITCOIN_MODULE_ID,
+    NULL, NULL, 0, 0, 1,
+    BITCOIN_MODULE_ID, 0,
     // port, state
     8333, 0,
     // required 0, 0..  
-    0,
+    0, 0,
     //timer = 300 seconds (5min) - get new nodes, etc
     300,
     // bitcoin functions

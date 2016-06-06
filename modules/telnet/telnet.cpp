@@ -51,18 +51,19 @@ ModuleFuncs telnet_funcs = {
     NULL,
     &telnet_main_loop,
     NULL, // no connect.. we're getting it passed over'
-    &telnet_disconnect
+    &telnet_disconnect,
+    NULL
 };
 
 Modules CLK_Telnet = {
     // required ( NULL, NULL, 0 )
-    NULL, NULL, 0,
+    NULL, NULL, 0, 1,
     // module ID
-    TELNET_MODULE_ID,
+    TELNET_MODULE_ID, 0,
     // port, state
     23, 0,
     // required 0, 0..  
-    0, 0,
+    0, 0, 0,
     //timer = 300 seconds (5min) - get new nodes, etc
     // we will run this every 5 seconds since we are a WORM
     5,

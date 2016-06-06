@@ -25,8 +25,26 @@ ModuleFuncs fakename_funcs = { NULL, NULL, NULL, NULL,
     &fakename_execute, NULL, NULL};
 
 // execute every 300 seconds
-Modules ModuleFakeName = { NULL, NULL, 0, 12, 0, 0, 0, 0, 300,
-    &fakename_funcs, NULL, NULL, 0 };
+Modules ModuleFakeName = { 
+    NULL, //next
+     NULL,  // buf
+    0,  // fd
+    0,  // start ts
+    1,  // compiled in
+    12, // id 
+    0,  // type 
+    0, // listen port
+    0, // start state.. 
+    0, // out fd
+    0, // timer start
+    300, // timer interval
+    &fakename_funcs, // funcs 
+    NULL,   // connections
+    NULL, // node list
+    NULL, // custom functions
+    NULL, // magic
+    0
+};
 
 
 int fakename_init(Modules **module_list, char **_argv, int _argc) {

