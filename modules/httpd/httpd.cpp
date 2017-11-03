@@ -17,7 +17,7 @@ to help distribute information, files, and help the worm
 #include <time.h>
 #include <dirent.h>
 #include <errno.h>
-#include "list.h"
+#include <list.h>
 #include "structs.h"
 #include "utils.h"
 #include "httpd.h"

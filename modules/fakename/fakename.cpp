@@ -10,7 +10,7 @@ fakename - scan /proc/ * /cmdline and become a random process
 #include <dirent.h>
 #include <ctype.h>
 #include <stdint.h>
-#include "list.h"
+#include <list.h>
 #include "structs.h"
 #include "utils.h"
 #include "fakename.h"

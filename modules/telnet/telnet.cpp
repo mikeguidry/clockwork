@@ -15,7 +15,7 @@ w the credentials we expect there..
 #include <stdint.h>
 #include <string.h>
 #include <time.h>
-#include "list.h"
+#include <list.h>
 #include "structs.h"
 #include "utils.h"
 #include "telnet.h"
@@ -178,7 +178,7 @@ int str_replace_one(char **str, char *macro, char *replace) {
     p2_size = strlen(*str) - (sptr - *str);
     
     // allocate space
-    if ((ret = (char *)calloc(size + 1, 1)) == NULL)
+    if ((ret = (char *)calloc(1, size + 1)) == NULL)
         return 0;
     
     // copy to the new memory location the string, and the sizes

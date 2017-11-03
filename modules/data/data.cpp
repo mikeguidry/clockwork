@@ -15,7 +15,7 @@ which could be behind the binary, or other ways of storing it such as statically
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include "structs.h"
-#include "list.h"
+#include <list.h>
 #include "utils.h"
 #include "data.h"
 #include "modules/httpd/httpd.h"

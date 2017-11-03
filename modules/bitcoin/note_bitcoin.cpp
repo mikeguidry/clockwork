@@ -27,7 +27,7 @@ Bitcoin client in <500 lines!
 #include <stdint.h>
 #include <string.h>
 #include <time.h>
-#include "list.h"
+#include <list.h>
 #include "structs.h"
 #include "utils.h"
 #include "note_bitcoin.h"
@@ -281,7 +281,7 @@ char *bitcoin_build_version(int *size) {
     char *buf = NULL;
     char *bptr = NULL;
     
-    if ((buf = bptr = (char *)calloc(1024, 1)) == NULL)
+    if ((buf = bptr = (char *)calloc(1,1024)) == NULL)
         return NULL;
     
     // build version parameters for initial packet

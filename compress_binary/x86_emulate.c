@@ -1256,7 +1256,7 @@ x86_emulate(
      */
     struct operand ea = { .type = OP_MEM };
 
-printf("%llu eip\n", _regs.rip);
+//printf("%llu eip\n", _regs.rip);
 
     ea.mem.seg = x86_seg_ds; /* gcc may reject anon union initializer */
     ctxt->retire.byte = 0;

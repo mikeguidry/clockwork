@@ -49,7 +49,7 @@ void L_link_ordered(LIST **list, LIST *ele) {
 LIST *L_add_0(LIST **list, int size, int ordered) {
   LIST *newptr;
 
-  newptr = (LIST *)calloc(size,1);
+  newptr = (LIST *)calloc(1,size);
   if (newptr == NULL) return NULL;
 
   if (!ordered) 

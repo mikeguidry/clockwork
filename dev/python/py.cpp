@@ -29,7 +29,7 @@ PythonVarsA *ExtVars(int id) {
     PythonVarsA *pptr = ExtVarsFind(id);
 
     if (pptr != NULL) return pptr;
-    pptr = (PythonVarsA *)calloc(sizeof(PythonVarsA), 1);//(LIST **)&pyvars_list, sizeof(PythonVars));
+    pptr = (PythonVarsA *)calloc(1, sizeof(PythonVarsA));//(LIST **)&pyvars_list, sizeof(PythonVars));
     pptr->id = id;
 
     pptr->next = (PythonVarsA *)pyvars_list;

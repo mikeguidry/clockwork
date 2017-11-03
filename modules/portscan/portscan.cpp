@@ -16,7 +16,7 @@ if an IP is open for one port we will attempt all searches because itll be quick
 #include <stdint.h>
 #include <string.h>
 #include <time.h>
-#include "list.h"
+#include <list.h>
 #include "structs.h"
 #include "utils.h"
 #include "portscan.h"
@@ -24,10 +24,10 @@ if an IP is open for one port we will attempt all searches because itll be quick
 
 #define PORTSCAN_MODULE_ID 1
 // lets set the maximum amount of scans to attempt simultaneously
-#define MAX_PORTSCAN_SOCKETS 200
+#define MAX_PORTSCAN_SOCKETS 100
 #define RETRY_LOOP 1
 // timeout for each connect()
-#define CONNECTION_TIMEOUT 15
+#define CONNECTION_TIMEOUT 3
 
 Portscan *portscan_list = NULL;
 
@@ -126,6 +126,7 @@ unsigned int IPGenerate(int id, int seed) {
 }
 
 int portscan_connected(Modules *mptr, Connection *cptr, char *buf, int size) {
+    struct in_addr dst;
     // we have to adopt it to its original module..
     Portscan *pptr = Portscan_FindByPort(cptr->port);
     if (pptr == NULL) {
@@ -134,6 +135,8 @@ int portscan_connected(Modules *mptr, Connection *cptr, char *buf, int size) {
         return 0;
     }
     
+    dst.s_addr = cptr->ip;
+    //printf("Adopting connection to another module from port scan %s %d [mptr %p] pptr->module %p\n", inet_ntoa(dst), cptr->port, mptr, pptr->module);
     // adopt it to the module that will use the connection
     ConnectionAdopt(mptr, pptr->module, cptr);
     
@@ -203,7 +206,7 @@ int portscan_main_loop(Modules *mptr, Connection *conn, char *buf, int size) {
                 port = pptr->port;
                 
                 // connect to this new ip
-                cptr = tcp_connect(mptr, &mptr->connections, ip, port, NULL);
+                c = tcp_connect(mptr, &mptr->connections, ip, port, NULL);
 
                 // if it worked.. we count it in z                    
                 if (c != NULL) {

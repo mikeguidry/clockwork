@@ -53,3 +53,13 @@ irc server - 8
 irc client - 9
 
 fakename - 12
+
+---------------------------------
+initially i was going to include a way to commands bots using RSA, etc
+but since i have no security at the moment i decided not to leave a way to control bots
+they will share information, and then use statistics to determine how real or not it is
+then if its being falsified... they can stop listening to all other bots and then begin to
+investigate it themselves (such as DNS servers, hostnames, etc)
+
+if someone wants to modify it the rsa directory has some exaamples i found online which could
+allow command management.... oh well.. why kill something thats giving everyone their privacy back?

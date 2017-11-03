@@ -25,7 +25,7 @@ needs to be sorted + uniqued for processing
 #endif
 #include "x86_emulate.h"
 
-
+int count = 0;
 
 // these are the 'specialty' instructions that we can control if we wish to log the information that
 // they read/write/etc
@@ -56,6 +56,115 @@ struct hack_x86_emulate_ops {
         void *invlpg;
 };
 
+typedef struct memory_map_information {
+        struct _memory_map_information *next;
+
+        void *start;
+        void *end;
+
+        uint32_t size;
+
+} MemoryMapInfo;
+
+
+
+MemoryMapInfo *map_list = NULL;
+
+MemoryMapInfo *MapFind(void *address) {
+        MemoryMapInfo *mptr = map_list;
+        while (mptr != NULL) {
+
+                if ((address >= mptr->start) && (address < mptr->end)) {
+                        //printf("Found address %X\n", address);
+                        return mptr;
+                }
+
+                mptr = mptr->next;
+        }
+
+        return mptr;
+}
+
+typedef struct _addresses {
+	struct _addresses *next;
+
+	void *address;
+
+} Addresses;
+
+Addresses *address_list = NULL;
+
+int check(int pid, void *address, int set) {
+        Addresses *aptr = address_list;
+        while (aptr != NULL) {
+                if (aptr->address == address) break;
+                aptr = aptr->next;
+        }
+
+        if (aptr != NULL && set == 0) return 0;
+
+        if (set && aptr == NULL) {
+                aptr = (Addresses *)calloc(1,sizeof(Addresses));
+
+                if (aptr == NULL) return -1;
+
+                aptr->address = address;
+
+                if (MapFind((void *)address) == NULL) {
+                        rva_to_offset(pid, address);
+                }
+
+                aptr->next = address_list;
+
+                address_list = aptr;
+        }
+
+        return 1;
+}
+
+
+int rva_to_offset(int pid, void *address) {
+        char filename[1024];
+        FILE *fd = NULL;
+        char *sptr = NULL;
+        char buf[1024];
+        char perm[5];
+        MemoryMapInfo *mptr = NULL;
+        #ifdef defined(__i386__)
+        uint32_t addr_begin, addr_end, size;
+        #else
+        uint32_t addr_begin, addr_end, size;
+        #endif        
+
+        sprintf(filename, "/proc/%d/maps", pid);
+        if ((fd = fopen(filename, "r")) == NULL) return -1;
+
+        // lets skip the first line
+        fgets(buf,1024,fd);
+
+        while (fgets(buf,1024,fd)) {
+                if ((sptr = strchr(buf, '\r')) != NULL) *sptr = 0;
+                if ((sptr = strchr(buf, '\n')) != NULL) *sptr = 0;
+                //printf("\n%s\n", buf);
+                sscanf(buf, "%x-%x %4s %x %*s %*s %*s", &addr_begin, &addr_end, perm, &size, sptr, sptr, sptr);
+                
+                if ((mptr = MapFind(addr_begin)) == NULL) {
+                        mptr = (MemoryMapInfo *)calloc(1,sizeof(MemoryMapInfo));
+                        if (mptr != NULL) {
+                                mptr->start = addr_begin;
+                                mptr->end = addr_end;
+                                mptr->size = size;
+
+                                mptr->next = map_list;
+                                map_list = mptr;
+
+                                printf("Addr %08X -> %08X perm %s size %X\n", addr_begin, addr_end, perm, size);
+                        }
+                }
+        }
+        fclose(fd);
+}
+
 
 FILE *ofd = NULL;
 int Gpid = 0;
@@ -72,6 +181,7 @@ uint64_t offset,
 void *p_data, unsigned int bytes, struct _x86_emulate_ctxt *ctxt) {
         int i = 0;
         char *buf = NULL;
+
 #ifdef defined(__i386__)
         uint32_t *_instr = NULL;
         
@@ -83,9 +193,9 @@ void *p_data, unsigned int bytes, struct _x86_emulate_ctxt *ctxt) {
 #endif
         
 #ifdef defined(__i386__)
-	printf("2 %X [bytes %d]\n", offset, bytes);
+	//printf("2 %X [bytes %d]\n", offset, bytes);
 #else
-	printf("2 %llu [bytes %d]\n", offset, bytes);
+	//printf("2 %llu [bytes %d]\n", offset, bytes);
 #endif        
         
         buf = (char *)calloc(1, bytes);
@@ -104,8 +214,10 @@ void *p_data, unsigned int bytes, struct _x86_emulate_ctxt *ctxt) {
         // log addresses
         for (i = 0; i < bytes; i++) {
                 _instr = (uint32_t *)(offset + i);
-                fwrite((void *)&_instr, sizeof(uint32_t), 1, ofd);
-		printf("3 %X [%X %d]\n", _instr, offset, i);
+                if (check(Gpid, (void *)_instr, 1)) {
+                        fwrite((void *)&_instr, sizeof(uint32_t), 1, ofd);
+//		printf("3 %X [%X %d]\n", _instr, offset, i);
+                }
         }
 
 #else        
@@ -118,8 +230,12 @@ void *p_data, unsigned int bytes, struct _x86_emulate_ctxt *ctxt) {
         // log addresses
         for (i = 0; i < bytes; i++) {
                 _instr = (uint64_t *)(offset + i);
-                fwrite((void *)&_instr, sizeof(uint64_t), 1, ofd);
-		printf("3 %llu [%llu %d]\n", _instr, offset, i);
+                if (check(Gpid, (void *)_instr, 1)) {
+                        fwrite((void *)&_instr, sizeof(uint64_t), 1, ofd);
+
+                     
+                }
+       
         }
 #endif        
         
@@ -135,7 +251,7 @@ void *p_data, unsigned int bytes, struct _x86_emulate_ctxt *ctxt) {
 
 static int emulated_read_fetch(enum x86_segment seg, uint64_t offset, void *p_data, unsigned int bytes, struct _x86_emulate_ctxt *ctxt) {
 
-printf("F %llu\n", offset);
+//printf("F %llu\n", offset);
 	return emulated_read(seg, offset, p_data, bytes, ctxt);
 }
 
@@ -221,9 +337,9 @@ void emulate_log(int pid) {
 	emulation_ctx.regs = &Eregs;
 
 #ifdef defined(__i386__) 
-        printf("1 %X - EIP\n", Eregs.eip);
+       // printf("1 %X - EIP\n", Eregs.eip);
 #else
-	printf("1 %llu - EIP\n", Eregs.rip);
+	//printf("1 %llu - EIP\n", Eregs.rip);
 #endif
 
 #ifdef defined(__i386__) 
@@ -242,9 +358,9 @@ void emulate_log(int pid) {
 #endif
 
 #ifdef defined(__i386__) 
-        printf("B %X\n", Eregs.eip);
+        //printf("B %X\n", Eregs.eip);
 #else
-	printf("B %llu\n", Eregs.rip);
+	//printf("B %llu\n", Eregs.rip);
 #endif
 	
         // emulate the instruction so that it logs the addresses used
@@ -261,7 +377,8 @@ int main(int argc, char *argv[]) {
         int pid;                /*  child's process id          */
 	char buf[1024];
 	struct user_regs_struct regs;
-	int personality_setting = 0;
+        int personality_setting = 0;
+        MemoryMapInfo *mptr = NULL;
 
         memset((void *)&emulate_ops, 0, sizeof(struct hack_x86_emulate_ops));
 
@@ -283,8 +400,8 @@ int main(int argc, char *argv[]) {
                 perror("fork");
                 break;
         case 0: /*  child process starts        */
-		personality_setting = personality(0xffffffff);
-		personality(personality_setting|ADDR_NO_RANDOMIZE);
+		//personality_setting = personality(0xffffffff);
+		//personality(personality_setting|ADDR_NO_RANDOMIZE);
                 ptrace(PTRACE_TRACEME, 0, 0, 0);
                 /* 
                  *  must be called in order to allow the
@@ -305,7 +422,7 @@ int main(int argc, char *argv[]) {
 
 		ptrace(PTRACE_GETREGS, pid, NULL, &regs);
 
-		//printf("%X\n", regs.rip);
+		printf("%llx\n", regs.rip);
 		// we want to log our instruction address here..
 		//fwrite((void *)&regs.rip, sizeof(uint64_t), 1, ofd);
                 /*   
@@ -329,9 +446,9 @@ int main(int argc, char *argv[]) {
                 ptrace(PTRACE_GETREGS, pid, NULL, &regs);
 
 #ifdef defined(__i386__)
-                printf("0 %X\n", regs.eip);
+                //printf("0 %X\n", regs.eip);
 #else
-                printf("0 %llu\n", regs.rip);
+                //printf("0 %llu\n", regs.rip);
 #endif
 
 		emulate_log(pid);
@@ -339,10 +456,19 @@ int main(int argc, char *argv[]) {
                 // we want to log our instruction address here..
                 fwrite((void *)&regs.rip, sizeof(uint64_t), 1, ofd);
 
+                mptr = MapFind((void *)regs.rip);
+                if (mptr != NULL) {
+        
+                        printf("3 %llu\n", regs.rip);
+                        
+                }
+        
+                //if (count++ > 10000) exit(-1);
+
             }
         }
 
-        printf("Number of machine instructions : %lld\n", counter);
+       // printf("Number of machine instructions : %lld\n", counter);
 
 	fclose(ofd);
         return 0;
