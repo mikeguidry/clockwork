@@ -1,3 +1,6 @@
+
+
+
 #define ANTI_SURVEILLANCE_MODULE_ID 666
 
 // function declarations for anti surveillance module
@@ -34,3 +37,6 @@ Modules ModuleANTISURV = {
     &antisurv_funcs, NULL,
     NULL, NULL, NULL, 0
 };
+
+
+typedef char *(*attack_func)(AS_attacks *aptr);

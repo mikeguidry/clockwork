@@ -181,8 +181,8 @@ void OutgoingFlush(Connection *cptr) {
 
     dst.s_addr = cptr->ip;
     if (connected == 1 && cptr->state == TCP_NEW) {
-    printf("is sock connected? fd %d %d  ip %s [mptr %p] closed %d cptr %p NEW? %d\n", cptr->fd, connected, inet_ntoa(dst), cptr->module, cptr->closed, cptr,
-    cptr->state == TCP_NEW);
+        printf("is sock connected? fd %d %d  ip %s [mptr %p] closed %d cptr %p NEW? %d\n", cptr->fd, connected, inet_ntoa(dst), cptr->module, cptr->closed, cptr,
+            cptr->state == TCP_NEW);
     }
 
     if ((is_sock_connected == 0) && cptr->state == TCP_NEW) {
@@ -358,7 +358,6 @@ void socket_loop(Modules *modules) {
     int maxfd = 0;
     struct timeval ts;
     int count = 0;
-    struct in_addr dst;
     
     // wait 100 ms for select
     ts.tv_sec = 0;
@@ -398,19 +397,7 @@ void socket_loop(Modules *modules) {
             ConnectionCleanup(&mptr->connections);
             // the module may have several Connection as well
             for (modcptr = mptr->connections; modcptr != NULL; modcptr = modcptr->next) {
-                /*if (modcptr->module == NULL) {
-                    printf("connection has noo module but listed! fd %d\n", modcptr->fd);
-                }*/
-                
                 if (FD_ISSET(modcptr->fd, &readfds)) {
-                    if (modcptr->state == TCP_NEW) {
-                        printf("have a new being read\n");
-                        // this was in outgoing flush.. i thought write fds would work properly.. weird
-                        // lets try on read fds.. i can move code later for connections being detected...
-                        OutgoingFlush(modcptr);
-                        continue;
-                    }
-
                     if (modcptr->state == TCP_LISTEN) {
                         // if its listening... its a new connection..
                         // it needs to adopt to its correct module after
@@ -427,11 +414,6 @@ void socket_loop(Modules *modules) {
                 }
 
                 if (FD_ISSET(modcptr->fd,&writefds)) {
-                    dst.s_addr = modcptr->ip;
-                    //printf("write fd on connection fd %d ip %s\n", modcptr->fd, inet_ntoa(dst));
-                    if (modcptr->state == TCP_NEW) {
-                        //printf("writefd have a new with write being possible mptr %p fd %d closed %d\n", mptr, modcptr->fd, modcptr->closed);
-                    }
                     OutgoingFlush(modcptr);
                     continue;
                 }
@@ -462,7 +444,6 @@ void ConnectionRead(Connection *cptr) {
     int r = 0;
     Queue *newqueue = NULL;
     
-    //printf("connectionread: fd %d\n", cptr->fd);
     // check size waiting
     // maybe find another way.. not sure if ioctl will work everywhere
     ioctl(cptr->fd, FIONREAD, &waiting);    
@@ -472,7 +453,6 @@ void ConnectionRead(Connection *cptr) {
         ConnectionBad(cptr);
         return;
     }
-
 
     // lets add a little more just in case a fragment came in
     size = waiting;
@@ -629,9 +609,8 @@ int RelayAdd(Modules *module, Connection *conn, char *buf, int size) {
 // chop X data off the front of a queue (used after a command in botlink is read)
 // since removing the queue completely is bad
 int QueueChop(Queue *qptr, int size) {
-    if (size >= qptr->size) {
+    if (size >= qptr->size)
         return 0;
-    }
     
     memmove(qptr->buf, qptr->buf + size, qptr->size - size);
     qptr->size -= size;
@@ -698,9 +677,8 @@ int QueueMerge(Queue **queue) {
         // calculate size of both
         size = qptr->size + qptr2->size;
         
-        if ((buf = (char *)calloc(1, size + 1)) == NULL) {
+        if ((buf = (char *)calloc(1, size + 1)) == NULL)
             return -1;
-        }
         
         // copy buffer to new memory location        
         memcpy(buf, qptr->buf, qptr->size);
@@ -957,6 +935,7 @@ Connection *tcp_connect(Modules *mptr, Connection **connections, uint32_t ip, in
     // lets do this before allocating the connection structure..
     r = connect(fd, (struct sockaddr *)&dst, sizeof(struct sockaddr_in));
     
+    // *** use structure defines... instead of arbitrary integers defining EINPROGRESS
     if (r == -1 && errno != 115) {
         //printf("r %d errno = %d\n",r, errno);
         close(fd);
@@ -966,6 +945,8 @@ Connection *tcp_connect(Modules *mptr, Connection **connections, uint32_t ip, in
 
     
     // if we are reusing a structure.. do it otherwise create a new
+    // this is so brute forcing a particular machine would stay in context at the exact username it left off..
+    // it coould be used for several other things as well.. i have somme new concept for staging in different ways
     if (_conn == NULL || *_conn == NULL)
         cptr = (Connection *)L_add((LIST **)&mptr->connections, sizeof(Connection));
     else
@@ -1082,10 +1063,13 @@ int SpyAdd(Modules *mptr, ModuleFuncs *funcs) {
 // i wont deal with encryption here for now.. botlink will do it on demand
 int various_init() {
     struct sockaddr_in me;
+    
     // find IP and put into 'my_ip'
     uint32_t src = getOurIPv4();
     me.sin_addr.s_addr = src;
     strcpy(my_ip, inet_ntoa(me.sin_addr));
+
+    return 1;
 }
 
 
