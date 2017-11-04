@@ -87,25 +87,29 @@ syn flood, virtual tcp connections (much eaier now that we do not need both side
 
 */
 
+#include <unistd.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <netinet/ip.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
+#include <errno.h>
+#include <getopt.h>
+#include <string.h>
+#include <arpa/inet.h>
 #include <sys/select.h>
 #include <sys/ioctl.h>
 #include <sys/types.h>
-#include <sys/socket.h>
 #include <stdint.h>
 #include <time.h>
 #include <string.h>
-#include <arpa/inet.h>
 #include <fcntl.h>
-#include <netinet/in.h>
 #include <resolv.h>
 #include "structs.h"
 #include <list.h>
 #include "utils.h"
 #include "anti_surveillance.h"
-#include <rc4.h>
 
 
 // queue for futher requests to the DNS lookup which will populate IPs for major sites, and corporations
@@ -367,7 +371,7 @@ int AS_queue(char *buf, int size, AS_attacks *attack) {
 // the point is initially that the systems wont be prepared for these kinds of attacks...
 // but a start date will get put in (prob nov 4-5) which will be the date fromm when the depth will be calculated
 // after full connectioons are established (depth = 3) then it will rely on virtual connections as well
-int AS_syn_queue(uint32_t src, uint32_t dst, int count, int interval, int depth) {
+int AS_session_queue(uint32_t src, uint32_t dst, int count, int interval, int depth) {
     AS_attacks *aptr = NULL;
 
     aptr = (AS_attacks *)calloc(1, sizeof(AS_attacks));
@@ -376,7 +380,7 @@ int AS_syn_queue(uint32_t src, uint32_t dst, int count, int interval, int depth)
 
     aptr->src = src;
     aptr->dst = dst;
-    aptr->type = ATTACK_SYN;
+    aptr->type = ATTACK_SESSION;
     aptr->count = count;
     aptr->repeat_interval = interval;
 
@@ -402,14 +406,330 @@ int AS_perform() {
     return 1;
 }
 
+
+/* took some packet forging stuff I found online, and modified it...
+   It was better than my wireshark -> C array dumping w memcpy... trying to hack this together as quickly as possible isnt fun :)
+
+   /*!	forgetcp.c
+ * 	\Brief Generate TCP packets
+ * 	\Author jve
+ * 	\Date  sept. 2008
+*/
+
+
+
+#define PSEUDOTCPHSIZE	12
+// base ip header size (without options)
+#define IPHSIZE		20
+
+// pseudo structure for calculating checksum
+struct pseudo_tcp
+{
+	unsigned saddr, daddr;
+	unsigned char mbz;
+	unsigned char ptcl;
+	unsigned short tcpl;
+	struct tcphdr tcp;
+};
+
+// this is goiong to be a global structure which allows context information to stay valid so
+// multiple packets ccan be built in order without having to return pointers, and increasing memory utilizations etc
+// be sure to zero this on initial packet..
+struct _pkt_building_context {
+    uint32_t ack;
+    uint32_t seq;
+    uint32_t src_id;
+    uint32_t dst_id;
+    int emulated_operating_system;
+    // we want to begin to log counter information for emulated operating systems...
+    // we have to do ur best to ensure nothing is left to catch these packets
+    int last_pkt_len[1]; // depending on source/dest .. we will keep both since we are building entire sessions
+} PacketBuildContext;
+
+// packet header.. options go after tcphdr.. i havent used iphdr so oh well
+struct packethdr
+{
+	struct iphdr ip;
+    struct tcphdr tcp;
+    // lets add 1500 since its the default MTU...
+    // its used for putting the options after the tcp header.. and data as well...
+    // its easier sinnce the size is being used in many places rather than allocating, and copying
+    // when our goal is for speed to deliver packets per second
+    char data[1500];
+};
+
+enum {
+    TCP_WANT_CONNECT,
+    TCP_CONNECT_OK,
+    TCP_ESTABLISHED,
+    TCP_TRANSFER,
+    TCP_END
+};
+
+
+unsigned char *build_tcp_packet(uint32_t src, uint32_t dst, int src_port, int dst_port, int type, char *data, int data_size) {
+    unsigned char *final_packet = NULL;
+    int final_packet_size = 0;
+    struct packet p;
+   	// options are here static.. i need to begin to generate the timestamp because that can be used by surveillance platforms
+	// to attempt to weed out fabricated connections ;) i disabled it to grab this raw array
+    unsigned char options[12] = {0x02, 0x04,0x05, 0xb4, 0x01, 0x01, 0x04, 0x02, 0x01, 0x03,0x03, 0x07};
+    // this is preparing for when we have dynamic options...
+    char *current_options = (char *)options;
+    int current_options_size = 12;
+    // base tcp header size (without options, which are used for establishing the handshake for opening the connection)
+    int TCPHSIZE = 20;
+
+
+    memset(&p, 0x0, sizeof(struct packet));
+
+
+    // ip header.. 
+	p.ip.version 	= 4;
+	p.ip.ihl 	= IPHSIZE >> 2;
+	p.ip.tos 	= 0;
+	
+    // thiis id gets incremented similar to ack/seq (look into further later)
+    // it must function properly like operating systems (windows/linux emulation needed)
+    // itll take weeks or months to updaate systems to actually search for this and determine differences
+    // and thats IF its even possible (due to their implementation having so much more data
+    // than possible to log... it must make decisions extremely fast)  ;) NSA aint ready.
+    p.ip.id 	= htons(rand()%65535);
+    // this can also be used to target the packets... maybe changee options per machine, or randomly after X time
+    p.ip.frag_off 	= 0x0040;
+    
+	p.ip.ttl 	= 0x80;
+	p.ip.protocol 	= IPPROTO_TCP;
+	p.ip.saddr 	= src;
+	p.ip.daddr 	= dst;
+
+    // tcp header
+    
+    // we want a function to build our ack seq.. it must seem semi-decent entropy.. its another area which
+    // can be used later (with a small.. hundred thousand or so array of previous ones to detect entropy kindaa fast
+    // to attempt to dissolve issues this system will cause.. like i said ive thought of all possibilities..)
+    p.tcp.ack_seq	= htonl(atoi("11111"));
+    p.tcp.urg	= 0;
+    
+    // syn/ack used the most
+    p.tcp.syn	= 0;
+    p.tcp.ack	= 0;
+    // push so far gets used when connection gets established fromo sserver to source
+    p.tcp.psh	= 0;
+    // fin and rst are ending flags...
+    p.tcp.fin	= 0;
+    p.tcp.rst	= 0;
+    // window needs to also be dynamic with most used variables for operating systems...
+    // it should have a dynamic changing mechanism (15-30% for each, and then remove, or add 3-5% every few minutes)
+    p.tcp.window	= htons(atoi("16350"));
+    
+    p.tcp.check	= 0;	/*! set to 0 for later computing */
+    
+	p.tcp.urg_ptr	= 0;
+    
+    p.tcp.source = htons(src_port);
+    p.tcp.dest = htons(dst_port);
+
+
+    // play with build packet context.. ensure to keep it proper for the next call to this function which may build its 
+    // 2nd,3rd,, 4th , etc packets.. (we will be streaming entire files soon)
+    // pretty much everything the older paper mentioned about manipulation of these systems is about to be implemented
+    // enjooy that shit.
+    p.tcp.seq	= htonl(atoi("99999"));
+
+
+
+    if (type == TCP_WANT_CONNECT) {
+        p.tcp.syn = 1;
+        p.ip.tot_len += current_options_size;
+    } else if (type == TCP_CONNECT_OK) {
+        // some OS will usse the size of the last packet here...
+        // get the emulatioon correct.
+        
+    } else if (type == TCP_ESTABLISHED) {
+        p.tcp.psh = 1;
+
+    }
+    
+    if (p.tcp.ack == 0) {
+        // verify these... if wiresharks accepts it we are OK (until we have to emulate windows, linux, and ios)
+        // nmap might have somme information on verifyinng against those..
+
+        p.tcp.ack = ++PacketBuildContext.seq;
+    }
+
+    if (p.tcp.seq == 0) {
+        p.tcp.seq += data_size;
+    }
+
+    TCPHSIZE += current_options_size;
+    memcpy(p.data, current_options, current_options_size);
+    
+    p.ip.tot_len 	= htons(IPHSIZE + TCPHSIZE);
+	p.tcp.doff 	= TCPHSIZE >> 2;
+    p.ip.tot_len 	= htons(IPHSIZE + TCPHSIZE);
+    p.ip.check	= (unsigned short)in_cksum((unsigned short *)&p.ip, IPHSIZE);
+
+    if (p.tcp.check == 0) {
+		/*! pseudo tcp header for the checksum computation
+		 */
+		struct pseudo_tcp p_tcp;
+		memset(&p_tcp, 0x0, sizeof(struct pseudo_tcp));
+
+		p_tcp.saddr 	= p.ip.saddr;
+		p_tcp.daddr 	= p.ip.daddr;
+		p_tcp.mbz 	= 0;
+		p_tcp.ptcl 	= IPPROTO_TCP;
+		p_tcp.tcpl 	= htons(TCPHSIZE);
+		memcpy(&p_tcp.tcp, &p.tcp, TCPHSIZE);
+
+		/*! compute the tcp checksum
+		 *
+		 * TCPHSIZE is the size of the tcp header
+		 * PSEUDOTCPHSIZE is the size of the pseudo tcp header
+		 */
+        p.tcp.check = (unsigned short)in_cksum((unsigned short *)&p_tcp, TCPHSIZE + PSEUDOTCPHSIZE);
+        
+	}
+
+    final_packet_size = TCPHSIZE + IPHSIZE + data_size;
+
+    final_packet = (unsigned char *)malloc(1, final_packet_size);
+    if (final_packet == NULL) {
+        /// leak somewhere.. fuck it
+        // we are already executing on foreign IoT environments, or other systems..
+        // not about to fix this leak during execution
+        exit(-1);
+    }
+
+    memcpy(final_packet, &p, final_packet_size);
+
+    // need a way for THIS function to know which is what side f the connection to calculate ack/seq propery
+    // especially when emulating different operating systems
+    //PacketBuildContext.lasT_packet_value[?] = final_packet_size;
+
+    return final_packet;
+    
+
+
+}
+
+// calculate checksum
+unsigned short in_cksum(unsigned short *addr,int len)
+{
+	register int sum = 0;
+	u_short answer = 0;
+	register u_short *w = addr;
+	register int nleft = len;
+
+        /*!
+	* Our algorithm is simple, using a 32 bit accumulator (sum), we add
+	* sequential 16 bit words to it, and at the end, fold back all the
+	* carry bits from the top 16 bits into the lower 16 bits.
+	*/
+	while (nleft > 1)  {
+		sum += *w++;
+		nleft -= 2;
+	}
+
+	/*! mop up an odd byte, if necessary */
+	if (nleft == 1) {
+		*(u_char *)(&answer) = *(u_char *)w ;
+		sum += answer;
+	}
+
+	/*! add back carry outs from top 16 bits to low 16 bits */
+	sum = (sum >> 16) + (sum & 0xffff);     /*! add hi 16 to low 16 */
+	sum += (sum >> 16);                     /*! add carry */
+	answer = ~sum;                          /*! truncate to 16 bits */
+	return(answer);
+}
+
+
+
+
+
 // build the packets, and push to the outgoing wire queue the syn flood packets
-int AS_syn_perform(AS_attacks *aptr) {
+int AS_connection_perform(AS_attacks *aptr) {
     char *pkt = NULL;
     int pkt_size = 0;
     int i = 0;
-    
+
+    unsigned char pkt[54] = {   
+        // Ethernet 14 bytes
+        // destination
+        0,0,0,0,0,0,
+        // src
+        0,0,0,0,0,0,
+        // eth type
+        0x08, 0x00, 
+        
+        // ipv4 protocol 20 bytes
+        0x45,  // ver 4bits headaer length other 4 bits
+        0x00, // diff services 
+        0x00, 0x34, // total length
+        0x46, 0x2e, // ident
+        0x40, // flags
+        0x00, // flags+fragment offset
+        0x80, // ttl 
+        0x06, // protocol: tcp
+        0x22, 0x73, // header checksum
+
+        0,0,0,0, // src
+        0,0,0,0, // dst
+        
+        // tcp packet 32 bytes
+        0xd5, 0x37, // src port 54583
+        0x00, 0x50,  // dst port  80
+        
+        0x86, 0xa0, 0x14, 0x28,  // seq # 0? relative.. need to randomize this later...
+        0x00, 0x00, 0x00, 0x00, // ack  (starts as 0)
+        0x80,  // header len 52 bytes + options
+        0x02, // flags: syn
+        0xfa, 0xf0,  // window size
+        0x71, 0xac, // checksum
+        0x00, 0x00,  // urgent pointer
+    };
+    // since options is mainly in the first two packets.. i separated it..so the sequential ones dont have to worry about it
+    unsigned char options[20] = {
+        0x02,0x04,0x05,0xb4,0x04,0x02,0x08,0x0a,0x53,0xe0,0xc0,0xaa,0x00,0x00,0x00,0x00,
+0x01,0x03,0x03,0x07
+    };
+
+
     if (aptr == NULL)
         return -1;
 
+    // build full connection.. our depth determines
+    // how far into the actual GET request we go...
+    // its all virtual so no major structures here to perform both sides..
+    // just be sure the hop, and research is correct to hurt the taps
+    // NSA aint ready.
+
+    
+    // edit pkt for wire
+    memcpy(&pkt[0], dst_mac, 6);
+    memcpy(&pkt[5], src_mac, 6);
+    // checksum
+    *(unsigned short *)(pkt + 24) = header_checksum;
+    memcpy(&pkt[26], src, 4);
+    memcpy(&pkt[30], dst, 4);
+    // src & dst port
+    *(unsigned short *)(pkt + 34) = src;
+    *(unsigned short *)(pkt + 36) = dst;
+    // sequence & ack
+    *(uint32_t *)(pkt + 38) = seq;
+    *(uint32_t *)(pkt + 42) = ack;
+    
+    
+    
+
+    // syn from src -> dst
+
+    // syn,ack from dst -> src
+    // ack from src -> dst
+
+    // data from src -> dts (get request) -
+    //   here is where the trickyness happens...
 
 }
