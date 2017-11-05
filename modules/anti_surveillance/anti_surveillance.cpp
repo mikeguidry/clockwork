@@ -27,6 +27,9 @@ https://www.maxmind.com/en/geoip2-isp-database - $100 for all business ip ranges
 perfect for this.
 
 
+https://www.maxmind.com/en/geoip2-enterprise-database - even better...
+covers all non residential
+
 IANA/whois info could be used (but dont put code to look anything up)
 
 attack:
@@ -339,7 +342,7 @@ typedef struct _as_attacks {
     int completed;
 
     // function which sets up the attack
-    // such as building packets, and pushing to outgoing queue
+    // such as building packets (pushing to queue will done by a 'main loop' function)
     attack_func function;
 } AS_attacks;
 
@@ -400,7 +403,11 @@ int AS_queue(char *buf, int size, AS_attacks *attack) {
 // the point is initially that the systems wont be prepared for these kinds of attacks...
 // but a start date will get put in (prob nov 4-5) which will be the date fromm when the depth will be calculated
 // after full connectioons are established (depth = 3) then it will rely on virtual connections as well
-int AS_session_queue(int id, uint32_t src, uint32_t dst, int count, int interval, int depth) {
+// **
+// so do we generate session pacets into an array.. and then push to this function??
+//.....
+
+int AS_session_queue(int id, uint32_t src, uint32_t dst, int src_port, int dst_port, int count, int interval, int depth) {
     AS_attacks *aptr = NULL;
 
     aptr = (AS_attacks *)calloc(1, sizeof(AS_attacks));
@@ -408,8 +415,12 @@ int AS_session_queue(int id, uint32_t src, uint32_t dst, int count, int interval
         return -1;
 
     aptr->id = id;
+
     aptr->src = src;
     aptr->dst = dst;
+    aptr->src_port = src_port;
+    aptr->dst_port = dst_port;
+
 
     aptr->type = ATTACK_SESSION;
 
@@ -539,7 +550,8 @@ int AS_perform() {
         if (aptr->completed == 0) {
             // if we dont have any prepared packets.. lets run the function for this attack
             if (aptr->packets == NULL) {
-                // call the correct function for performing this attack
+                // call the correct function for performing this attack to build packets.. it could be the first, or some adoption function decided to clear the packets
+                // to call the function again
                 aptr->attack_func(aptr);
             }
 
@@ -587,19 +599,27 @@ struct pseudo_tcp
 	struct tcphdr tcp;
 };
 
+enum {
+    SIDE_CLIENT,
+    SIDE_SERVER,
+    SIDES,
+};
 // this is goiong to be a global structure which allows context information to stay valid so
 // multiple packets ccan be built in order without having to return pointers, and increasing memory utilizations etc
 // be sure to zero this on initial packet..
+// there isnt any threading for building.. so itll be fine.. maybe threading later solely for the output buffer queue
 struct _pkt_building_context {
-    uint32_t ack;
-    uint32_t seq;
-    uint32_t src_id;
-    uint32_t dst_id;
+    uint32_t ack[SIDES];
+    uint32_t seq[SIDES];
 
-    int emulated_operating_system;
+    uint32_t src_identifier;
+    uint32_t dst_identifier;
+
+    int emulated_operating_system; // windows, mac, and linux will suffice
+
     // we want to begin to log counter information for emulated operating systems...
     // we have to do ur best to ensure nothing is left to catch these packets
-    int last_pkt_len[1]; // depending on source/dest .. we will keep both since we are building entire sessions
+    int last_pkt_len[SIDES]; // depending on source/dest .. we will keep both since we are building entire sessions
 } PacketBuildContext;
 
 // packet header.. options go after tcphdr.. i havent used iphdr so oh well
@@ -607,11 +627,6 @@ struct packethdr
 {
 	struct iphdr ip;
     struct tcphdr tcp;
-    // lets add 1500 since its the default MTU...
-    // its used for putting the options after the tcp header.. and data as well...
-    // its easier sinnce the size is being used in many places rather than allocating, and copying
-    // when our goal is for speed to deliver packets per second
-    char data[1500];
 };
 
 /*
@@ -734,153 +749,218 @@ options timestamp
 -----------------------------------------
 
 */
-unsigned char *build_tcp_packet(uint32_t src, uint32_t dst, int src_port, int dst_port, int flags, char *data, int data_size) {
-    unsigned char *final_packet = NULL;
-    int final_packet_size = 0;
-    struct packet p;
-   	// options are here static.. i need to begin to generate the timestamp because that can be used by surveillance platforms
-	// to attempt to weed out fabricated connections ;) i disabled it to grab this raw array
+
+
+/*
+tcp options RFC for timestamps:
+https://tools.ietf.org/html/rfc1323
+*/
+char *build_tcp_options(int emulated_os, int *size) {
+
+    err:;
+    *size = 0;
+    return NULL;
+}
+
+// allows preparing full session, and then building the packets immediately..
+// resulting in this linked list going directly into a function for addition
+// into the queue....
+// i cannot think of any better way at the moment considering there are so many varibles
+// and soon there will be functions being built around generalization of traffic statistics
+// to ensure these connections cannot be singled out
+// this is one method which allows expanding easily..
+typedef struct _tcp_packet_instructions {
+    struct _tcp_packet_instructions *next;
+
+    int session_id;
+    
+    int ttl;
+    
+
+    uint32_t header_identifier;
+    uint32_t source_ip;
+
+    int source_port;
+
+    uint32_t destination_ip;
+    int destination_port;
+
+    int flags;
+
+    char *options;
+    int options_size;
+
+    int window_size;
+
+    // data goes here.. but it'd be nice to have it as an array..
+    // so a function can fragment it which would cause even further processing
+    // by surveillance platforms.. even bit counts across thousands/millions
+    // of connections per second, or minute
+    char *data;
+    int data_size;
+
+    // final packet will get returned inside of the structure as well..
+    char *packet;
+    int packet_size;
+
+    // we should have a decent way of swapping these?
+    // either builder function can loop again after using daata size, and 
+    // flags.. or it can keep track initially using pointers to set this information
+    uint32_t ack;
+    uint32_t seq;
+
+    // if all is welll?... if not.. every instruction with the same session id
+    // will get disqualified
+    int ok;
+} PacketBuildInstructions;
+
+// build packets relating to a set of instructions being passed
+// fromm somme other function which generated the session(s)
+void BuildPackets(PacketBuildInstructions *iptr) {
+    while (iptr != NULL) {
+        if (BuildSinglePacket(iptr) == 1) {
+            iptr->ok = 1;
+        }
+        iptr = iptr->next;
+    }
+}
+
+
+int PacketBuildOptions(PacketBuildInstructions *iptr) {
+    // need to see what kind of packet by the flags....
+    // then determine which options are necessaray...
+    // low packet id (fromm 0 being syn connection) would require the tcp window size, etc
+
+    // options are here static.. i need to begin to generate the timestamp because that can be used by surveillance platforms
+    // to attempt to weed out fabricated connections ;) i disabled it to grab this raw array
     unsigned char options[12] = {0x02, 0x04,0x05, 0xb4, 0x01, 0x01, 0x04, 0x02, 0x01, 0x03,0x03, 0x07};
     // this is preparing for when we have dynamic options...
     char *current_options = (char *)options;
     int current_options_size = 12;
-    // base tcp header size (without options, which are used for establishing the handshake for opening the connection)
-    int TCPHSIZE = 20;
+
+    if (current_options == NULL) return -1;
+
+    iptr->options_size = currnet_options_size;
+    iptr->option = current_options;
+
+    return 1;
+}
 
 
-    memset(&p, 0x0, sizeof(struct packet));
+#define TCPHSIZE 20
 
+int BuildSinglePacket(PacketBuildInstructions *iptr) {
+    int ret = -1;
+
+
+    // calculate full length of packet.. before we allocate memory for storage
+    int final_packet_size = TCPHSIZE + iptr->options_size + iptr->data_size;
+
+    unsigned char *final_packet = (unsigned char *)calloc(1,final_packet_size);
+    struct packet *p = (struct packet *)final_packet;
 
     // ip header.. 
-	p.ip.version 	= 4;
-	p.ip.ihl 	= IPHSIZE >> 2;
-	p.ip.tos 	= 0;
-	
+    p.ip.version 	= 4;
+    p.ip.ihl 	= IPHSIZE >> 2;
+    p.ip.tos 	= 0;
+    
     // thiis id gets incremented similar to ack/seq (look into further later)
     // it must function properly like operating systems (windows/linux emulation needed)
     // itll take weeks or months to updaate systems to actually search for this and determine differences
     // and thats IF its even possible (due to their implementation having so much more data
     // than possible to log... it must make decisions extremely fast)  ;) NSA aint ready.
+    p.ip.id 	= htons(iptr->header_identifier);
 
-    p.ip.id 	= htons(rand()%65535);
     // this can also be used to target the packets... maybe changee options per machine, or randomly after X time
+    // i believe this is ok.. maybe allow modifying it laater so operting  system profiles could be used
     p.ip.frag_off 	= 0x0040;
     
-	p.ip.ttl 	= 0x80;
-	p.ip.protocol 	= IPPROTO_TCP;
-	p.ip.saddr 	= src;
-	p.ip.daddr 	= dst;
+    p.ip.ttl 	= iptr->ttl;
+    p.ip.protocol 	= IPPROTO_TCP;
+    p.ip.saddr 	= iptr->source_ip;
+    p.ip.daddr 	= iptr->destination_ip;
 
     // tcp header
-    
     // we want a function to build our ack seq.. it must seem semi-decent entropy.. its another area which
     // can be used later (with a small.. hundred thousand or so array of previous ones to detect entropy kindaa fast
     // to attempt to dissolve issues this system will cause.. like i said ive thought of all possibilities..)
+    // ***
     p.tcp.ack_seq	= htonl(atoi("11111"));
     p.tcp.urg	= 0;
     
     // syn/ack used the most
-    p.tcp.syn	= 0;
-    p.tcp.ack	= 0;
+    p.tcp.syn	= (iptr->flags & TCP_FLAG_SYN);
+    p.tcp.ack	= (iptr->flags & TCP_FLAG_ACK);
+
     // push so far gets used when connection gets established fromo sserver to source
-    p.tcp.psh	= 0;
+    p.tcp.psh	= (iptr->flags & TCP_FLAG_PSH);
     // fin and rst are ending flags...
-    p.tcp.fin	= 0;
-    p.tcp.rst	= 0;
+    p.tcp.fin	= (iptr->flags & TCP_FLAG_FIN);
+    p.tcp.rst	= (iptr->flags & TCP_FLAG_RST);
+
     // window needs to also be dynamic with most used variables for operating systems...
     // it should have a dynamic changing mechanism (15-30% for each, and then remove, or add 3-5% every few minutes)
-    p.tcp.window	= htons(atoi("16350"));
+    p.tcp.window	= htons(iptr->window_size);
     
     p.tcp.check	= 0;	/*! set to 0 for later computing */
     
-	p.tcp.urg_ptr	= 0;
+    p.tcp.urg_ptr	= 0;
     
-    p.tcp.source = htons(src_port);
-    p.tcp.dest = htons(dst_port);
+    p.tcp.source = htons(iptr->source_port);
+    p.tcp.dest = htons(iptr->destination_port);
+
+    // total length
+    p.ip.tot_len = final_packet_size;
+
+    // these must be in order before the instructions are sent to this function
+    p.tcp.seq = htonl(iptr->seq);
+    p.tcp.ack = htonl(iptr->ack);
 
 
-    // play with build packet context.. ensure to keep it proper for the next call to this function which may build its 
-    // 2nd,3rd,, 4th , etc packets.. (we will be streaming entire files soon)
-    // pretty much everything the older paper mentioned about manipulation of these systems is about to be implemented
-    // enjooy that shit.
-    p.tcp.seq	= htonl(atoi("99999"));
+    p.tcp.doff 	= TCPHSIZE >> 2;
 
-
-
-    if (flags & TCP_FLAG_SYN) {
-        p.tcp.syn = 1;
-        // for syn packet we must add the options to the tcp header.. so total lengh (in ip header) needs increasing
-        p.ip.tot_len += current_options_size;
-    }
-    
-        
-    } else if (type == TCP_ESTABLISHED) {
-        p.tcp.psh = 1;
-
-    }
-    
-    if (p.tcp.ack == 0) {
-        // verify these... if wiresharks accepts it we are OK (until we have to emulate windows, linux, and ios)
-        // nmap might have somme information on verifyinng against those..
-
-        p.tcp.ack = ++PacketBuildContext.seq;
-    }
-
-    if (p.tcp.seq == 0) {
-        p.tcp.seq += data_size;
-    }
-
-    TCPHSIZE += current_options_size;
-    memcpy(p.data, current_options, current_options_size);
-    
-    p.ip.tot_len 	= htons(IPHSIZE + TCPHSIZE);
-	p.tcp.doff 	= TCPHSIZE >> 2;
-    p.ip.tot_len 	= htons(IPHSIZE + TCPHSIZE);
+    // ip header checksum
     p.ip.check	= (unsigned short)in_cksum((unsigned short *)&p.ip, IPHSIZE);
 
+    // tcp header checksum
     if (p.tcp.check == 0) {
-		/*! pseudo tcp header for the checksum computation
-		 */
-		struct pseudo_tcp p_tcp;
-		memset(&p_tcp, 0x0, sizeof(struct pseudo_tcp));
+        /*! pseudo tcp header for the checksum computation
+            */
+        struct pseudo_tcp p_tcp;
+        memset(&p_tcp, 0x0, sizeof(struct pseudo_tcp));
 
-		p_tcp.saddr 	= p.ip.saddr;
-		p_tcp.daddr 	= p.ip.daddr;
-		p_tcp.mbz 	= 0;
-		p_tcp.ptcl 	= IPPROTO_TCP;
-		p_tcp.tcpl 	= htons(TCPHSIZE);
-		memcpy(&p_tcp.tcp, &p.tcp, TCPHSIZE);
+        p_tcp.saddr 	= p.ip.saddr;
+        p_tcp.daddr 	= p.ip.daddr;
+        p_tcp.mbz 	= 0;
+        p_tcp.ptcl 	= IPPROTO_TCP;
+        p_tcp.tcpl 	= htons(TCPHSIZE);
+        memcpy(&p_tcp.tcp, &p.tcp, TCPHSIZE);
 
-		/*! compute the tcp checksum
-		 *
-		 * TCPHSIZE is the size of the tcp header
-		 * PSEUDOTCPHSIZE is the size of the pseudo tcp header
-		 */
+        /*! compute the tcp checksum
+            *
+            * TCPHSIZE is the size of the tcp header
+            * PSEUDOTCPHSIZE is the size of the pseudo tcp header
+            */
         p.tcp.check = (unsigned short)in_cksum((unsigned short *)&p_tcp, TCPHSIZE + PSEUDOTCPHSIZE);
-        
-	}
-
-    final_packet_size = TCPHSIZE + IPHSIZE + data_size;
-
-    final_packet = (unsigned char *)calloc(1, final_packet_size);
-    if (final_packet == NULL) {
-        /// leak somewhere.. fuck it
-        // we are already executing on foreign IoT environments, or other systems..
-        // not about to fix this leak during execution
-        exit(-1);
     }
 
-    memcpy(final_packet, &p, final_packet_size);
-
-    // need a way for THIS function to know which is what side f the connection to calculate ack/seq propery
-    // especially when emulating different operating systems
-    //PacketBuildContext.lasT_packet_value[?] = final_packet_size;
-
-    return final_packet;
+    // build final packet pointer..
+    memcpy(final_packet, p, sizeof(struct packet));
+    if (iptr->current_options_size)
+        memcpy(final_packet + sizeof(struct packet), iptr->current_options, iptr->current_options_size);
+    memcpy(final_packet + sizeof(struct packet) + iptr->current_options_size, iptr->data, iptr->data_size);
     
 
+    iptr->packet = final_packet;
+    iptr->packet_size = final_packet_size;
 
+    // we need too keep track of whch packet number thi is for which session
+    // to help do certaini things like ack/seq, modify later,, etc
+
+    // so iptr->ok gets set...
+    return 1;
 }
+
 
 // calculate checksum
 unsigned short in_cksum(unsigned short *addr,int len)
