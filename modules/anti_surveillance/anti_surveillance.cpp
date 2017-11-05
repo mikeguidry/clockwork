@@ -26,6 +26,12 @@ generate business IPs using geoip (and a list of worldwide isp providers)
 IANA/whois info could be used (but dont put code to look anything up)
 
 attack:
+
+stage 0-1: IPv6 support... can reuse the same logic structures.. it shouldnt be hard to add...
+the main concern iss the IP ranges (harder to scan) but DNS, etc and the same research mechaniss will work
+i just dont know if geoip works the same
+
+
 stsage 1 - syn (not virtual connections) floods using alll of the ranges (but we can virtualize a respoonse from the server
 so that it takes up a structure inside of the surveillance platforms)
 their first response will be to count a few packets such as 5 before it prioritizes so this should be variable and increase over time
@@ -35,6 +41,12 @@ stage 2-  full blown requests using either local network information regarding t
 to replace information... most used names can be found easily to be integrated for most languages online (top birth names in countries)
 and then terrorists, or lists of government employees either captured from www or local network (libpcaap on these routers since its ioT)
 could be used to create automatic local lists of macro replacements for the falsifyed connections
+
+
+stage 3- doing separate sides of the session using multiple hosts across the globe guaranteed to ensure it is son both sides of the tap
+this is the LAST possible way that the surveillance platforms can attempt to detect the situations..
+and ...its going to be SO CPU intensive, and annoying due to BGP routing and many other factors.. think multicast, anycast,
+and just protocol gibberish... yeah.. but itll be prepared anyhow.
 
 
 ------
@@ -296,6 +308,8 @@ ResearchInfo *research_list = NULL;
 typedef struct _as_attacks {
     struct _as_attacks *next;
 
+    int id;
+
     // what kind of attack is this? syn only? spoofed full sessions..
     int type;
 
@@ -382,16 +396,19 @@ int AS_queue(char *buf, int size, AS_attacks *attack) {
 // the point is initially that the systems wont be prepared for these kinds of attacks...
 // but a start date will get put in (prob nov 4-5) which will be the date fromm when the depth will be calculated
 // after full connectioons are established (depth = 3) then it will rely on virtual connections as well
-int AS_session_queue(uint32_t src, uint32_t dst, int count, int interval, int depth) {
+int AS_session_queue(int id, uint32_t src, uint32_t dst, int count, int interval, int depth) {
     AS_attacks *aptr = NULL;
 
     aptr = (AS_attacks *)calloc(1, sizeof(AS_attacks));
     if (aptr == NULL)
         return -1;
 
+    aptr->id = id;
     aptr->src = src;
     aptr->dst = dst;
+
     aptr->type = ATTACK_SESSION;
+
     aptr->count = count;
     aptr->repeat_interval = interval;
 
@@ -399,6 +416,20 @@ int AS_session_queue(uint32_t src, uint32_t dst, int count, int interval, int de
     attack_list = aptr;
 
     return 1;
+}
+
+// thiis is going to be an entire new category.. poossibly with scripting languages to call lua, python, or other scripts
+// or grab data remotely for creatinng conversatioons over time being pushed into these surveillance platforms
+// full manipulation... like i said nsa aint ready
+// this needs to be paired diretly with AS_session_queue() and other possible queues...
+// for some people we wanna perform full blown emulation from DNS (with correct TTL) to third party browser connections
+// to fake SSL, or possibly replaying some other SSL, or generating some SSL connections remotely, or locally for this
+// by means of openssl etc
+// it really  wont take much.. one line at a time and soon everything will make sense.
+// there will be ZERO way to block this whenever its completed.
+// **** linkk this directly to botlink....
+void PacketsAdjustment(AS_attacks *aptr) {
+    return;
 }
 
 
@@ -439,9 +470,10 @@ void PacketQueue(AS_attacks *aptr) {
     // is it the first packet?
     if (pkt == aptr->packets) {
         // by here we have more counts to start this session over.. lets ensure its within the time frame we set
+        // remember on the first time.. the ts is 0 so this will never mistake that it hasnt been enough time
+        // subtracting 0 from epoch
         if ((ts - aptr->ts) < aptr->repeat_interval) {
-            // we are on the first packet... 
-            // it has NOT been long enough...
+            // we are on the first packet and it has NOT been long enough...
             return;
         }
 
@@ -451,7 +483,7 @@ void PacketQueue(AS_attacks *aptr) {
         // later.. sinnce this is the first packet.. we need to allow modifications using particular ranges (such as source ports, etc)
         // it would go here.. :) so it can modify quickly before bufferinng againn... IE: lots of messages to social sites, or blogs..
         // could insert different messages here into the session and prepare it right before the particular connection gets pushed out
-        // PacketAdjustments(aptr);
+        PacketAdjustments(aptr);
     }
 
     // queue this packet (first, or next) into the outgoing buffer set...
@@ -480,6 +512,7 @@ void AS_remove_completed() {
     while (aptr != NULL) {
         if (aptr->completed == 1) {
             anext = aptr->next;
+
             PacketsFree(&aptr->packets);
 
             free(aptr);
@@ -496,22 +529,22 @@ void AS_remove_completed() {
 
 // perform one iteration of each attack
 int AS_perform() {
-    int ts = time(0);
     AS_attacks *aptr = attack_list;
 
     while (aptr != NULL) {
+        if (aptr->completed == 0) {
+            // if we dont have any prepared packets.. lets run the function for this attack
+            if (aptr->packets == NULL) {
+                // call the correct function for performing this attack
+                aptr->attack_func(aptr);
+            }
 
-        // if we dont have any prepared packets.. lets run the function for this attack
-        if (aptr->packets == NULL) {
-            // call the correct function for performing this attack
-            aptr->attack_func(aptr);
-        }
-
-        // if we have packets queued.. lets handle it.. logic moved there..
-        if ((aptr->current_packet != NULL) || (aptr->packets != NULL))
-            PacketQueue(aptr);
-        } else {
-            aptr->completed = 1;
+            // if we have packets queued.. lets handle it.. logic moved there..
+            if ((aptr->current_packet != NULL) || (aptr->packets != NULL))
+                PacketQueue(aptr);
+            } else {
+                aptr->completed = 1;
+            }
         }
 
         aptr = aptr->next;
@@ -576,16 +609,43 @@ struct packethdr
     char data[1500];
 };
 
+/*
+NS (1 bit): ECN-nonce - concealment protection (experimental: see RFC 3540).
+CWR (1 bit): Congestion Window Reduced (CWR) flag is set by the sending host to indicate that it received a TCP
+ segment with the ECE flag set and had responded in congestion control mechanism (added to header by RFC 3168).
+ECE (1 bit): ECN-Echo has a dual role, depending on the value of the SYN flag. It indicates:
+If the SYN flag is set (1), that the TCP peer is ECN capable.
+If the SYN flag is clear (0), that a packet with Congestion Experienced flag set (ECN=11) in IP header was received
+ during normal transmission (added to header by RFC 3168). This serves as an indication of network congestion
+  (or impending congestion) to the TCP sender.
+URG (1 bit): indicates that the Urgent pointer field is significant
+ACK (1 bit): indicates that the Acknowledgment field is significant. 
+All packets after the initial SYN packet sent by the client should have this flag set.
+PSH (1 bit): Push function. Asks to push the buffered data to the receiving application.
+RST (1 bit): Reset the connection
+SYN (1 bit): Synchronize sequence numbers. 
+Only the first packet sent from each end should have this flag set. Some other flags and fields change meaning based on this flag, and some are only valid for when it is set, and others when it is clear.
+FIN (1 bit): Last packet from sender.
+*/
+
 enum {
-    TCP_WANT_CONNECT,
-    TCP_CONNECT_OK,
-    TCP_ESTABLISHED,
-    TCP_TRANSFER,
-    TCP_END
+    TCP_WANT_CONNECT=1,
+    TCP_CONNECT_OK=2,
+    TCP_ESTABLISHED=4,
+    TCP_TRANSFER=8,
+    TCP_FLAG_NS=16,
+    TCP_FLAG_CWR=32,
+    TCP_FLAG_ECE=64,
+    TCP_FLAG_URG=128,
+    TCP_FLAG_ACK=256,
+    TCP_FLAG_PSH=512,
+    TCP_FLAG_RST=1024,
+    TCP_FLAG_SYN=2048,
+    TCP_FLAG_FIN=4096
 };
 
 
-unsigned char *build_tcp_packet(uint32_t src, uint32_t dst, int src_port, int dst_port, int type, char *data, int data_size) {
+unsigned char *build_tcp_packet(uint32_t src, uint32_t dst, int src_port, int dst_port, int flags, char *data, int data_size) {
     unsigned char *final_packet = NULL;
     int final_packet_size = 0;
     struct packet p;
