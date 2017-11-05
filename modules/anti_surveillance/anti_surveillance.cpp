@@ -84,6 +84,11 @@ packet generators (lots around)
 syn flood, virtual tcp connections (much eaier now that we do not need both sides of the tap)
 
 
+----
+emulation of some packet loss at times may be smart to implement especially over lots of connections (if a score base system
+isnt sure then havinng somme situations like this only helps)
+
+
 
 */
 
@@ -240,7 +245,11 @@ enum {
     ATTACK_END
 };
 
-
+// this is where the packet is held after the attack type's functin generates it.. so that function will be called only once
+// per packetinfo depending on the count, and intervals...
+// its possible to free the packet after from that structure after usage thus allowing it to get regenerated for continous use
+// this allows threading by way of many different attack structures, thus seperate session structures
+// wide scale manipulation of mass surveillance platforms ;)
 typedef struct _pkt_info {
     struct _pkt_info *next;
 
@@ -301,10 +310,12 @@ typedef struct _as_attacks {
 
     // packets being used for send states, or whatever other circumstances
     PacketInfo *packets;
+    PacketInfo *current_packet;
 
     // do we repeat this attack again whenever its completed?
     int count;
     int repeat_interval;
+    int ts;
 
     // if it has a count>0 then completed would get set whenever
     int completed;
@@ -391,17 +402,124 @@ int AS_session_queue(uint32_t src, uint32_t dst, int count, int interval, int de
 }
 
 
+void PacketQueue(AS_attacks *aptr) {
+    int ts = time(0);
+    PacketInfo *pkt = NULL;
+
+    // if its already finished.. lets just move forward
+    if (aptr->completed) return;
+
+    // onoe of these two cases are correct fromm the calling function
+    if (aptr->current_packet != NULL)
+        pkt = aptr->current_packet;
+    else {
+        // we do have to reprocess these packets fromm packet #1?
+        if (aptr->count == 0) {
+            // lets free the packets....we dont have anymore times to push to wire...
+            PacketsFree(&aptr->packets);
+    
+            aptr->current_packet = NULL;
+            aptr->packets = NULL;
+            aptr->completed = 1;
+    
+            return;
+        }
+
+        // lets start it over..
+        pkt = aptr->packets;        
+    }
+
+    if (pkt == NULL) {
+        // error shouldnt be here...
+        aptr->completed = 1;
+
+        return;
+    }
+    
+    // is it the first packet?
+    if (pkt == aptr->packets) {
+        // by here we have more counts to start this session over.. lets ensure its within the time frame we set
+        if ((ts - aptr->ts) < aptr->repeat_interval) {
+            // we are on the first packet... 
+            // it has NOT been long enough...
+            return;
+        }
+
+        // derement the count..
+        aptr->count--;
+
+        // later.. sinnce this is the first packet.. we need to allow modifications using particular ranges (such as source ports, etc)
+        // it would go here.. :) so it can modify quickly before bufferinng againn... IE: lots of messages to social sites, or blogs..
+        // could insert different messages here into the session and prepare it right before the particular connection gets pushed out
+        // PacketAdjustments(aptr);
+    }
+
+    // queue this packet (first, or next) into the outgoing buffer set...
+    AS_queue(pkt->buf, pkt->size, aptr);
+
+    // lets prepare the next packet (if it exists.. otherise itll complete)
+    aptr->current_packet = pkt->next;
+
+    // we set the ts to the time of the last packet submission.. this way the separation is by the messages being completed..
+    // this can allow full blown  simulated conversations being pushed directly into intelligence platforms to manipulate them
+    // ie: generate text, neural network verify it seems human vs not, then randomly choose whne the two parties would be online together,
+    // or not.. it can keep context information about parties (even possibly transmitted over p2p to keep on somme remote server for IoT hacked devices
+    // to reload..)
+    // this could allow using simulated messages where two parties arent even online at the same time but send small messages...
+    // all of this couldd be trained, automated and directed to fconfuse manipulate or disrupt intelligence platforms...
+    // thats why this timestamp is extremely impoortant ;)
+    aptr->ts = ts;
+
+    return;
+}
+
+// remove completed sessions
+void AS_remove_completed() {
+    AS_attacks *aptr = attack_list, *anext = NULL;
+
+    while (aptr != NULL) {
+        if (aptr->completed == 1) {
+            anext = aptr->next;
+            PacketsFree(&aptr->packets);
+
+            free(aptr);
+
+            aptr = anext;
+            continue;
+        }
+
+        aptr = aptr->next;
+    }
+
+    return;
+}
+
 // perform one iteration of each attack
 int AS_perform() {
+    int ts = time(0);
     AS_attacks *aptr = attack_list;
 
     while (aptr != NULL) {
 
-        // call the correct function for performing this attack
-        aptr->attack_func(aptr);
+        // if we dont have any prepared packets.. lets run the function for this attack
+        if (aptr->packets == NULL) {
+            // call the correct function for performing this attack
+            aptr->attack_func(aptr);
+        }
+
+        // if we have packets queued.. lets handle it.. logic moved there..
+        if ((aptr->current_packet != NULL) || (aptr->packets != NULL))
+            PacketQueue(aptr);
+        } else {
+            aptr->completed = 1;
+        }
 
         aptr = aptr->next;
     }
+
+    // every loop lets remove completed sessions... we could choose to perform this every X iterations, or seconds
+    // to increase speed at times.. depending on queue, etc
+    AS_remove_completed();
 
     return 1;
 }
