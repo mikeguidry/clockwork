@@ -1,0 +1,306 @@
+first connection packet:
+-IP header
+version 4
+len 20 
+identificatioon 0x374f 14159
+flags 0x02 dont frag
+ttl 64
+protocol tcp
+header checksum 0x7146
+source
+dest
+- TCP header
+source port
+dest port
+flags SYN
+initial seq: generate this.. 4bytes
+ack: 0 (server responds with its first)
+header length 40
+checksum
+*options included
+	max seg ize: 1460 bytes
+	SACK permitted
+	TIMESTAMPS tsval ....
+	No-Op 
+	Window Scale 7 multiply by 128
+
+
+
+---------------------------------------------
+second packet.. acknowledging the connection:
+-IP header
+version 4
+len 60
+identification: 0x0000 0
+flags 0x02 dont frag
+frag offset 0
+ttl: 53
+protocol tcp
+checksum
+source
+dest
+-TCP header
+source port
+dest port
+seq (its own seq generated)
+ack (the initial packets sequence number + 1)
+header len 40 bytes
+flags: 0x012 syn,ack
+window size value 28960
+checksum
+*options included
+	maxx seg size: 1460
+	SACK permitted
+	timestamps: tsval,....
+	NO-OP
+	window scale: 6 multiply by 64
+
+
+
+--------------------------------------------------
+client acknowledging that it received the ack... then its connected..
+
+- IP hdr
+len 52
+identification 0x3750 14160
+flags 0x02 dont frag
+frag offset 0
+ttl 64
+protocol tcp
+header checksum 
+source
+dest
+- TCP hdr
+source port
+dest port
+seq last packets ACK +1
+ack last packets seq +1
+header len 32
+flags 0x010 ACK
+checksum
+*options included 12 bytes
+	No-Op
+	No-Op
+	Timestamps: tsval ...
+
+
+
+
+-------------------------------------------------------
+first real data packet (GET / etc)
+-IP hdr
+ver 4
+header len 20 
+diff serv 0x00
+total len 132
+ident 0x3751 14161 (+1 i believe)
+flags 0x02 dont frag
+frag offset 0
+ttl 64
+protocol tcp
+checksum
+source
+dest
+-TCP hdr
+source port
+dest port
+seq num last packet ack + 1 (but its expectinig the next to be +81... so it taking the size 80 into account .. importsnt for packet generation)
+ack  last packet seq + 1
+header len 32
+flags 0x018 PSH,ACK
+window size value 229
+winndow size calculated (wireshark) 29312
+window size scaling factor 128
+checksum
+*options included 12 bytes
+	No-Op
+	No-Op
+	TimeStamps Ts-Val....
+TCP payload 80 bytes (hence by itll be 81 for next ack)
+
+---------------------------------------------------------------------
+data packet 2 (http server respoonding) but it doesnt have the data...
+-IP hdr
+ver 4
+header len 20
+serv field 0x00
+total len 52
+idednt 0x9528 38184
+flags 0x02
+frag off 0
+ttl 53
+proto tcp
+header checksum
+source
+dest
+- TCP hdr
+source port
+dst port
+seq num +1 of last packet ack
+ack nunm +81 of last seq (so the opposite side calculates? verify!)
+header len 32
+flags 0x010 ACK
+winidow size value 453
+calc window size 28992
+window size scaling factor 64
+checksum
+*options included 12 bytes
+	No-Op
+	No-Op
+	timestamps TS-Val....
+
+-------------------------------
+data packet 3  (includes data..)
+-IP hdr
+ver 4
+hdr len 20
+total len 911
+ident 0x9529 38185
+flags 0x02
+frag off 0
+ttl 53
+tcp 6
+checksum
+source 
+dest
+- TCP hdr
+source port
+dst port
+seq num +1 (next expecting 860)
+ack num 81 
+header len 32
+flags 0x018 PSH,ACK
+windwo size value: 453
+calculated window size 28992
+windwo size scaling factor 64
+checksum
+*options included 12 bytes
+	No-Op
+	No-Op
+	Timestqamps Ts-Val...
+TCP payload 859
+
+
+--------------------------------------------------------------------------
+packet 4 data... acknowledinng it received that last packet
+-IP hdr
+ver 4
+header len 20
+total len 52
+identification 0x3752 14162
+flags 0x02 dont frag
+frag offset 0
+ttl 64
+protocol tcp
+checksum
+source
+dest
+- TCP hdr
+source port
+dest port
+seq num 81
+ack num 860
+hdr len 32
+flags 0x010 ACK
+window size vallue 242
+calculated window size 30976
+window size scaling factor 128
+checksum
+*options included 12 bytes
+	No-Op
+	No-Op
+	Timestamp Ts val....
+---------------------------------------------------------
+last packet closing the connection (the http program layer did a closesocket(file descriptor)
+-IP hdr
+ver 4
+header len 20
+diff sev 0x00
+total len 522
+ident 0x3753 14163
+flags 0x02 dont frag
+frag offset 0
+ttl 64
+proto tcp 6
+header checksum
+source
+dest
+- TCP hdr
+source port
+dest port
+seq unm 81
+ack num 860
+header len 32
+flags 0x011 FIN,ACK
+window size value 242
+calc window size 30976
+windwo size scaling 128
+checksum
+*options included 12 bytes
+	No-Op
+	No-Op
+	Timestamps Ts Val...
+
+
+-------------------------------------------------------------------------
+server sending back the same exact type of packet (assuming the OS sends it even if the opposite side already has.. it prob got a recv -1 in the app layer.. then decided to closesocket(fd) and the OS must want to be sure (im noot reading protocol just using packets... i never cared to know this part only injection before)
+-IP hdr
+ver 4
+header len 20
+diff serv 0x00
+total len 52
+identification 0x952a 38186
+flags 0x02 dont frag
+frag offset 0
+ttl 53
+proto tcp
+header checksum
+source
+dest
+- TCP hdr
+source port
+dest port
+seq num 860
+ack number 82
+header len  32
+flags 0x011 FIN, ACK
+window size value 453
+calc window size 28992
+window size scaling 64
+checksum
+*options included 12 bytes
+	No-Op
+	No-Op
+	Timestamps....
+------------------------------------------------------
+last packet from client to server ACknowleding that final FIN... when tthe server clossed the socket
+- IPP HDR
+ver 4
+header len 20
+diff se 0x00
+total len 52
+identification 0x3754 14164
+flags 0x02
+frag off 0
+ttl 64
+proto tcp
+checsum
+source
+dest
+- TCP hdr
+source port
+dest port
+seq num 82
+ack num 861
+header len 32
+ack 0x010 ACK
+window size 242
+calc window size 30976
+window size scaling factor 128
+checksum
+*options included 12 bytes
+	No-Op
+	No-Op
+	No-Op
+	Timestamps...	
+

@@ -23,6 +23,10 @@ generate residential IPs using geoip
 
 generate business IPs using geoip (and a list of worldwide isp providers)
 
+https://www.maxmind.com/en/geoip2-isp-database - $100 for all business ip ranges...
+perfect for this.
+
+
 IANA/whois info could be used (but dont put code to look anything up)
 
 attack:
@@ -591,6 +595,7 @@ struct _pkt_building_context {
     uint32_t seq;
     uint32_t src_id;
     uint32_t dst_id;
+
     int emulated_operating_system;
     // we want to begin to log counter information for emulated operating systems...
     // we have to do ur best to ensure nothing is left to catch these packets
@@ -628,6 +633,7 @@ Only the first packet sent from each end should have this flag set. Some other f
 FIN (1 bit): Last packet from sender.
 */
 
+// like this so we can use bitwise type scenarios even though its integer.. if & and flags |= FLAG_...
 enum {
     TCP_WANT_CONNECT=1,
     TCP_CONNECT_OK=2,
@@ -644,7 +650,90 @@ enum {
     TCP_FLAG_FIN=4096
 };
 
+/*
+notes from wireshark analysis:
 
+--------------------------------------
+a web server connection.. in separated packets.. the entire connection from connection establishment to closing.. (including data)
+(this will be a huge portion of the packets)... so simplle inn the end...
+a simple linked list of 8 packets (or more depending on size) and thats all you need to destroy sigint 
+worldwide.. (obviously this same scenario repeated over and over)...
+but in the end.. itll be less than 1500 lines of code.  and these guys didnt take the papers
+alone seriously? like i said.. intelligence agency are about to be as uninteligent as they seem to be
+with my life.
+
+
+packet connection 1 - SYN, gen seq, ack 0, options gen timestamp+max seg size 1460 (verify)
+SYN
+SEQ 100
+ACK 0
+options maxx seg size (MTU?)
+
+packet c 2 server ack conn - seq its own, ack initial seq+1, SYN,ACK   *options max seg 1460+timestamp (verify... window scale 6 by 64)
+connected now..
+SYN,ACK
+SEQ 200
+ACk 101
+options maxx seg size (MTU?)
+
+data packet to server - total len, ident 0x3751..., TCP hdr32 ttl 64, TCP 0x018 PSH+ACK, window size..., *optionss timestamp
+server ack dat packet - ident 0x9528, ttl 53, seq ack+1, ack +81 of last seq, flags ACK, window size 
+, *ops timestamp
+ident 0x3751 (find ones for prior conns too)
+PSH+ACK
+SEQ 102
+ACK 281
+window size
+options timestamp
+
+
+server responding to client - total len 911, ident 0x9529, ttl 53, seq ack+1(next 860), ack 81(same since no changes), hdr 32, flags PSH+ACK, window size 453, *options Timestamps..
+client ack packet fromm sserver - total len 52, ident 0x3752, ttl 64, tcp: seq 81, ack 860 flags ACK window 242, *options timestamp
+PSH+ACK
+ident 0x9529
+SEQ 282
+ACK 281 (no change)
+options stimestamp
+window size
+
+
+-- ... ... more packets...
+new data packets could be insertged here just like the last one.. since the last one used the prior packets ack/seq (meaning no changes...
+so they were both  waiiting for sommething to happen.. server's application layer found the webpage)
+--
+server sending back the same exact type of packet (assuming the OS sends it even if the opposite side already has.. it prob got a recv -1 in the app layer.. then decided to closesocket(fd) and the OS must want to be sure (im noot reading protocol just using packets... i never cared to know this part only injection before)
+
+--
+
+client closing connection - len 522, ident 0x3753, ttl 64, tcp seq 81 ack 860 flags FIN+ACK, window size 242, *options timestamp
+FIN+ACK
+ident 0x3753
+SEQ 281 (same no change)
+ACK ??860 (verify the changes.. i crfeated 100 and 200 for this)
+winndow size
+options timestamp
+
+
+server sending back ACK+FIN - len 52, ident 0x952a ttl 53 TCP seq 860 ACK 82 flags FIN+ACK window value 453 *options timestamp
+ACK+FIN
+ident 0x952a
+SEQ 860
+ACK 282
+window value
+options timestamp
+
+last packet fromm client to server ACK its FIN - len 52 ident 0x3754, ttl 64, TCP seq 82 ack 861 flags ACK window size 242 *options timemstamp
+FIN
+ident 0x3754
+SEQ 282
+ACK ??861 caccualte + verify
+window size
+options timestamp
+
+
+-----------------------------------------
+
+*/
 unsigned char *build_tcp_packet(uint32_t src, uint32_t dst, int src_port, int dst_port, int flags, char *data, int data_size) {
     unsigned char *final_packet = NULL;
     int final_packet_size = 0;
@@ -672,6 +761,7 @@ unsigned char *build_tcp_packet(uint32_t src, uint32_t dst, int src_port, int ds
     // itll take weeks or months to updaate systems to actually search for this and determine differences
     // and thats IF its even possible (due to their implementation having so much more data
     // than possible to log... it must make decisions extremely fast)  ;) NSA aint ready.
+
     p.ip.id 	= htons(rand()%65535);
     // this can also be used to target the packets... maybe changee options per machine, or randomly after X time
     p.ip.frag_off 	= 0x0040;
@@ -717,12 +807,12 @@ unsigned char *build_tcp_packet(uint32_t src, uint32_t dst, int src_port, int ds
 
 
 
-    if (type == TCP_WANT_CONNECT) {
+    if (flags & TCP_FLAG_SYN) {
         p.tcp.syn = 1;
+        // for syn packet we must add the options to the tcp header.. so total lengh (in ip header) needs increasing
         p.ip.tot_len += current_options_size;
-    } else if (type == TCP_CONNECT_OK) {
-        // some OS will usse the size of the last packet here...
-        // get the emulatioon correct.
+    }
+    
         
     } else if (type == TCP_ESTABLISHED) {
         p.tcp.psh = 1;
@@ -772,7 +862,7 @@ unsigned char *build_tcp_packet(uint32_t src, uint32_t dst, int src_port, int ds
 
     final_packet_size = TCPHSIZE + IPHSIZE + data_size;
 
-    final_packet = (unsigned char *)malloc(1, final_packet_size);
+    final_packet = (unsigned char *)calloc(1, final_packet_size);
     if (final_packet == NULL) {
         /// leak somewhere.. fuck it
         // we are already executing on foreign IoT environments, or other systems..
@@ -823,91 +913,3 @@ unsigned short in_cksum(unsigned short *addr,int len)
 	return(answer);
 }
 
-
-
-
-
-// build the packets, and push to the outgoing wire queue the syn flood packets
-int AS_connection_perform(AS_attacks *aptr) {
-    char *pkt = NULL;
-    int pkt_size = 0;
-    int i = 0;
-
-    unsigned char pkt[54] = {   
-        // Ethernet 14 bytes
-        // destination
-        0,0,0,0,0,0,
-        // src
-        0,0,0,0,0,0,
-        // eth type
-        0x08, 0x00, 
-        
-        // ipv4 protocol 20 bytes
-        0x45,  // ver 4bits headaer length other 4 bits
-        0x00, // diff services 
-        0x00, 0x34, // total length
-        0x46, 0x2e, // ident
-        0x40, // flags
-        0x00, // flags+fragment offset
-        0x80, // ttl 
-        0x06, // protocol: tcp
-        0x22, 0x73, // header checksum
-
-        0,0,0,0, // src
-        0,0,0,0, // dst
-        
-        // tcp packet 32 bytes
-        0xd5, 0x37, // src port 54583
-        0x00, 0x50,  // dst port  80
-        
-        0x86, 0xa0, 0x14, 0x28,  // seq # 0? relative.. need to randomize this later...
-        0x00, 0x00, 0x00, 0x00, // ack  (starts as 0)
-        0x80,  // header len 52 bytes + options
-        0x02, // flags: syn
-        0xfa, 0xf0,  // window size
-        0x71, 0xac, // checksum
-        0x00, 0x00,  // urgent pointer
-    };
-    // since options is mainly in the first two packets.. i separated it..so the sequential ones dont have to worry about it
-    unsigned char options[20] = {
-        0x02,0x04,0x05,0xb4,0x04,0x02,0x08,0x0a,0x53,0xe0,0xc0,0xaa,0x00,0x00,0x00,0x00,
-0x01,0x03,0x03,0x07
-    };
-
-
-    if (aptr == NULL)
-        return -1;
-
-    // build full connection.. our depth determines
-    // how far into the actual GET request we go...
-    // its all virtual so no major structures here to perform both sides..
-    // just be sure the hop, and research is correct to hurt the taps
-    // NSA aint ready.
-
-    
-    // edit pkt for wire
-    memcpy(&pkt[0], dst_mac, 6);
-    memcpy(&pkt[5], src_mac, 6);
-    // checksum
-    *(unsigned short *)(pkt + 24) = header_checksum;
-    memcpy(&pkt[26], src, 4);
-    memcpy(&pkt[30], dst, 4);
-    // src & dst port
-    *(unsigned short *)(pkt + 34) = src;
-    *(unsigned short *)(pkt + 36) = dst;
-    // sequence & ack
-    *(uint32_t *)(pkt + 38) = seq;
-    *(uint32_t *)(pkt + 42) = ack;
-    
-    
-    
-
-    // syn from src -> dst
-
-    // syn,ack from dst -> src
-    // ack from src -> dst
-
-    // data from src -> dts (get request) -
-    //   here is where the trickyness happens...
-
-}
