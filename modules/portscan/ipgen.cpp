@@ -143,7 +143,7 @@ uint32_t IPGenerateAlgo(int id, int seed) {
     int r = 0;
     
     //***
-    if (params == NULL) {}
+    if (params == NULL) {
         //printf("bad params\n");
         // will do proper error chefcking laater.. if memory issue we are fucked anyhow
         exit(-1);

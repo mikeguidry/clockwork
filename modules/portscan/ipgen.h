@@ -1,3 +1,8 @@
+/*
+
+
+*/
+
 // unless we wanna add in custom seed code..
 // we need to keep the current number so we can
 // skip to it and bring the seed back to the state
