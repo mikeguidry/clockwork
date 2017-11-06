@@ -267,8 +267,8 @@ typedef struct _tcp_packet_instructions {
     
 
     uint32_t header_identifier;
+    
     uint32_t source_ip;
-
     int source_port;
 
     uint32_t destination_ip;
@@ -303,5 +303,3 @@ typedef struct _tcp_packet_instructions {
     // will get disqualified
     int ok;
 } PacketBuildInstructions;
-
-int GenerateBuildInstructionsHTTP(AS_attacks *aptr, char *client_body, int client_size char *server_body, int server_size);
