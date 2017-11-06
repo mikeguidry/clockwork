@@ -303,8 +303,6 @@ int AS_queue(AS_attacks *attack, PacketInfo *qptr) {
     // link to outgoing queue (FIFO)
     L_link_ordered((LINK **)&network_queue, (LINK *)optr);
 
-    printf("added AS_queue to network queue\n");
-
     return 1;
 }
 
@@ -440,6 +438,10 @@ void PacketQueue(AS_attacks *aptr) {
         // later.. sinnce this is the first packet.. we need to allow modifications using particular ranges (such as source ports, etc)
         // it would go here.. :) so it can modify quickly before bufferinng againn... IE: lots of messages to social sites, or blogs..
         // could insert different messages here into the session and prepare it right before the particular connection gets pushed out
+
+        // small logic bug here for the momment.. its adjusting and doing two sets of packets (diff source numbers, so the adjustments work properly
+        // for falsifying thousaands of connections from a single attack body.. glad that works) but for testing i just see 20 packets instead of 10
+        // will figure it out tomoorrow.. noothing serious.
         PacketAdjustments(aptr);
         // if it failed itll show as completed...
         if (aptr->completed) return;
@@ -502,10 +504,7 @@ void PacketsFree(PacketInfo **packets) {
 
 // remove completed sessions
 void AS_remove_completed() {
-    
     AS_attacks *aptr = attack_list, *anext = NULL;
-
-    return;
 
     while (aptr != NULL) {
         if (aptr->completed == 1) {
@@ -519,6 +518,7 @@ void AS_remove_completed() {
             // free the structure itself
             free(aptr);
 
+            if (attack_list == aptr) attack_list = anext;
             aptr = anext;
 
             continue;
@@ -572,115 +572,6 @@ int AS_perform() {
  * 	\Author jve
  * 	\Date  sept. 2008
 */
-
-/*
-notes from wireshark analysis:
-
---------------------------------------
-a web server connection.. in separated packets.. the entire connection from connection establishment to closing.. (including data)
-(this will be a huge portion of the packets)... so 
-simplle inn the end...
-a simple linked list of 8 packets (or more depending on size) and thats all you need to destroy sigint 
-worldwide.. (obviously this same scenario repeated over and over)...
-but in the end.. itll be less than 1500 lines of code.  and these guys didnt take the papers
-alone seriously? like i said.. intelligence agency are about to be as uninteligent as they seem to be
-with my life.
-
-
-packet connection 1 - SYN, gen seq, ack 0, options gen timestamp+max seg size 1460 (verify)
-SYN
-SEQ 100
-ACK 0
-options maxx seg size (MTU?)
-
-packet c 2 server ack conn - seq its own, ack initial seq+1, SYN,ACK   *options max seg 1460+timestamp (verify... window scale 6 by 64)
-connected now..
-SYN,ACK
-SEQ 200
-ACk 101
-options maxx seg size (MTU?)
-
-data packet to server - total len, ident 0x3751..., TCP hdr32 ttl 64, TCP 0x018 PSH+ACK, window size..., *optionss timestamp
-server ack dat packet - ident 0x9528, ttl 53, seq ack+1, ack +81 of last seq, flags ACK, window size 
-, *ops timestamp
-ident 0x3751 (find ones for prior conns too)
-PSH+ACK
-SEQ 102
-ACK 281
-window size
-options timestamp
-
-
-server responding to client - total len 911, ident 0x9529, ttl 53, seq ack+1(next 860), ack 81(same since no changes), hdr 32, flags PSH+ACK, window size 453, *options Timestamps..
-client ack packet fromm sserver - total len 52, ident 0x3752, ttl 64, tcp: seq 81, ack 860 flags ACK window 242, *options timestamp
-PSH+ACK
-ident 0x9529
-SEQ 282
-ACK 281 (no change)
-options stimestamp
-window size
-
-
--- ... ... more packets...
-new data packets could be insertged here just like the last one.. since the last one used the prior packets ack/seq (meaning no changes...
-so they were both  waiiting for sommething to happen.. server's application layer found the webpage)
---
-server sending back the same exact type of packet (assuming the OS sends it even if the opposite side already has.. it prob got a recv -1 in the app layer.. then decided to closesocket(fd) and the OS must want to be sure (im noot reading protocol just using packets... i never cared to know this part only injection before)
-
---
-
-client closing connection - len 522, ident 0x3753, ttl 64, tcp seq 81 ack 860 flags FIN+ACK, window size 242, *options timestamp
-FIN+ACK
-ident 0x3753
-SEQ 281 (same no change)
-ACK ??860 (verify the changes.. i crfeated 100 and 200 for this)
-winndow size
-options timestamp
-
-
-server sending back ACK+FIN - len 52, ident 0x952a ttl 53 TCP seq 860 ACK 82 flags FIN+ACK window value 453 *options timestamp
-ACK+FIN
-ident 0x952a
-SEQ 860
-ACK 282
-window value
-options timestamp
-
-last packet fromm client to server ACK its FIN - len 52 ident 0x3754, ttl 64, TCP seq 82 ack 861 flags ACK window size 242 *options timemstamp
-FIN
-ident 0x3754
-SEQ 282
-ACK ??861 caccualte + verify
-window size
-options timestamp
-
-
------------------------------------------
-
-*/
-VirtualConnection *session_connections = NULL;
-
-
-/*
-NS (1 bit): ECN-nonce - concealment protection (experimental: see RFC 3540).
-CWR (1 bit): Congestion Window Reduced (CWR) flag is set by the sending host to indicate that it received a TCP
- segment with the ECE flag set and had responded in congestion control mechanism (added to header by RFC 3168).
-ECE (1 bit): ECN-Echo has a dual role, depending on the value of the SYN flag. It indicates:
-If the SYN flag is set (1), that the TCP peer is ECN capable.
-If the SYN flag is clear (0), that a packet with Congestion Experienced flag set (ECN=11) in IP header was received
- during normal transmission (added to header by RFC 3168). This serves as an indication of network congestion
-  (or impending congestion) to the TCP sender.
-URG (1 bit): indicates that the Urgent pointer field is significant
-ACK (1 bit): indicates that the Acknowledgment field is significant. 
-All packets after the initial SYN packet sent by the client should have this flag set.
-PSH (1 bit): Push function. Asks to push the buffered data to the receiving application.
-RST (1 bit): Reset the connection
-SYN (1 bit): Synchronize sequence numbers. 
-Only the first packet sent from each end should have this flag set. Some other flags and fields change meaning based on this flag, and some are only valid for when it is set, and others when it is clear.
-FIN (1 bit): Last packet from sender.
-*/
-
-// like this so we can use bitwise type scenarios even though its integer.. if & and flags |= FLAG_...
 
 
 void PtrFree(char **ptr) {
