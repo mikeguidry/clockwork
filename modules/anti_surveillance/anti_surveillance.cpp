@@ -301,7 +301,13 @@ int AS_queue(AS_attacks *attack, PacketInfo *qptr) {
     optr->attack_info = attack;
 
     // link to outgoing queue (FIFO)
-    L_link_ordered((LINK **)&network_queue, (LINK *)optr);
+    //L_link_ordered((LINK **)&network_queue, (LINK *)optr);
+
+    // this was a major reason it was slowing down.. didnt use a jump table or keep track of the last element..
+    // since its supposed to go to wire.. lets just keep pushing it there and see how  quickly it functions.
+    optr->next = network_queue;
+    network_queue = optr;
+
 
     return 1;
 }
@@ -444,7 +450,7 @@ void PacketQueue(AS_attacks *aptr) {
         // small logic bug here for the momment.. its adjusting and doing two sets of packets (diff source numbers, so the adjustments work properly
         // for falsifying thousaands of connections from a single attack body.. glad that works) but for testing i just see 20 packets instead of 10
         // will figure it out tomoorrow.. noothing serious.
-        if (aptr->ts) // means it was already used once..
+        //if (aptr->ts) // means it was already used once..
             PacketAdjustments(aptr);
         // if it failed itll show as completed...
         if (aptr->completed) return;
@@ -1147,20 +1153,23 @@ void *HTTP_Create(AS_attacks *aptr) {
 
     int i = 0;
 
-    /*printf("client body %p size %d\nserver body %p size %d\n",
-    G_client_body, G_client_body_size, G_server_body, G_server_body_size); */
-    i = GenerateBuildInstructionsHTTP(aptr,
-    aptr->dst, aptr->src, aptr->destination_port, 
-     G_client_body, G_client_body_size,
-    G_server_body, G_server_body_size);
+#ifndef BIG_TEST
+    printf("client body %p size %d\nserver body %p size %d\n",G_client_body, G_client_body_size, G_server_body, G_server_body_size);
+#endif
 
-    //printf("GenerateBuildInstructionsHTTP() = %d\n", i);
+    i = GenerateBuildInstructionsHTTP(aptr,aptr->dst, aptr->src, aptr->destination_port, G_client_body, G_client_body_size,G_server_body, G_server_body_size);
+    
 
     BuildPackets(aptr);
-    //printf("BuildPackets() done\n");
 
-    //printf("Packet Count: %d\n", L_count((LINK *)aptr->packets));
+#ifndef BIG_TEST
+    printf("GenerateBuildInstructionsHTTP() = %d\n", i);
 
+    
+    printf("BuildPackets() done\n");
+
+    printf("Packet Count: %d\n", L_count((LINK *)aptr->packets));
+#endif
 }
 
 
@@ -1233,7 +1242,7 @@ int dump_pcap(char *filename, AttackOutgoingQueue *packets) {
         packet_hdr.ts_sec = ts;
         packet_hdr.ts_usec++;
         //packet_hdr.ts_sec = 0;
-        packet_hdr.incl_len = ptr->size + sizeof(struct ether_header); // verify it requires "octets" (multiplied by 8)
+        packet_hdr.incl_len = ptr->size + sizeof(struct ether_header);
         packet_hdr.orig_len = ptr->size + sizeof(struct ether_header);
 
         fwrite((void *)&packet_hdr, 1, sizeof(pcaprec_hdr_t), fd);
@@ -1318,29 +1327,34 @@ int main(int argc, char *argv[]) {
         client_ip = rand()%0xFFFFFFFF;
 #endif
         // queue this session to create an attack structure 
-        r = AS_session_queue(1, client_ip, server_ip, client_port, server_port, count, repeat_interval, 1);
-#ifndef BIG_TEST        
         // was the initial session created ok?
-        printf("AS_session_queue() = %d\n", r);
+        if ((r = AS_session_queue(1, client_ip, server_ip, client_port, server_port, count, repeat_interval, 1)) != 1) {
+            printf("error adding session\n");
+            exit(-1);
+        }
+#ifndef BIG_TEST        
+        
+        
 #else
         if (r == 1)
-#endif
-            
-        // what is the funtion which will create the instructions?
-        // i made a quick one HTTP_Create for this test
+#endif    
         attack_list->function = (void *)&HTTP_Create;
+        
+#ifndef BIG_TEST
+         printf("AS_session_queue() = %d\n", r);
+#else
 
         
-#ifdef BIG_TEST
+
         r = AS_perform();
-        
+
         if (repeat % 1000) {
             printf("\rCount: %05d\t\t", repeat);
             fflush(stdout);
         }
     }
     
-    printf("\rDone\n");
+    printf("\rDone\t\t\n");
 #endif
 
 #ifndef BIG_TEST
