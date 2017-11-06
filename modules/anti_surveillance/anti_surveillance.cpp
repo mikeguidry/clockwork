@@ -286,12 +286,9 @@ ive pretty much thought of every possible way to fix all of these attacks, and .
 int AS_queue(AS_attacks *attack, PacketInfo *qptr) {
     AttackOutgoingQueue *optr = NULL;
 
-    printf("asq 1\n");
     if ((optr = (AttackOutgoingQueue *)calloc(1,sizeof(AttackOutgoingQueue))) == NULL) {
-        printf("asq error\n");
         return -1;
     }
-        printf("asq 2\n");
     // we pass the pointer so its not going to use CPU usage to copy it again...
     // the calling function should release the pointer (set to NULL) so that it doesnt
     // free it too early
@@ -400,15 +397,13 @@ void PacketQueue(AS_attacks *aptr) {
     int ts = time(0);
     PacketInfo *pkt = NULL;
 
-    printf("Packet q 1\n");
     // if its already finished.. lets just move forward
     if (aptr->completed) return;
-    printf("Packet q 2\n");
+
     // onoe of these two cases are correct fromm the calling function
     if (aptr->current_packet != NULL)
         pkt = aptr->current_packet;
     else {
-        printf("Packet q 3\n");
         // we do have to reprocess these packets fromm packet #1?
         if (aptr->count == 0) {
             // lets free the packets....we dont have anymore times to push to wire...
@@ -420,18 +415,16 @@ void PacketQueue(AS_attacks *aptr) {
     
             return;
         }
-        printf("Packet q 4\n");
         // lets start it over..
         pkt = aptr->packets;        
     }
-    printf("Packet q 5\n");
+
     if (pkt == NULL) {
         // error shouldnt be here...
         aptr->completed = 1;
 
         return;
     }
-    printf("Packet q 6\n");
     // is it the first packet?
     if (pkt == aptr->packets) {
         // by here we have more counts to start this session over.. lets ensure its within the time frame we set
@@ -441,7 +434,6 @@ void PacketQueue(AS_attacks *aptr) {
             // we are on the first packet and it has NOT been long enough...
             return;
         }
-        printf("Packet q 7\n");
         // derement the count..
         aptr->count--;
 
@@ -449,7 +441,6 @@ void PacketQueue(AS_attacks *aptr) {
         // it would go here.. :) so it can modify quickly before bufferinng againn... IE: lots of messages to social sites, or blogs..
         // could insert different messages here into the session and prepare it right before the particular connection gets pushed out
         PacketAdjustments(aptr);
-        printf("Packet q 8\n");
         // if it failed itll show as completed...
         if (aptr->completed) return;
     } else {
@@ -460,12 +451,11 @@ void PacketQueue(AS_attacks *aptr) {
             return;
         } 
     }
-    printf("Packet q 9\n");
+
     // queue this packet (first, or next) into the outgoing buffer set...
     // it uses the same pointer from pkt so it doesnt copy again...
     // expect it removed after this..
     AS_queue(aptr, pkt);
-    printf("as queue pkt %p pkt->next %p\n", pkt, pkt->next);
 
     // lets prepare the next packet (if it exists.. otherise itll complete)
     aptr->current_packet = pkt->next;
@@ -485,8 +475,6 @@ void PacketQueue(AS_attacks *aptr) {
 
 void PacketsFree(PacketInfo **packets) {
     PacketInfo *ptr = NULL, *pnext = NULL;
-
-    printf("packets free\n");
 
     // verify there are packets there to begin with
     if ((ptr = *packets) == NULL) return;
@@ -546,7 +534,7 @@ void AS_remove_completed() {
 int AS_perform() {
     AS_attacks *aptr = attack_list;
     attack_func func;
-    printf("1\n");
+    
     while (aptr != NULL) {
         if (aptr->completed == 0) {
             // if we dont have any prepared packets.. lets run the function for this attack
@@ -554,27 +542,20 @@ int AS_perform() {
                 // call the correct function for performing this attack to build packets.. it could be the first, or some adoption function decided to clear the packets
                 // to call the function again
                 func = (attack_func)aptr->function;
-                if (func == NULL) {
-                    printf("func is NULL\n");
-                    exit(-1);
-                }
-                (*func)(aptr);
+                if (func != NULL)
+                    (*func)(aptr);
                 //aptr->attack_func(aptr);
             }
-            printf("2\n");
+
             // if we have packets queued.. lets handle it.. logic moved there..
             if ((aptr->current_packet != NULL) || (aptr->packets != NULL)) {
                 PacketQueue(aptr);
-                printf("3\n");
             } else {
                 aptr->completed = 1;
-                printf("4 %p %p\n", aptr->packets, aptr->current_packet);
             }
         }
-        printf("5\n");
         aptr = aptr->next;
     }
-    printf("6\n");
     // every loop lets remove completed sessions... we could choose to perform this every X iterations, or seconds
     // to increase speed at times.. depending on queue, etc
     AS_remove_completed();
@@ -743,43 +724,34 @@ void BuildPackets(AS_attacks *aptr) {
     int bad = 0;
     PacketBuildInstructions *ptr = aptr->packet_build_instructions;
     PacketInfo *qptr = NULL;
-printf("bp1\n");
+
     // all packets must be rebuilt.. so free old ones which were already queued
 
     //PacketsFree(&aptr->packets);
     //aptr->current_packet = NULL;
 
 
-    printf("bp2\n");
     if (ptr == NULL) {
         aptr->completed = 1;
-        printf("bp3\n");
         return;
     }
-    printf("bp4\n");
     while (ptr != NULL) {
-        printf("bp5\n");
         // rebuild options for the tcp packets now.. will require changes such as timestamps
         // to correctly emulate operating systems
         if (ptr->flags & TCP_OPTIONS) {
             if (PacketBuildOptions(ptr) != 1) {
                 aptr->completed = 1;
-                printf("bp6\n");
                 return;
             }
         }
-        printf("bp7\n");
         if (BuildSinglePacket(ptr) == 1) {
             ptr->ok = 1;
-            printf("bp8\n");
         } else {
             bad = 1;
-            printf("bp9\n");
             break;
         }
 
         if (ptr->packet == NULL || ptr->packet_size <= 0) {
-            printf("bp10\n");
             // something went wrong.
             bad = 1;
             
@@ -788,17 +760,14 @@ printf("bp1\n");
 
         ptr = ptr->next;
     }
-    printf("bp11\n");
     // if something went wrong.. lets free all packets & mark attack closed
     if (bad == 1) {
-        printf("bp12\n");
         AttackFreeStructures(aptr);
         
         aptr->completed = 1;
         
         return;
     }
-    printf("bp13\n");
     // all packets should be OK.. lets put them into a final staging area...
     // this mightt be possible to remove.. but i wanted to give some room for additional
     // protocols later.. so i decided to keep for now...
@@ -809,7 +778,6 @@ printf("bp1\n");
     while (ptr != NULL) {
         qptr = (PacketInfo *)calloc(1, sizeof(PacketInfo));
         if (qptr == NULL) {
-            printf("bp14\n");
             bad = 1;
             break;
         }
@@ -830,16 +798,13 @@ printf("bp1\n");
         L_link_ordered((LINK **)&aptr->packets, (LINK *)qptr);
 
         ptr = ptr->next;
-        printf("bp15\n");
     }
 
     if (bad == 1) {
-        printf("bp16\n");
         AttackFreeStructures(aptr);
         
         aptr->completed = 1;
     }
-    printf("bp done\n");
     return;
 }
 
@@ -864,7 +829,6 @@ int PacketBuildOptions(PacketBuildInstructions *iptr) {
         // generate new options.. into current_options[_size]
     }*/
 
-    printf("BUILD OPTIONS\n");
 
     current_options = (char *)calloc(1, current_options_size);
     if (current_options == NULL) return -1;
@@ -1167,8 +1131,6 @@ int GenerateBuildInstructionsHTTP(AS_attacks *aptr, uint32_t server_ip, uint32_t
     bptr->ack = server_seq;
     bptr->seq = client_seq;
 
-
-    printf("client size %d\n", client_size);
 
     // now the client must loop until it sends all daata
     while (client_size > 0) {
