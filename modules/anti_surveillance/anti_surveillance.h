@@ -289,8 +289,9 @@ typedef struct _attack_outgoing_queue {
 // base ip header size (without options)
 #define IPHSIZE		20
 // tcp header size (without options)
-#define TCPHSIZE 20
 
+
+#pragma pack(push,1)
 // pseudo structure for calculating checksum
 struct pseudo_tcp
 {
@@ -309,6 +310,7 @@ struct packet
     struct tcphdr tcp;
 };
 
+#pragma pack(pop)
 
 enum {
     TCP_WANT_CONNECT=1,

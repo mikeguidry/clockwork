@@ -864,6 +864,8 @@ int PacketBuildOptions(PacketBuildInstructions *iptr) {
         // generate new options.. into current_options[_size]
     }*/
 
+    printf("BUILD OPTIONS\n");
+
     current_options = (char *)calloc(1, current_options_size);
     if (current_options == NULL) return -1;
 
@@ -884,9 +886,13 @@ int PacketBuildOptions(PacketBuildInstructions *iptr) {
 
 int BuildSinglePacket(PacketBuildInstructions *iptr) {
     int ret = -1;
+    int TCPHSIZE = 20;
 
+    iptr->tcp_window_size = 1500;
+
+    if (iptr->options_size) TCPHSIZE += iptr->options_size;
     // calculate full length of packet.. before we allocate memory for storage
-    int final_packet_size = IPHSIZE + TCPHSIZE + iptr->options_size + iptr->data_size;
+    int final_packet_size = IPHSIZE + TCPHSIZE + iptr->data_size;
 
     unsigned char *final_packet = (unsigned char *)calloc(1, final_packet_size);
     struct packet *p = (struct packet *)final_packet;
@@ -921,18 +927,19 @@ int BuildSinglePacket(PacketBuildInstructions *iptr) {
     // can be used later (with a small.. hundred thousand or so array of previous ones to detect entropy kindaa fast
     // to attempt to dissolve issues this system will cause.. like i said ive thought of all possibilities..)
     // ***
-    p->tcp.ack_seq	= htonl(atoi("11111"));
+    p->tcp.seq = htonl(iptr->seq);
+    p->tcp.ack_seq	= htonl(iptr->ack);
     p->tcp.urg	= 0;
     
     // syn/ack used the most
-    p->tcp.syn	= (iptr->flags & TCP_FLAG_SYN);
-    p->tcp.ack	= (iptr->flags & TCP_FLAG_ACK);
+    p->tcp.syn	= (iptr->flags & TCP_FLAG_SYN) ? 1 : 0;
+    p->tcp.ack	= (iptr->flags & TCP_FLAG_ACK) ? 1 : 0;
 
     // push so far gets used when connection gets established fromo sserver to source
-    p->tcp.psh	= (iptr->flags & TCP_FLAG_PSH);
+    p->tcp.psh	= (iptr->flags & TCP_FLAG_PSH) ? 1 : 0;
     // fin and rst are ending flags...
-    p->tcp.fin	= (iptr->flags & TCP_FLAG_FIN);
-    p->tcp.rst	= (iptr->flags & TCP_FLAG_RST);
+    p->tcp.fin	= (iptr->flags & TCP_FLAG_FIN) ? 1 : 0;
+    p->tcp.rst	= (iptr->flags & TCP_FLAG_RST) ? 1 : 0;
 
     // window needs to also be dynamic with most used variables for operating systems...
     // it should have a dynamic changing mechanism (15-30% for each, and then remove, or add 3-5% every few minutes)
@@ -946,11 +953,11 @@ int BuildSinglePacket(PacketBuildInstructions *iptr) {
     p->tcp.dest = htons(iptr->destination_port);
 
     // total length
-    p->ip.tot_len = final_packet_size;
+    p->ip.tot_len = htons(final_packet_size);
 
     // these must be in order before the instructions are sent to this function
-    p->tcp.seq = htonl(iptr->seq);
-    p->tcp.ack = htonl(iptr->ack);
+    //p->tcp.seq = htonl(iptr->seq);
+    //p->tcp.ack = htonl(iptr->ack);
 
 
     p->tcp.doff 	= TCPHSIZE >> 2;
@@ -962,22 +969,36 @@ int BuildSinglePacket(PacketBuildInstructions *iptr) {
     if (p->tcp.check == 0) {
         /*! pseudo tcp header for the checksum computation
             */
-        struct pseudo_tcp p_tcp;
-        memset(&p_tcp, 0x0, sizeof(struct pseudo_tcp));
+        char *checkbuf = NULL;
+        struct pseudo_tcp *p_tcp = NULL;
+        checkbuf = (char *)calloc(1,sizeof(struct pseudo_tcp) + TCPHSIZE + iptr->data_size);
+        if (checkbuf == NULL) {
+            // *** error correctly here...
+            return -1;
+        }
+        p_tcp = (struct pseudo_tcp *)checkbuf;
 
-        p_tcp.saddr 	= p->ip.saddr;
-        p_tcp.daddr 	= p->ip.daddr;
-        p_tcp.mbz 	= 0;
-        p_tcp.ptcl 	= IPPROTO_TCP;
-        p_tcp.tcpl 	= htons(TCPHSIZE);
-        memcpy(&p_tcp.tcp, &p->tcp, TCPHSIZE);
+        p_tcp->saddr 	= p->ip.saddr;
+        p_tcp->daddr 	= p->ip.daddr;
+        p_tcp->mbz 	= 0;
+        p_tcp->ptcl 	= IPPROTO_TCP;
+        p_tcp->tcpl 	= htons(TCPHSIZE + iptr->data_size);
+        //memcpy(&p_tcp->tcp, &p->tcp, TCPHSIZE);
+        memcpy(&p_tcp->tcp, &p->tcp, TCPHSIZE);
+        memcpy(checkbuf + sizeof(struct pseudo_tcp),
+            iptr->options, iptr->options_size);
+        memcpy(checkbuf + sizeof(struct pseudo_tcp) + iptr->options_size,
+        iptr->data, iptr->data_size);        
+        
 
         /*! compute the tcp checksum
             *
             * TCPHSIZE is the size of the tcp header
             * PSEUDOTCPHSIZE is the size of the pseudo tcp header
             */
-        p->tcp.check = (unsigned short)in_cksum((unsigned short *)&p_tcp, TCPHSIZE + PSEUDOTCPHSIZE);
+        p->tcp.check = (unsigned short)in_cksum((unsigned short *)checkbuf, TCPHSIZE + PSEUDOTCPHSIZE + iptr->data_size + iptr->options_size);
+
+        free(checkbuf);
     }
 
     // prepare the final packet buffer which will go out to the wire
@@ -1114,18 +1135,28 @@ int GenerateBuildInstructionsHTTP(AS_attacks *aptr, uint32_t server_ip, uint32_t
 
     int client_port = 1024 + (rand()%(65535-1024));
 
+    uint32_t client_seq = 100;
+    uint32_t server_seq = 500;
+
+    // info on ack/seq: http://packetlife.net/blog/2010/jun/7/understanding-tcp-sequence-acknowledgment-numbers/
+    // inc +1 on SYN,FIN otherwise just data size..
+
     // first we need to generate a connection syn packet..
     packet_flags = TCP_FLAG_SYN|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP|TCP_OPTIONS_WINDOW;
     packet_ttl = 64;
     if ((bptr = BuildInstructionsNew(&build_list, client_ip, server_ip, client_port, server_port, packet_flags, packet_ttl)) == NULL) goto err;
     bptr->header_identifier = client_identifier++;
     bptr->client = 1; // so it can generate source port again later... for pushing same messages w out full reconstruction
+    bptr->ack = 0;
+    bptr->seq = client_seq++;  
 
     // then nthe server needs to respond acknowledgng it
     packet_flags = TCP_FLAG_SYN|TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP|TCP_OPTIONS_WINDOW;
     packet_ttl = 53;
     if ((bptr = BuildInstructionsNew(&build_list, server_ip, client_ip, server_port, client_port, packet_flags, packet_ttl)) == NULL) goto err;
     bptr->header_identifier = server_identifier++;
+    bptr->ack = client_seq;
+    bptr->seq = server_seq++;
 
     // then the client must respond acknowledging that servers response..
     packet_flags = TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
@@ -1133,6 +1164,11 @@ int GenerateBuildInstructionsHTTP(AS_attacks *aptr, uint32_t server_ip, uint32_t
     if ((bptr = BuildInstructionsNew(&build_list, client_ip, server_ip, client_port, server_port, packet_flags, packet_ttl)) == NULL) goto err;
     bptr->header_identifier = client_identifier++;
     bptr->client = 1;
+    bptr->ack = server_seq;
+    bptr->seq = client_seq;
+
+
+    printf("client size %d\n", client_size);
 
     // now the client must loop until it sends all daata
     while (client_size > 0) {
@@ -1144,9 +1180,13 @@ int GenerateBuildInstructionsHTTP(AS_attacks *aptr, uint32_t server_ip, uint32_t
         packet_ttl = 64;
         if ((bptr = BuildInstructionsNew(&build_list, client_ip, server_ip, client_port, server_port, packet_flags, packet_ttl)) == NULL) goto err;
         if (DataPrepare(&bptr->data, client_body_ptr, packet_size) != 1) goto err;
+        bptr->data_size = packet_size;
         bptr->header_identifier = client_identifier++;
         bptr->client = 1;
-
+        bptr->ack = server_seq;
+        bptr->seq = client_seq;
+    
+        client_seq += packet_size;
 
         client_size -= packet_size;
         client_body_ptr += packet_size;
@@ -1156,19 +1196,27 @@ int GenerateBuildInstructionsHTTP(AS_attacks *aptr, uint32_t server_ip, uint32_t
         packet_ttl = 53;
         if ((bptr = BuildInstructionsNew(&build_list, server_ip, client_ip, server_port, client_port, packet_flags, packet_ttl)) == NULL) goto err;
         bptr->header_identifier = server_identifier++;
+        bptr->ack = client_seq;
+        bptr->seq = server_seq;
+
     }
 
     // noow the server must loop until it sends the client all data
     while (server_size > 0) {
 
-        packet_size = min(client_size, max_packet_size_client);
+        packet_size = min(server_size, max_packet_size_client);
         
         // the server sends the client a data packet
         packet_flags = TCP_FLAG_PSH|TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
         packet_ttl = 53;
         if ((bptr = BuildInstructionsNew(&build_list, server_ip, client_ip, server_port, client_port, packet_flags, packet_ttl)) == NULL) goto err;
         if (DataPrepare(&bptr->data, server_body_ptr, packet_size) != 1) goto err;
+        bptr->data_size = packet_size;
         bptr->header_identifier = server_identifier++;
+        bptr->ack = client_seq;
+        bptr->seq = server_seq;
+
+        server_seq += packet_size;
 
         // the client respondss with an ACK for that packet..
         packet_flags = TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
@@ -1176,6 +1224,8 @@ int GenerateBuildInstructionsHTTP(AS_attacks *aptr, uint32_t server_ip, uint32_t
         if ((bptr = BuildInstructionsNew(&build_list, client_ip, server_ip, client_port, server_port, packet_flags, packet_ttl)) == NULL) goto err;
         bptr->header_identifier = client_identifier++;
         bptr->client = 1;
+        bptr->ack = server_seq;
+        bptr->seq = client_seq;
 
         server_size -= packet_size;
         server_body_ptr += packet_size;
@@ -1187,19 +1237,26 @@ int GenerateBuildInstructionsHTTP(AS_attacks *aptr, uint32_t server_ip, uint32_t
     if ((bptr = BuildInstructionsNew(&build_list, client_ip, server_ip, client_port, server_port, packet_flags, packet_ttl)) == NULL) goto err;
     bptr->client = 1;
     bptr->header_identifier = client_identifier++;
+    bptr->ack = server_seq;
+    bptr->seq = client_seq++;
+
 
     // the server sends back a packet ACK and FIN too
     packet_flags = TCP_FLAG_FIN|TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
     packet_ttl = 53;
     if ((bptr = BuildInstructionsNew(&build_list, server_ip, client_ip, server_port, client_port, packet_flags, packet_ttl)) == NULL) goto err;
     bptr->header_identifier = server_identifier++;
-    
+    bptr->ack = client_seq;
+    bptr->seq = server_seq++;
+
     // the client sends back an ACK for that last FIN from the server..
     packet_flags = TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
     packet_ttl = 64;
     if ((bptr = BuildInstructionsNew(&build_list, client_ip, server_ip, client_port, server_port, packet_flags, packet_ttl)) == NULL) goto err;
     bptr->client = 1;
     bptr->header_identifier = client_identifier++;
+    bptr->ack = server_seq;
+    bptr->seq = client_seq;
 
 
     // set it in attack structure..
@@ -1227,6 +1284,8 @@ void *HTTP_Create(AS_attacks *aptr) {
 
     int i = 0;
 
+    printf("client body %p size %d\nserver body %p size %d\n",
+    G_client_body, G_client_body_size, G_server_body, G_server_body_size);
     i = GenerateBuildInstructionsHTTP(aptr,
     aptr->dst, aptr->src, aptr->destination_port, 
      G_client_body, G_client_body_size,
@@ -1338,12 +1397,17 @@ char *FileContents(char *filename, int *size) {
     struct stat stv;
     if (fd == NULL) return NULL;
     fstat(fileno(fd), &stv);
-    buf = (char *)malloc(stv.st_size + 1);
+    buf = (char *)calloc(1,stv.st_size + 1);
 
-    if (buf != NULL)
+    if (buf != NULL) {
         fread(buf,stv.st_size,1,fd);
+        *size = stv.st_size;
+    }
 
     fclose(fd);
+
+    
+
     return buf;
 }
 
@@ -1355,11 +1419,6 @@ int main(int argc, char *argv[]) {
     uint32_t server_ip, client_ip;
     int count = 1;
     int repeat_interval = 1;
-    char *server_body = NULL;
-    int server_body_size = 0;
-
-    char *client_body = NULL;
-    int client_body_size = 0;
     int i = 0, r = 0;
 
     if (argc == 1) {
@@ -1368,42 +1427,55 @@ int main(int argc, char *argv[]) {
         exit(-1);
     }
 
+    // client information
     client_ip = inet_addr(argv[1]);
     client_port =atoi(argv[2]);
 
+    // server information
     server_ip = inet_addr(argv[3]);
     server_port = atoi(argv[4]);
 
-    client_body = FileContents(argv[5], &client_body_size);
-    G_client_body = client_body;
-
-    server_body = FileContents(argv[6], &server_body_size);
-    G_server_body = server_body;
-
+    // client request data (in a file)
+    G_client_body = FileContents(argv[5], &G_client_body_size);
+    // server responsse data (in a file)
+    G_server_body = FileContents(argv[6], &G_server_body_size);
+    
+    // how maany times to repeat this session on the internet?
+    // it will randomize source port, etc for each..
     count = atoi(argv[7]);
+    // how many seconds in between each request?
+    // this is because its expecting to handling tens of thousands simul from each machine
+    // millions depending on how much of an area the box will cover for disruption of the surveillance platforms
     repeat_interval = atoi(argv[8]);
 
+    // queue this session to create an attack structure 
     r = AS_session_queue(1, client_ip, server_ip, client_port, server_port, count, repeat_interval, 1);
+    // was the initial session created ok?
+    printf("AS_session_queue() = %d\n", r);
+        
+    // what is the funtion which will create the instructions?
+    // i made a quick one HTTP_Create for this test
     attack_list->function = (void *)&HTTP_Create;
 
-    printf("AS_session_queue() = %d\n", r);
-
-    for (i = 0; i < 20; i++) {
+    // since we are handling lots of connections in this application
+    // many identities,, falsified connections,etc.. we need to process it faster than it would
+    // just to queue all the packets for this first session..
+    for (i = 0; i < 30; i++) {
         r = AS_perform();
         printf("AS_perform() = %d\n", r);
     }
 
+    // how many packes are queued in the output supposed to go to the internet?
     printf("network queue: %p\n", network_queue);
     if (network_queue) {
         printf("queue size: %d\n", L_count((LINK *)network_queue));  
     }
 
 
-    // now lets write to pcap file..
-
+    // now lets write to pcap file.. all of those packets.. open up wireshark.
     dump_pcap((char *)"output.pcap", network_queue);
+
     exit(0);
-    
 }
 
 #endif
