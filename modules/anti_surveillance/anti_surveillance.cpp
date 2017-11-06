@@ -344,7 +344,9 @@ int AS_session_queue(int id, uint32_t src, uint32_t dst, int src_port, int dst_p
     aptr->repeat_interval = interval;
 
     // FIFO - first in first out...
-    L_link_ordered((LINK **)&attack_list, (LINK *)aptr);
+    //L_link_ordered((LINK **)&attack_list, (LINK *)aptr);
+    aptr->next = attack_list;
+    attack_list = aptr;
 
     return 1;
 }
@@ -505,7 +507,7 @@ void PacketsFree(PacketInfo **packets) {
 
 // remove completed sessions
 void AS_remove_completed() {
-    AS_attacks *aptr = attack_list, *anext = NULL;
+    AS_attacks *aptr = attack_list, *anext = NULL, *alast = NULL;
 
     while (aptr != NULL) {
         if (aptr->completed == 1) {
@@ -516,15 +518,20 @@ void AS_remove_completed() {
             // free all packets from this attack structure..
             AttackFreeStructures(aptr);
 
+            if (attack_list == aptr)
+                attack_list = anext;
+            else
+                alast->next = anext;
+
             // free the structure itself
             free(aptr);
 
-            if (attack_list == aptr) attack_list = anext;
             aptr = anext;
 
             continue;
         }
 
+        alast = aptr;
         aptr = aptr->next;
     }
 
@@ -537,6 +544,7 @@ int AS_perform() {
     attack_func func;
     
     while (aptr != NULL) {
+        //printf("aptr %p next %p\n", aptr, aptr->next);
         if (aptr->completed == 0) {
             // if we dont have any prepared packets.. lets run the function for this attack
             if (aptr->packets == NULL) {
@@ -555,6 +563,7 @@ int AS_perform() {
                 aptr->completed = 1;
             }
         }
+
         aptr = aptr->next;
     }
     // every loop lets remove completed sessions... we could choose to perform this every X iterations, or seconds
@@ -1138,19 +1147,19 @@ void *HTTP_Create(AS_attacks *aptr) {
 
     int i = 0;
 
-    printf("client body %p size %d\nserver body %p size %d\n",
-    G_client_body, G_client_body_size, G_server_body, G_server_body_size);
+    /*printf("client body %p size %d\nserver body %p size %d\n",
+    G_client_body, G_client_body_size, G_server_body, G_server_body_size); */
     i = GenerateBuildInstructionsHTTP(aptr,
     aptr->dst, aptr->src, aptr->destination_port, 
      G_client_body, G_client_body_size,
     G_server_body, G_server_body_size);
 
-    printf("GenerateBuildInstructionsHTTP() = %d\n", i);
+    //printf("GenerateBuildInstructionsHTTP() = %d\n", i);
 
     BuildPackets(aptr);
-    printf("BuildPackets() done\n");
+    //printf("BuildPackets() done\n");
 
-    printf("Packet Count: %d\n", L_count((LINK *)aptr->packets));
+    //printf("Packet Count: %d\n", L_count((LINK *)aptr->packets));
 
 }
 
@@ -1274,7 +1283,9 @@ int main(int argc, char *argv[]) {
     int count = 1;
     int repeat_interval = 1;
     int i = 0, r = 0;
-
+#ifdef BIG_TEST
+    int repeat = 5000;
+#endif
     if (argc == 1) {
         printf("%s client_ip client_port server_ip server_port client_body_file server_body_file repeat_count repeat_interval\n",
             argv[0]);
@@ -1301,23 +1312,46 @@ int main(int argc, char *argv[]) {
     // this is because its expecting to handling tens of thousands simul from each machine
     // millions depending on how much of an area the box will cover for disruption of the surveillance platforms
     repeat_interval = atoi(argv[8]);
+#ifdef BIG_TEST
+    while (repeat--) {
+        server_ip = rand()%0xFFFFFFFF;
+        client_ip = rand()%0xFFFFFFFF;
+#endif
+        // queue this session to create an attack structure 
+        r = AS_session_queue(1, client_ip, server_ip, client_port, server_port, count, repeat_interval, 1);
+#ifndef BIG_TEST        
+        // was the initial session created ok?
+        printf("AS_session_queue() = %d\n", r);
+#else
+        if (r == 1)
+#endif
+            
+        // what is the funtion which will create the instructions?
+        // i made a quick one HTTP_Create for this test
+        attack_list->function = (void *)&HTTP_Create;
 
-    // queue this session to create an attack structure 
-    r = AS_session_queue(1, client_ip, server_ip, client_port, server_port, count, repeat_interval, 1);
-    // was the initial session created ok?
-    printf("AS_session_queue() = %d\n", r);
         
-    // what is the funtion which will create the instructions?
-    // i made a quick one HTTP_Create for this test
-    attack_list->function = (void *)&HTTP_Create;
+#ifdef BIG_TEST
+        r = AS_perform();
+        
+        if (repeat % 1000) {
+            printf("\rCount: %05d\t\t", repeat);
+            fflush(stdout);
+        }
+    }
+    
+    printf("\rDone\n");
+#endif
 
+#ifndef BIG_TEST
     // since we are handling lots of connections in this application
     // many identities,, falsified connections,etc.. we need to process it faster than it would
     // just to queue all the packets for this first session..
     for (i = 0; i < 30; i++) {
-        r = AS_perform();
+        r = AS_perform();     
         printf("AS_perform() = %d\n", r);
     }
+#endif
 
     // how many packes are queued in the output supposed to go to the internet?
     printf("network queue: %p\n", network_queue);
