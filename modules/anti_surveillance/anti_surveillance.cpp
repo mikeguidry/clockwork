@@ -450,7 +450,7 @@ void PacketQueue(AS_attacks *aptr) {
         // small logic bug here for the momment.. its adjusting and doing two sets of packets (diff source numbers, so the adjustments work properly
         // for falsifying thousaands of connections from a single attack body.. glad that works) but for testing i just see 20 packets instead of 10
         // will figure it out tomoorrow.. noothing serious.
-        //if (aptr->ts) // means it was already used once..
+        if (aptr->ts) // means it was already used once..
             PacketAdjustments(aptr);
         // if it failed itll show as completed...
         if (aptr->completed) return;
@@ -1006,8 +1006,8 @@ int GenerateBuildInstructionsHTTP(AS_attacks *aptr, uint32_t server_ip, uint32_t
 
     int client_port = 1024 + (rand()%(65535-1024));
 
-    uint32_t client_seq = 100;
-    uint32_t server_seq = 500;
+    uint32_t client_seq = rand()%0xFFFFFFFF;
+    uint32_t server_seq = rand()%0xFFFFFFFF;
 
     // info on ack/seq: http://packetlife.net/blog/2010/jun/7/understanding-tcp-sequence-acknowledgment-numbers/
     // inc +1 on SYN,FIN otherwise just data size..
@@ -1293,7 +1293,7 @@ int main(int argc, char *argv[]) {
     int repeat_interval = 1;
     int i = 0, r = 0;
 #ifdef BIG_TEST
-    int repeat = 5000;
+    int repeat = 1000000;
 #endif
     if (argc == 1) {
         printf("%s client_ip client_port server_ip server_port client_body_file server_body_file repeat_count repeat_interval\n",
