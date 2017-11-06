@@ -96,24 +96,16 @@ typedef struct _lookup_queue {
 typedef struct _pkt_info {
     struct _pkt_info *next;
 
-    int type;
-
     // for future (wifi raw, etc)
     //int layer;
 
     char *buf;
     int size;
 
-    // processed using functions to replace locally captured sessions
-    // with other names
-    int prepared; // macros, etc
-
-    // this src/dst matters most only if the prior structure is using 0
-    uint32_t source;
-    uint32_t source_port;
-
-    uint32_t destination;
-    uint32_t destination_port;
+    // if we need to wait till a certain time for releasing this packet, then it goes here..
+    // this is good for emulation of advanced protocols.. think SSH, telnet, etc anything
+    // which is real time & has humans performing actions over a single connection
+    int wait_time;
 } PacketInfo;
 
 
@@ -186,9 +178,14 @@ typedef struct _as_attacks {
     int send_state;
     int recv_state;
 
-    // packets being used for send states, or whatever other circumstances
+    // instructions for building raw packets..
+    PacketBuildInstructions *packet_build_instructions;
+
+    // actual built packets ready for going out
     PacketInfo *packets;
     PacketInfo *current_packet;
+
+    
 
     // do we repeat this attack again whenever its completed?
     int count;
@@ -250,44 +247,6 @@ struct packethdr
     struct tcphdr tcp;
 };
 
-/*
-NS (1 bit): ECN-nonce - concealment protection (experimental: see RFC 3540).
-CWR (1 bit): Congestion Window Reduced (CWR) flag is set by the sending host to indicate that it received a TCP
- segment with the ECE flag set and had responded in congestion control mechanism (added to header by RFC 3168).
-ECE (1 bit): ECN-Echo has a dual role, depending on the value of the SYN flag. It indicates:
-If the SYN flag is set (1), that the TCP peer is ECN capable.
-If the SYN flag is clear (0), that a packet with Congestion Experienced flag set (ECN=11) in IP header was received
- during normal transmission (added to header by RFC 3168). This serves as an indication of network congestion
-  (or impending congestion) to the TCP sender.
-URG (1 bit): indicates that the Urgent pointer field is significant
-ACK (1 bit): indicates that the Acknowledgment field is significant. 
-All packets after the initial SYN packet sent by the client should have this flag set.
-PSH (1 bit): Push function. Asks to push the buffered data to the receiving application.
-RST (1 bit): Reset the connection
-SYN (1 bit): Synchronize sequence numbers. 
-Only the first packet sent from each end should have this flag set. Some other flags and fields change meaning based on this flag, and some are only valid for when it is set, and others when it is clear.
-FIN (1 bit): Last packet from sender.
-*/
-
-// like this so we can use bitwise type scenarios even though its integer.. if & and flags |= FLAG_...
-enum {
-    TCP_WANT_CONNECT=1,
-    TCP_CONNECT_OK=2,
-    TCP_ESTABLISHED=4,
-    TCP_TRANSFER=8,
-    TCP_FLAG_NS=16,
-    TCP_FLAG_CWR=32,
-    TCP_FLAG_ECE=64,
-    TCP_FLAG_URG=128,
-    TCP_FLAG_ACK=256,
-    TCP_FLAG_PSH=512,
-    TCP_FLAG_RST=1024,
-    TCP_FLAG_SYN=2048,
-    TCP_FLAG_FIN=4096,
-    TCP_OPTIONS_WINDOW=8192,
-    TCP_OPTIONS_TIMESTAMP=16384
-};
-
 
 
 // allows preparing full session, and then building the packets immediately..
@@ -299,6 +258,8 @@ enum {
 // this is one method which allows expanding easily..
 typedef struct _tcp_packet_instructions {
     struct _tcp_packet_instructions *next;
+
+    int client;
 
     int session_id;
     
@@ -318,7 +279,8 @@ typedef struct _tcp_packet_instructions {
     char *options;
     int options_size;
 
-    int window_size;
+    // this is for the 
+    unsigned short tcp_window_size;
 
     // data goes here.. but it'd be nice to have it as an array..
     // so a function can fragment it which would cause even further processing
@@ -342,5 +304,4 @@ typedef struct _tcp_packet_instructions {
     int ok;
 } PacketBuildInstructions;
 
-
-
+int GenerateBuildInstructionsHTTP(AS_attacks *aptr, char *client_body, int client_size char *server_body, int server_size);

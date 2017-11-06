@@ -138,7 +138,7 @@ isnt sure then havinng somme situations like this only helps)
 
 // declarations
 unsigned short in_cksum(unsigned short *addr,int len);
-
+void AttackFreeStructures(AS_attacks *aptr);
 
 
 
@@ -182,43 +182,30 @@ DNSRecord *dns_records = NULL;
 //https://stackoverflow.com/questions/1093410/pulling-mx-record-from-dns-server
 // ensure it works across all IoT and systems
 
-
-int main (int argc, char *argv[])
-{
+int DNS_lookup(DNSQueue *qptr) {
     u_char nsbuf[4096];
     char dispbuf[4096];
     ns_msg msg;
     ns_rr rr;
-    int i, j, l;
+    int i = 0, j = 0, l = 0;
 
-    if (argc < 2) {
-        printf ("Usage: %s <domain>[...]\n", argv[0]);
-        exit (1);
-    }
+    if (qptr == NULL) return -1;
 
-    for (i = 1; i < argc; i++) {
-        l = res_query (argv[i], ns_c_any, ns_t_mx, nsbuf, sizeof (nsbuf));
-        if (l < 0) {
-            perror (argv[i]);
-        } else {
-#ifdef USE_PQUERY
-/* this will give lots of detailed info on the request and reply */
-            res_pquery (&_res, nsbuf, l, stdout);
+#ifndef PQUERY
+    l = res_query (qptr->hostname, ns_c_any, ns_t_mx, nsbuf, sizeof (nsbuf));
 #else
-/* just grab the MX answer info */
-            ns_initparse (nsbuf, l, &msg);
-            printf ("%s :\n", argv[i]);
-            l = ns_msg_count (msg, ns_s_an);
-            for (j = 0; j < l; j++) {
-                ns_parserr (&msg, ns_s_an, j, &rr);
-                ns_sprintrr (&msg, &rr, NULL, NULL, dispbuf, sizeof (dispbuf));
-                printf ("%s\n", dispbuf);
-            }
+// found this in orig function.. check both...
+    res_pquery (&_res, nsbuf, l, stdout);
 #endif
-        }
+    ns_initparse (nsbuf, l, &msg);
+    l = ns_msg_count (msg, ns_s_an);
+    for (j = 0; j < l; j++) {
+        ns_parserr (&msg, ns_s_an, j, &rr);
+        ns_sprintrr (&msg, &rr, NULL, NULL, dispbuf, sizeof (dispbuf));
+        printf ("%s\n", dispbuf);
     }
 
-    exit (0);
+    return 1;
 }
 
 enum {
@@ -235,7 +222,7 @@ AS_attacks *attack_list = NULL;
 // this allows using a separate thread to ensure speed is fast enough
 // in that case we shouldnt affect the attack_info from another thread
 // without mutex, etc but it might not be worth it
-AttackOutgoingQueue *wire_queue = NULL;
+AttackOutgoingQueue *network_queue = NULL;
 
 
 /*
@@ -251,7 +238,7 @@ i dont think its important until the analysis parts of attempting to block the a
 ive pretty much thought of every possible way to fix all of these attacks, and ... its impossible to solve for good.
 
 */
-int AS_queue(char *buf, int size, AS_attacks *attack) {
+int AS_queue(AS_attacks *attack, PacketInfo *qptr) {
     AttackOutgoingQueue *optr = NULL;
 
     if ((optr = (AttackOutgoingQueue *)calloc(1,sizeof(AttackOutgoingQueue)) == NULL)
@@ -260,9 +247,16 @@ int AS_queue(char *buf, int size, AS_attacks *attack) {
     // we pass the pointer so its not going to use CPU usage to copy it again...
     // the calling function should release the pointer (set to NULL) so that it doesnt
     // free it too early
-    optr->buf = buf;
-    optr->size = size;
+    optr->buf = qptr->buf;
+    qptr->buf = NULL;
+
+    optr->size = qptr->size;
+    qptr->size = 0;
+
     optr->attack_info = attack;
+
+    // link to outgoing queue (FIFO)
+    L_link_ordered((LIST **)&network_queue, (LIST *)optr);
 
     return 1;
 }
@@ -286,21 +280,26 @@ int AS_session_queue(int id, uint32_t src, uint32_t dst, int src_port, int dst_p
     if (aptr == NULL)
         return -1;
 
+    // identifier for the attack..
+    // in case we need to find it in queue later
     aptr->id = id;
 
+    // src&dst information
     aptr->src = src;
     aptr->dst = dst;
     aptr->src_port = src_port;
     aptr->dst_port = dst_port;
 
-
+    // this is a full blown tcp session
     aptr->type = ATTACK_SESSION;
 
+    // how many times will we replay this session?
     aptr->count = count;
+    // how much time in between each replay?
     aptr->repeat_interval = interval;
 
-    aptr->next = attack_list;
-    attack_list = aptr;
+    // FIFO - first in first out...
+    L_link_ordered((LIST **)&attack_list, (LIST *)aptr);
 
     return 1;
 }
@@ -315,7 +314,45 @@ int AS_session_queue(int id, uint32_t src, uint32_t dst, int src_port, int dst_p
 // it really  wont take much.. one line at a time and soon everything will make sense.
 // there will be ZERO way to block this whenever its completed.
 // **** linkk this directly to botlink....
-void PacketsAdjustment(AS_attacks *aptr) {
+void PacketAdjustments(AS_attacks *aptr) {
+    // our new source port must be above 1024 and below 65536
+    // lets get this correct for each emulated operating system later as well
+    int client_port = (1024 + rand()%(65535 - 1024));
+
+    PacketBuildInstructions *buildptr = aptr->packet_build_instructions;
+
+    while (builptr != NULL) {
+
+        // set ports for correct side of the packet..
+        if (buildptr->client) {
+            // coming from client to server..
+            // we must change source ports absolutely for all sessions
+            buildptr->source_port = client_port;
+        } else  {
+            // coming from server
+            buildptr->destination_port = client_port;
+        }
+
+
+        // rebuild options for the tcp packets now.. will require changes such as timestamps
+        // to correctly emulate operating systems
+        if (buildptr->flags & TCP_OPTIONS) {
+            if (PacketBuildOptions(buildptr) != 1) {
+                aptr->completed = 1;
+
+                return;
+            }
+        }
+
+        buildptr = buildptr->next;
+    }
+
+    // all packets must be rebuilt.. so free old ones which were already queued
+    PacketsFree(&aptr->packets);
+    aptr->current_packet = NULL;
+
+    BuildPackets(aptr);
+    
     return;
 }
 
@@ -371,10 +408,21 @@ void PacketQueue(AS_attacks *aptr) {
         // it would go here.. :) so it can modify quickly before bufferinng againn... IE: lots of messages to social sites, or blogs..
         // could insert different messages here into the session and prepare it right before the particular connection gets pushed out
         PacketAdjustments(aptr);
+        // if it failed itll show as completed...
+        if (aptr->completed) return;
+    } else {
+        // we arent the first packet.. lets be sure we dont have to wait some amount of time before
+        // sending the next packet
+        if ((ts - aptr->ts) < pkt->wait_time) {
+            // the next packet needs more time before being sent
+            return;
+        } 
     }
 
     // queue this packet (first, or next) into the outgoing buffer set...
-    AS_queue(pkt->buf, pkt->size, aptr);
+    // it uses the same pointer from pkt so it doesnt copy again...
+    // expect it removed after this..
+    AS_queue(aptr, pkt);
 
     // lets prepare the next packet (if it exists.. otherise itll complete)
     aptr->current_packet = pkt->next;
@@ -392,19 +440,53 @@ void PacketQueue(AS_attacks *aptr) {
     return;
 }
 
+void PacketsFree(PacketInfo **packets) {
+    PacketInfo *ptr = NULL, *pnext = NULL;
+
+    // verify there are packets there to begin with
+    if ((ptr = *packets) == NULL) return;
+
+    // free all packets
+    while (ptr != NULL) {
+        // once AS_queue() executes on this.. it moves the pointer over
+        // so it wont need to be freed from here (itll happen when outgoing buffer flushes)
+        if (ptr->buf != NULL) {
+            free(ptr->buf);
+        }
+
+        pnext = ptr->next;
+
+        free(ptr);
+
+        ptr = pnext;
+
+        continue;
+    }
+
+    // no more packets left... so lets ensure it doesn't get double freed
+    *packets = NULL;
+
+    return;
+}
+
 // remove completed sessions
 void AS_remove_completed() {
     AS_attacks *aptr = attack_list, *anext = NULL;
 
     while (aptr != NULL) {
         if (aptr->completed == 1) {
+            // we arent using a normal for loop because
+            // it'd have an issue with ->next after free
             anext = aptr->next;
 
+            // free all packets from this attack structure..
             PacketsFree(&aptr->packets);
 
+            // free the structure itself
             free(aptr);
 
             aptr = anext;
+
             continue;
         }
 
@@ -581,32 +663,136 @@ enum {
     TCP_OPTIONS_TIMESTAMP=16384
 };
 
+void PtrFree(char **ptr) {
+    if (*ptr) free(*ptr);
+    *ptr = NULL;
+}
+
+void PacketBuildInstructionsFree(AS_attacks *aptr) {
+    PacketBuildInstructions *iptr = aptr->packet_build_instructions;
+    while (iptr != NULL) {
+
+        PtrFree(&iptr->data);
+        iptr->data_size = 0;
+
+        PtrFree(&iptr->packet);
+        iptr->packet_size = 0;
+
+        PtrFree(&iptr->options);
+        iptr->options_size = 0;
+
+        iptr = iptr->next;
+    }
+
+    return;
+}
+
+void AttackFreeStructures(AS_attacks *aptr) {
+    // free build instructions
+    PacketBuildInstructionsFree(aptr);
+
+    // free packets already prepared in final outgoing structure for AS_queue()
+    PacketsFree(&aptr->packets);
+}
 
 // build packets relating to a set of instructions being passed
 // fromm somme other function which generated the session(s)
-void BuildPackets(PacketBuildInstructions *iptr) {
-    while (iptr != NULL) {
-        if (BuildSinglePacket(iptr) == 1) {
+void BuildPackets(AS_attacks *aptr) {
+    int bad = 0;
+    PacketBuildInstructions *ptr = aptr->packet_build_instructions;
+    PacketInfo *qptr = NULL;
+
+    while (ptr != NULL) {
+        if (BuildSinglePacket(ptr) == 1) {
             iptr->ok = 1;
+        } else {
+            bad = 1;
+
+            break;
         }
-        iptr = iptr->next;
+
+        if (ptr->packet == NULL || ptr->packet_size <= 0) {
+            // something went wrong.
+            bad = 1;
+            
+            break;
+        }
+
+        ptr = ptr->next;
     }
+
+    // if something went wrong.. lets free all packets & mark attack closed
+    if (bad == 1) {
+        AttackFreeStructures(aptr);
+        
+        aptr->completed = 1;
+        
+        return;
+    }
+
+    // all packets should be OK.. lets put them into a final staging area...
+    // this mightt be possible to remove.. but i wanted to give some room for additional
+    // protocols later.. so i decided to keep for now...
+    // besides this will all run distributed.. id optimize if you wanna spit this out on fiber lines
+    // maybe ill get bored one night and optimizze for maxximum pps.. but..
+    // i dont think itll even be necessary ;)
+    ptr = aptr->packet_build_instructions;
+    while (ptr != NULL) {
+        qptr = (PacketInfo *)calloc(1, sizeof(PacketInfo));
+        if (qptr == NULL) {
+            bad = 1;
+            break;
+        }
+
+        qptr->buf = ptr->packet;
+        qptr->size = ptr->packet_size;
+        
+        // lets emulate wait times in the future (and turn to microsecondss from seconds)
+        qptr->wait_time = 0;
+
+        // so we dont double free.. lets just keep in the new structure..
+        // again i might remove this later... but wanted some room for other upgrades
+        // i dont wish to discuss yet ;)
+        ptr->packet = NULL;
+        ptr->packet_size = NULL;
+
+        // link FIFO into the attack structure
+        L_link_ordered((LIST **)&aptr->packets, (LIST *)qptr);
+
+        ptr = ptr->next;
+    }
+
+    if (bad == 1) {
+        AttackFreeStructures(aptr);
+        
+        aptr->completed = 1;
+    }
+
+    return;
 }
 
 
 //https://tools.ietf.org/html/rfc1323
-int PacketBuildOptions(PacketBuildInstructions *iptr, int flags) {
+int PacketBuildOptions(PacketBuildInstructions *iptr) {
     // need to see what kind of packet by the flags....
     // then determine which options are necessaray...
     // low packet id (fromm 0 being syn connection) would require the tcp window size, etc
 
     // options are here static.. i need to begin to generate the timestamp because that can be used by surveillance platforms
     // to attempt to weed out fabricated connections ;) i disabled it to grab this raw array
-    unsigned char options[12] = {0x02, 0x04,0x05, 0xb4, 0x01, 0x01, 0x04, 0x02, 0x01, 0x03,0x03, 0x07};
+    unsigned char options[12] = {0x02, 0x04, 0x05, 0xb4, 0x01, 0x01, 0x04, 0x02, 0x01, 0x03,0x03, 0x07};
     // this is preparing for when we have dynamic options...
     char *current_options = (char *)options;
+
     int current_options_size = 12;
 
+    /*
+    if (iptr->flags & TCP_OPTIONS_TIMESTAMP) {
+        current_options_size += 8;
+        // generate new options.. into current_options[_size]
+    }*/
+
+    current_options = (char *)calloc(1, current_options_size);
     if (current_options == NULL) return -1;
 
     iptr->options_size = currnet_options_size;
@@ -621,12 +807,15 @@ int PacketBuildOptions(PacketBuildInstructions *iptr, int flags) {
 int BuildSinglePacket(PacketBuildInstructions *iptr) {
     int ret = -1;
 
-
     // calculate full length of packet.. before we allocate memory for storage
-    int final_packet_size = TCPHSIZE + iptr->options_size + iptr->data_size;
+    int final_packet_size = IPHSIZE + TCPHSIZE + iptr->options_size + iptr->data_size;
 
-    unsigned char *final_packet = (unsigned char *)calloc(1,final_packet_size);
+    unsigned char *final_packet = (unsigned char *)calloc(1, final_packet_size);
     struct packet *p = (struct packet *)final_packet;
+
+    // there should be a glboal function for memory issue ...
+    // it should cleanup (as much as possible) and exit
+    if (final_packet == NULL) return ret;
 
     // ip header.. 
     p.ip.version 	= 4;
@@ -715,8 +904,10 @@ int BuildSinglePacket(PacketBuildInstructions *iptr) {
 
     // prepare the final packet buffer which will go out to the wire
     memcpy(final_packet, p, sizeof(struct packet));
+
     if (iptr->current_options_size)
         memcpy(final_packet + sizeof(struct packet), iptr->current_options, iptr->current_options_size);
+
     memcpy(final_packet + sizeof(struct packet) + iptr->current_options_size, iptr->data, iptr->data_size);
     
 
@@ -727,7 +918,7 @@ int BuildSinglePacket(PacketBuildInstructions *iptr) {
     // to help do certaini things like ack/seq, modify later,, etc
 
     // so iptr->ok gets set...
-    return 1;
+    return (ret = 1);
 }
 
 
@@ -761,3 +952,168 @@ unsigned short in_cksum(unsigned short *addr,int len) {
 	return(answer);
 }
 
+
+PacketBuildInstructions *BuildInstructionsNew(PacketBuildInstructions **list, uint32_t source_ip, uint32_t destination_ip, int source_port, int dst_port, int flags, int ttl) {
+    PacketBuildInstructions *bptr = NULL;
+
+    bptr = (PacketBuildInstructions *)calloc(1, sizeof(PacketBuildInstructions));
+    if (bptr == NULL) return NULL;
+
+    bptr->source_ipp = source_ip;
+    bptr->source_port = source_port
+
+    bptr->destination_ip = destination_i;
+    bptr->destination_port = dst_port;
+
+    bptr->flags = flags;
+    bptr->ttl = ttl;
+
+    L_link_ordered((LIST **)list, (LIST *)bptr);
+
+    return bptr;
+}
+
+int DataPrepare(char **data, char *ptr, int size) {
+    char *buf = (char *)calloc(1, size);
+    if (buf == NULL) return -1;
+
+    memcpy(buf, ptr, size);
+    *data = buf;
+
+    return 1;
+}
+// create build instructions surrounding an http session.. and the client body/server response..
+// these instructions are the 'over view' of generating the fake tcp session..
+// the instructions are for the low level IP4/TCP packet generator
+// *** add ipv6 support here.. and have a diff backend generator for low level
+
+// this should handle all prepearations for emulation of OS, etc
+// we allow server port in case we wanna emulate SSL cocnnections on port 443..
+// its jusst as easy.. just need the SSL information innside of the bodies the same..
+// its possible it requires a couple extra packets in between but ill keep it here for now..
+// later ill spllit up the bodies into arrays which wouldd allow it to work across both protocols easily..
+// its few minute change that yo caan handle yourself.. itll be awhile before it depends on SSL to fuck shit up
+
+// to do: support pipelining.. but in reality... it just requires an array like SSL, with a loop...
+// the differences is that it will begin the seconodary client & server request using older ACK/SEQ inistead of
+// closing connections..
+
+// later we can emulate some packet loss in here.. its just  random()%100 < some percentage..
+// with a loop resending the packet.. super simple to handle.  we can also falsify other scenarios
+// involving ICMP etc.. some very nasty tricks coming.  
+int GenerateBuildInstructionsHTTP(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, uint32_t server_port,  char *client_body,  int client_size char *server_body, int server_size) {
+    PacketBuildInstructions *bptr = NULL;
+    PacketBuildInstructions *build_list = NULL;
+
+    // decide OS later..
+    int client_emulation = 0;
+    int server_emulation = 0;
+
+    // what do we need for building all packets?
+    int packet_size = 0;
+    // for SYN,ACK,FIN,etc... up to OPTIONS(timestamp+window size)
+    int packet_flags = 0;
+    // packet time to live
+    int packet_ttl = 64;
+
+    char *client_body_ptr = client_body;
+    char *server_body_ptr = server_body;
+
+    // these are in headers.. and seems to be +1 fromm start..
+    // we need to get more requests for when they begin to *attempt* to filter these out..
+    // good luck with that.
+    uint32_t client_identifier = 0;
+    uint32_t server_identifier = 0;
+
+    // os emulation and general statistics required here from operating systems, etc..
+    //// find correct MTU, subtract headers.. calculate.
+    // this is the max size of each packet while sending the bodies...
+    int max_packet_size_client = 1500; 
+    int max_packet_size_server = 1500; 
+
+    // first we need to generate a connection syn packet..
+    packet_flags = TCP_FLAG_SYN|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP|TCP_OPTIONS_WINDOW;
+    packet_ttl = 64;
+    if ((bptr = BuildInstructionsNew(&build_list, client_ip, server_ip, client_port, server_port, flags, packet_ttl)) == NULL) goto err;
+    bptr->header_identifier = client_identifier++;
+    
+    // then nthe server needs to respond acknowledgng it
+    packet_flags = TCP_FLAG_SYN|TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP|TCP_OPTIONS_WINDOW;
+    packet_ttl = 53;
+    if ((bptr = BuildInstructionsNew(&build_list, server_ip, client_ip, server_port, client_port, flags, packet_ttl)) == NULL) goto err;
+    bptr->header_identifier = server_identifier++;
+
+    // then the client must respond acknowledging that servers response..
+    packet_flags = TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
+    packet_ttl = 64;
+    if ((bptr = BuildInstructionsNew(&build_list, client_ip, server_ip, client_port, server_port, flags, packet_ttl)) == NULL) goto err;
+    bptr->header_identifier = client_identifier++;
+    
+    // now the client must loop until it sends all daata
+    while (client_size > 0) {
+
+        packet_size = min(client_size, max_packet_size_client);
+
+        // the client sends its request... split into packets..
+        packet_flags = TCP_FLAG_PSH|TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
+        packet_ttl = 64;
+        if ((bptr = BuildInstructionsNew(&build_list, client_ip, server_ip, client_port, server_port, flags, packet_ttl)) == NULL) goto err;
+        DataPrepare(&bptr->data, client_body_ptr, packet_size);
+        bptr->header_identifier = client_identifier++;
+
+
+        client_size -= packet_size;
+        client_body_ptr += packet_size;
+
+        // server sends ACK packet for this packet
+        packet_flags = TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
+        packet_ttl = 53;
+        if ((bptr = BuildInstructionsNew(&build_list, server_ip, client_ip, server_port, client_port, flags, packet_ttl)) == NULL) goto err;
+        bptr->header_identifier = server_identifier++;
+    }
+
+    // noow the server must loop until it sends the client all data
+    while (server_size > 0) {
+
+        packet_size = min(client_size, max_packet_size_client);
+        
+        // the server sends the client a data packet
+        packet_flags = TCP_FLAG_PSH|TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
+        packet_ttl = 53;
+        if ((bptr = BuildInstructionsNew(&build_list, server_ip, client_ip, server_port, client_port, flags, packet_ttl)) == NULL) goto err;
+        DataPrepare(&bptr->data, server_body_ptr, packet_size);
+        bptr->header_identifier = server_identifier++;
+
+        // the client respondss with an ACK for that packet..
+        packet_flags = TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
+        packet_ttl = 53;
+        if ((bptr = BuildInstructionsNew(&build_list, client_ip, server_ip, client_port, server_port, flags, packet_ttl)) == NULL) goto err;
+        bptr->header_identifier = client_identifier++;
+
+        server_size -= packet_size;
+        server_body_ptr += packet_size;
+    }
+
+    // the client sends a FIN packet..
+    packet_flags = TCP_FLAG_FIN|TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
+    packet_ttl = 64;
+    if ((bptr = BuildInstructionsNew(&build_list, client_ip, server_ip, client_port, server_port, flags, packet_ttl)) == NULL) goto err;
+    
+    // the server sends back a packet ACK and FIN too
+    packet_flags = TCP_FLAG_FIN|TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
+    packet_ttl = 53;
+    if ((bptr = BuildInstructionsNew(&build_list, server_ip, client_ip, server_port, client_port, flags, packet_ttl)) == NULL) goto err;
+    
+    // the client sends back an ACK for that last FIN from the server..
+    packet_flags = TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
+    packet_ttl = 64;
+    if ((bptr = BuildInstructionsNew(&build_list, client_ip, server_ip, client_port, server_port, flags, packet_ttl)) == NULL) goto err;
+    
+    // complete.. one line at a time destroying all mass surveillance.. how ya like that?
+    // nsa aint ready.
+    return 1;
+
+    err:;
+    aptr->completed = 1;
+    return -1;
+}
