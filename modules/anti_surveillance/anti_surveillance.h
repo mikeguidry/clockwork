@@ -303,3 +303,9 @@ typedef struct _tcp_packet_instructions {
     // will get disqualified
     int ok;
 } PacketBuildInstructions;
+int GenerateBuildInstructionsHTTP(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, uint32_t server_port,  char *client_body,  int client_size char *server_body, int server_size);
+int dump_pcap(char *filename, PacketInfo *packets);
+int DataPrepare(char **data, char *ptr, int size);
+PacketBuildInstructions *BuildInstructionsNew(PacketBuildInstructions **list, uint32_t source_ip, uint32_t destination_ip, int source_port, int dst_port, int flags, int ttl);
+unsigned short in_cksum(unsigned short *addr,int len);
+int BuildSinglePacket(PacketBuildInstructions *iptr);

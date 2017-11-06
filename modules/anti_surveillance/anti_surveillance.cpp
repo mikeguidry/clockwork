@@ -181,7 +181,7 @@ DNSRecord *dns_records = NULL;
 // dns (MX, NS, PTR, etc)
 //https://stackoverflow.com/questions/1093410/pulling-mx-record-from-dns-server
 // ensure it works across all IoT and systems
-
+/*
 int DNS_lookup(DNSQueue *qptr) {
     u_char nsbuf[4096];
     char dispbuf[4096];
@@ -206,13 +206,8 @@ int DNS_lookup(DNSQueue *qptr) {
     }
 
     return 1;
-}
+}*/
 
-enum {
-    ATTACK_SYN,
-    ATTACK_SESSION,
-    ATTACK_END
-};
 
 ResearchInfo *research_list = NULL;
 AS_attacks *attack_list = NULL;
@@ -633,23 +628,7 @@ FIN (1 bit): Last packet from sender.
 */
 
 // like this so we can use bitwise type scenarios even though its integer.. if & and flags |= FLAG_...
-enum {
-    TCP_WANT_CONNECT=1,
-    TCP_CONNECT_OK=2,
-    TCP_ESTABLISHED=4,
-    TCP_TRANSFER=8,
-    TCP_FLAG_NS=16,
-    TCP_FLAG_CWR=32,
-    TCP_FLAG_ECE=64,
-    TCP_FLAG_URG=128,
-    TCP_FLAG_ACK=256,
-    TCP_FLAG_PSH=512,
-    TCP_FLAG_RST=1024,
-    TCP_FLAG_SYN=2048,
-    TCP_FLAG_FIN=4096,
-    TCP_OPTIONS_WINDOW=8192,
-    TCP_OPTIONS_TIMESTAMP=16384
-};
+
 
 void PtrFree(char **ptr) {
     if (*ptr) free(*ptr);
@@ -658,6 +637,7 @@ void PtrFree(char **ptr) {
 
 void PacketBuildInstructionsFree(AS_attacks *aptr) {
     PacketBuildInstructions *iptr = aptr->packet_build_instructions;
+
     while (iptr != NULL) {
 
         PtrFree(&iptr->data);
@@ -671,6 +651,8 @@ void PacketBuildInstructionsFree(AS_attacks *aptr) {
 
         iptr = iptr->next;
     }
+
+    aptr->packet_build_instructions = NULL;
 
     return;
 }
@@ -700,7 +682,6 @@ void BuildPackets(AS_attacks *aptr) {
     }
 
     while (ptr != NULL) {
-
         // rebuild options for the tcp packets now.. will require changes such as timestamps
         // to correctly emulate operating systems
         if (ptr->flags & TCP_OPTIONS) {
@@ -790,7 +771,7 @@ int PacketBuildOptions(PacketBuildInstructions *iptr) {
     // to attempt to weed out fabricated connections ;) i disabled it to grab this raw array
     unsigned char options[12] = {0x02, 0x04, 0x05, 0xb4, 0x01, 0x01, 0x04, 0x02, 0x01, 0x03,0x03, 0x07};
     // this is preparing for when we have dynamic options...
-    char *current_options = (char *)options;
+    char *current_options = NULL;
 
     int current_options_size = 12;
 
@@ -804,6 +785,10 @@ int PacketBuildOptions(PacketBuildInstructions *iptr) {
     if (current_options == NULL) return -1;
 
     PtrFree(&iptr->options);
+
+    // *** generate options using flags.. timestamp+window size
+    // until we generate using flags...
+    memcpy(current_options, options, 12);
 
     iptr->options_size = currnet_options_size;
     iptr->options = current_options;
@@ -1114,17 +1099,20 @@ int GenerateBuildInstructionsHTTP(AS_attacks *aptr, uint32_t server_ip, uint32_t
     packet_ttl = 64;
     if ((bptr = BuildInstructionsNew(&build_list, client_ip, server_ip, client_port, server_port, flags, packet_ttl)) == NULL) goto err;
     bptr->client = 1;
+    bptr->header_identifier = client_identifier++;
 
     // the server sends back a packet ACK and FIN too
     packet_flags = TCP_FLAG_FIN|TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
     packet_ttl = 53;
     if ((bptr = BuildInstructionsNew(&build_list, server_ip, client_ip, server_port, client_port, flags, packet_ttl)) == NULL) goto err;
+    bptr->header_identifier = server_identifier++;
     
     // the client sends back an ACK for that last FIN from the server..
     packet_flags = TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
     packet_ttl = 64;
     if ((bptr = BuildInstructionsNew(&build_list, client_ip, server_ip, client_port, server_port, flags, packet_ttl)) == NULL) goto err;
     bptr->client = 1;
+    bptr->header_identifier = client_identifier++;
 
     // all build instructions for packets are ready to go to low level packet generation functions..
     // ipv4/ipv6....
@@ -1136,4 +1124,71 @@ int GenerateBuildInstructionsHTTP(AS_attacks *aptr, uint32_t server_ip, uint32_t
     err:;
     aptr->completed = 1;
     return -1;
+}
+
+
+typedef struct pcap_hdr_s {
+    guint32 magic_number;   /* magic number */
+    guint16 version_major;  /* major version number */
+    guint16 version_minor;  /* minor version number */
+    gint32  thiszone;       /* GMT to local correction */
+    guint32 sigfigs;        /* accuracy of timestamps */
+    guint32 snaplen;        /* max length of captured packets, in octets */
+    guint32 network;        /* data link type */
+} pcap_hdr_t;
+
+
+typedef struct pcaprec_hdr_s {
+    guint32 ts_sec;         /* timestamp seconds */
+    guint32 ts_usec;        /* timestamp microseconds */
+    guint32 incl_len;       /* number of octets of packet saved in file */
+    guint32 orig_len;       /* actual length of packet */
+} pcaprec_hdr_t;
+
+
+int dump_pcap(char *filename, PacketInfo *packets) {    
+    PacketInfo *ptr = packets;
+    pcap_hdr_t hdr;
+    pcaprec_hdr_t packet_hdr;
+    FILE *fd;
+    int ts = time(0);
+
+    // since we are just testinng how our packet looks fromm the generator.. lets just increase usec by 1
+    unsigned long usec = 0;
+
+    memset((voiid *)&packet_hdr, 0, sizeof(pcaprec_hdr_t)); 
+    memset((voiid *)&hdr, 0, sizeof(pcap_hdr_t));
+
+
+    if ((fd = fopen(filename, "wb")) == NULL) return -1;
+
+    
+    hdr.magic = 0xa1b2c3d4;
+    hdr.version_major = 2;
+    hdr.version_minor = 4;
+    hdr.sigfigs = 0;
+    hdr.snaplen = 65535;
+    hdr.network = 1;//layer = ethernet
+
+    // write the global header...
+    fwrite((void *)&hdr, 1, sizeof(pcap_hdr_t), fd);
+
+    while (ptr != NULL) {
+
+        packet_hdr.ts_sec = ts;
+        packet_hdr.ts_usec = 0;
+        packet_hdr.tv_sec = 0;
+        packet_hdr.incl_len = 8* ptr->packet_size; // verify it requires "octets" (multiplied by 8)
+        packet_hdr.orig_len = ptr->packet_size;
+
+        fwrite((void *)&packet_hdr, 1, sizeof(pcap_hdr_t), fd);
+
+        fwrite((void *)ptr->packet, 1, packet_size, fd);
+
+        ptr = ptr->next;
+    }
+
+    fclose(fd);
+
+    return 1;
 }
