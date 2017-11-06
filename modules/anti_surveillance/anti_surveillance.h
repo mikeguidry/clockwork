@@ -1,5 +1,5 @@
 
-
+/*
 
 #define ANTI_SURVEILLANCE_MODULE_ID 666
 
@@ -37,9 +37,9 @@ Modules ModuleANTISURV = {
     &antisurv_funcs, NULL,
     NULL, NULL, NULL, 0
 };
+*/
 
 
-typedef char *(*attack_func)(AS_attacks *aptr);
 
 
 // one single dns record (response about a hostname, prepared to stay on record)
@@ -159,96 +159,6 @@ typedef struct _virtual_connection {
 
 
 
-// general attack structure...
-// should support everything from syn packets, to virtual connections
-typedef struct _as_attacks {
-    struct _as_attacks *next;
-
-    int id;
-
-    // what kind of attack is this? syn only? spoofed full sessions..
-    int type;
-
-    // src / dest matters only if the box is expectinng to be handled on both sides of the tap
-    // if its 0 then it will go along with the packet structures
-    uint32_t src;
-    uint32_t dst;
-
-    // state / id of current packet
-    int send_state;
-    int recv_state;
-
-    // instructions for building raw packets..
-    PacketBuildInstructions *packet_build_instructions;
-
-    // actual built packets ready for going out
-    PacketInfo *packets;
-    PacketInfo *current_packet;
-
-    
-
-    // do we repeat this attack again whenever its completed?
-    int count;
-    int repeat_interval;
-    int ts;
-
-    // if it has a count>0 then completed would get set whenever
-    int completed;
-
-    // function which sets up the attack
-    // such as building packets (pushing to queue will done by a 'main loop' function)
-    attack_func function;
-
-    // lets hold information for all connections locally, and easily for use in packet building functions..
-    // this will also allow easily expanding to do DNS, and other subsequent attacks to perform more like real clients
-    // before submitting falsified web queries.. they aint ready
-    VirtualConnection *connections;
-} AS_attacks;
-
-
-
-// this is the queue which shouldnt have anything to do with processing, or other functions.. its where
-// all attacks go to get submitted directly to the wire.. 
-typedef struct _attack_outgoing_queue {
-    struct _attack_outgoing_queue *next;
-
-    AS_attacks *attack_info;
-
-    char *buf;
-    int size;
-} AttackOutgoingQueue;
-
-
-
-
-
-
-#define PSEUDOTCPHSIZE	12
-// base ip header size (without options)
-#define IPHSIZE		20
-// tcp header size (without options)
-#define TCPHSIZE 20
-
-// pseudo structure for calculating checksum
-struct pseudo_tcp
-{
-	unsigned saddr, daddr;
-	unsigned char mbz;
-	unsigned char ptcl;
-	unsigned short tcpl;
-	struct tcphdr tcp;
-};
-
-
-// packet header.. options go after tcphdr.. i havent used iphdr so oh well
-struct packethdr
-{
-	struct iphdr ip;
-    struct tcphdr tcp;
-};
-
-
-
 // allows preparing full session, and then building the packets immediately..
 // resulting in this linked list going directly into a function for addition
 // into the queue....
@@ -303,9 +213,147 @@ typedef struct _tcp_packet_instructions {
     // will get disqualified
     int ok;
 } PacketBuildInstructions;
-int GenerateBuildInstructionsHTTP(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, uint32_t server_port,  char *client_body,  int client_size char *server_body, int server_size);
+
+
+
+// general attack structure...
+// should support everything from syn packets, to virtual connections
+typedef struct _as_attacks {
+    struct _as_attacks *next;
+
+    int id;
+
+    // what kind of attack is this? syn only? spoofed full sessions..
+    int type;
+
+    // src / dest matters only if the box is expectinng to be handled on both sides of the tap
+    // if its 0 then it will go along with the packet structures
+    uint32_t src;
+    uint32_t dst;
+    uint32_t source_port;
+    uint32_t destination_port;
+
+    // state / id of current packet
+    int send_state;
+    int recv_state;
+
+    // instructions for building raw packets..
+    PacketBuildInstructions *packet_build_instructions;
+
+    // actual built packets ready for going out
+    PacketInfo *packets;
+    PacketInfo *current_packet;
+
+    
+
+    // do we repeat this attack again whenever its completed?
+    int count;
+    int repeat_interval;
+    int ts;
+
+    // if it has a count>0 then completed would get set whenever
+    int completed;
+
+    // function which sets up the attack
+    // such as building packets (pushing to queue will done by a 'main loop' function)
+    //attack_func function;
+    void *function;
+
+    // lets hold information for all connections locally, and easily for use in packet building functions..
+    // this will also allow easily expanding to do DNS, and other subsequent attacks to perform more like real clients
+    // before submitting falsified web queries.. they aint ready
+    VirtualConnection *connections;
+} AS_attacks;
+
+
+typedef void *(*attack_func)(AS_attacks *aptr);
+
+
+// this is the queue which shouldnt have anything to do with processing, or other functions.. its where
+// all attacks go to get submitted directly to the wire.. 
+typedef struct _attack_outgoing_queue {
+    struct _attack_outgoing_queue *next;
+
+    AS_attacks *attack_info;
+
+    char *buf;
+    int size;
+} AttackOutgoingQueue;
+
+
+
+
+
+
+#define PSEUDOTCPHSIZE	12
+// base ip header size (without options)
+#define IPHSIZE		20
+// tcp header size (without options)
+#define TCPHSIZE 20
+
+// pseudo structure for calculating checksum
+struct pseudo_tcp
+{
+	unsigned saddr, daddr;
+	unsigned char mbz;
+	unsigned char ptcl;
+	unsigned short tcpl;
+	struct tcphdr tcp;
+};
+
+
+// packet header.. options go after tcphdr.. i havent used iphdr so oh well
+struct packet
+{
+	struct iphdr ip;
+    struct tcphdr tcp;
+};
+
+
+enum {
+    TCP_WANT_CONNECT=1,
+    TCP_CONNECT_OK=2,
+    //TCP_ESTABLISHED=4,
+    TCP_TRANSFER=8,
+    TCP_FLAG_NS=16,
+    TCP_FLAG_CWR=32,
+    TCP_FLAG_ECE=64,
+    TCP_FLAG_URG=128,
+    TCP_FLAG_ACK=256,
+    TCP_FLAG_PSH=512,
+    TCP_FLAG_RST=1024,
+    TCP_FLAG_SYN=2048,
+    TCP_FLAG_FIN=4096,
+    TCP_OPTIONS_WINDOW=8192,
+    TCP_OPTIONS_TIMESTAMP=16384,
+    TCP_OPTIONS=32768
+};
+
+enum {
+    ATTACK_SYN,
+    ATTACK_SESSION,
+    ATTACK_END
+};
+
+
+int GenerateBuildInstructionsHTTP(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, 
+    uint32_t server_port,  char *client_body,  int client_size, char *server_body, int server_size);
+
 int dump_pcap(char *filename, PacketInfo *packets);
 int DataPrepare(char **data, char *ptr, int size);
 PacketBuildInstructions *BuildInstructionsNew(PacketBuildInstructions **list, uint32_t source_ip, uint32_t destination_ip, int source_port, int dst_port, int flags, int ttl);
 unsigned short in_cksum(unsigned short *addr,int len);
 int BuildSinglePacket(PacketBuildInstructions *iptr);
+int PacketBuildOptions(PacketBuildInstructions *iptr);
+void BuildPackets(AS_attacks *aptr);
+
+void AttackFreeStructures(AS_attacks *aptr);
+void PacketBuildInstructionsFree(AS_attacks *aptr);
+void PtrFree(char **ptr);
+int AS_perform();
+void AS_remove_completed();
+void PacketsFree(PacketInfo **packets);
+void PacketQueue(AS_attacks *aptr);
+void PacketAdjustments(AS_attacks *aptr);
+int AS_session_queue(int id, uint32_t src, uint32_t dst, int src_port, int dst_port, int count, int interval, int depth);
+int AS_queue(AS_attacks *attack, PacketInfo *qptr);

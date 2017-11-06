@@ -19,7 +19,7 @@ int L_count(LIST *);
 void L_del_next(LIST **, LIST *, LIST **);
 void ListFree(LIST ** **qlist);
 void L_link(LIST **list, LIST *ele);
-LINK *l_add_ordered(LINK **list, int size);
+LINK *L_link_ordered(LINK **list, LINK *);
 LINK *l_add(LINK **list, int size);
 LIST *L_add(LIST **list, int size);
 LIST *L_add_ordered(LIST **list, int size);
