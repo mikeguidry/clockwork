@@ -442,7 +442,8 @@ void PacketQueue(AS_attacks *aptr) {
         // small logic bug here for the momment.. its adjusting and doing two sets of packets (diff source numbers, so the adjustments work properly
         // for falsifying thousaands of connections from a single attack body.. glad that works) but for testing i just see 20 packets instead of 10
         // will figure it out tomoorrow.. noothing serious.
-        PacketAdjustments(aptr);
+        if (aptr->ts) // means it was already used once..
+            PacketAdjustments(aptr);
         // if it failed itll show as completed...
         if (aptr->completed) return;
     } else {
