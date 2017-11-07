@@ -394,7 +394,7 @@ int AS_queue(AS_attacks *attack, PacketInfo *qptr) {
 
     optr->attack_info = attack;
 
-    // put into queue.. using a aqueue laast quick variable for addition
+    // put into queue.. using a laast queue quick pointer to optimize time required
     // it beat using L_last() every addition
     if (network_queue == NULL) {
         network_queue = network_queue_last = optr;
@@ -402,24 +402,13 @@ int AS_queue(AS_attacks *attack, PacketInfo *qptr) {
         network_queue_last->next = optr;
         network_queue_last = optr;
     }
-    // link to outgoing queue (FIFO)
-    //L_link_ordered((LINK **)&network_queue, (LINK *)optr);
-
-    // this was a major reason it was slowing down.. didnt use a jump table or keep track of the last element..
-    // since its supposed to go to wire.. lets just keep pushing it there and see how  quickly it functions.
-    /*optr->next = network_queue;
-    network_queue = optr; */
-
 
     return 1;
 }
 
-// session queue is a bit direct i didnt mean it to be only http
-// might be smart to send a pointer to the funnction in question for the type of attack..
-// ie: HTTP_Create() or whatever
-// depth for http would be which packet to cut off (we can kill 50% of the packets so the connectioons are left open)
 
-// queue an http session attack (generates, and plays HTTP requests to the wire)
+// Queues a TCP/IP session into a general structure.. the function being passed will be called other code to complete the preparations
+// for example: HTTP_Create()
 int AS_session_queue(int id, uint32_t src, uint32_t dst, int src_port, int dst_port, int count, int interval, int depth, void *function) {
     AS_attacks *aptr = NULL;
 
@@ -427,8 +416,7 @@ int AS_session_queue(int id, uint32_t src, uint32_t dst, int src_port, int dst_p
     if (aptr == NULL)
         return -1;
 
-    // identifier for the attack..
-    // in case we need to find it in queue later
+    // identifier for the attack..in case we need to find it in queue later
     aptr->id = id;
 
     // src&dst information
@@ -445,24 +433,18 @@ int AS_session_queue(int id, uint32_t src, uint32_t dst, int src_port, int dst_p
     // how much time in between each replay?
     aptr->repeat_interval = interval;
 
-    // FIFO - first in first out...
-    //L_link_ordered((LINK **)&attack_list, (LINK *)aptr);
+    // LIFO i decided it doesnt matter since the attacks are all happening simultaneously...
+    // if it becomes a problem its a small fix.  but your queues should also flush properly anyhow..
     aptr->next = attack_list;
     attack_list = aptr;
 
     return 1;
 }
 
-// thiis is going to be an entire new category.. poossibly with scripting languages to call lua, python, or other scripts
-// or grab data remotely for creatinng conversatioons over time being pushed into these surveillance platforms
-// full manipulation... like i said nsa aint ready
-// this needs to be paired diretly with AS_session_queue() and other possible queues...
-// for some people we wanna perform full blown emulation from DNS (with correct TTL) to third party browser connections
-// to fake SSL, or possibly replaying some other SSL, or generating some SSL connections remotely, or locally for this
-// by means of openssl etc
-// it really  wont take much.. one line at a time and soon everything will make sense.
-// there will be ZERO way to block this whenever its completed.
-// **** linkk this directly to botlink....
+
+// We wouldn't want the surveillance platforms to see the same exact packets.. over and over..
+// Let's adjust the source port, and a few other aspects of it.
+// *** I just noticed we should change base seq for both sides here.  later today.
 void PacketAdjustments(AS_attacks *aptr) {
     // our new source port must be above 1024 and below 65536
     // lets get this correct for each emulated operating system later as well
@@ -489,12 +471,14 @@ void PacketAdjustments(AS_attacks *aptr) {
         buildptr = buildptr->next;
     }
 
+    // Rebuild all packets using the modified instructions
     BuildPackets(aptr);
     
     return;
 }
 
-
+// This is one of the main ogic functions.  It handles sessions which are to be replayed many times, along with the timing 
+// logic, and it calls other functions to Queue properly, or flush to the Internet
 void PacketQueue(AS_attacks *aptr) {
     int ts = 0;
     PacketInfo *pkt = NULL;
@@ -598,6 +582,8 @@ void PacketQueue(AS_attacks *aptr) {
     return;
 }
 
+
+// free all packets within an attack structure
 void PacketsFree(PacketInfo **packets) {
     PacketInfo *ptr = NULL, *pnext = NULL;
 
@@ -612,6 +598,8 @@ void PacketsFree(PacketInfo **packets) {
 
         // keep track of the next, then free the current..
         pnext = ptr->next;
+
+        // free this specific structure element
         free(ptr);
 
         // now use that pointer to move forward..
@@ -625,7 +613,7 @@ void PacketsFree(PacketInfo **packets) {
     return;
 }
 
-// remove completed sessions
+// If a session has been deemed completed, then this function will remove it and fix up the linked lists
 void AS_remove_completed() {
     AS_attacks *aptr = attack_list, *anext = NULL, *alast = NULL;
 
@@ -658,7 +646,8 @@ void AS_remove_completed() {
     return;
 }
 
-// perform one iteration of each attack
+
+// Perform one iteration of each attack structure that was queued
 int AS_perform() {
     AS_attacks *aptr = attack_list;
     attack_func func;
@@ -673,7 +662,6 @@ int AS_perform() {
                 func = (attack_func)aptr->function;
                 if (func != NULL)
                     (*func)(aptr);
-                //aptr->attack_func(aptr);
             }
 
             // if we have packets queued.. lets handle it.. logic moved there..
@@ -691,33 +679,25 @@ int AS_perform() {
     // to increase speed at times.. depending on queue, etc
     AS_remove_completed();
 
+#ifndef TEST
     // flush network packets queued to wire
     FlushAttackOutgoingQueueToNetwork();
+#endif
 
     return 1;
 }
 
-
-/* took some packet forging stuff I found online, and modified it...
-   It was better than my wireshark -> C array dumping w memcpy... trying to hack this together as quickly as possible isnt fun :)
-
-   /*!	forgetcp.c
- * 	\Brief Generate TCP packets
- * 	\Author jve
- * 	\Date  sept. 2008
-*/
-
-
+// free a pointer after verifying it even exists
 void PtrFree(char **ptr) {
     if (*ptr) free(*ptr);
     *ptr = NULL;
 }
 
+// clean up the structures used to keep information required for building the low level network packets
 void PacketBuildInstructionsFree(AS_attacks *aptr) {
-    PacketBuildInstructions *iptr = aptr->packet_build_instructions;
+    PacketBuildInstructions *iptr = aptr->packet_build_instructions, *inext = NULL;
 
     while (iptr != NULL) {
-
         PtrFree(&iptr->data);
         iptr->data_size = 0;
 
@@ -727,14 +707,23 @@ void PacketBuildInstructionsFree(AS_attacks *aptr) {
         PtrFree(&iptr->options);
         iptr->options_size = 0;
 
-        iptr = iptr->next;
+        // what comes after this?
+        inext = iptr->next;
+
+        // free this structure..
+        free(iptr);
+
+        // move to the next..
+        iptr = inext;
     }
 
+    // they were all cleared so we can ensure the linked list is empty.
     aptr->packet_build_instructions = NULL;
 
     return;
 }
 
+// frees all extra information being stored in an attack structure
 void AttackFreeStructures(AS_attacks *aptr) {
     // free build instructions
     PacketBuildInstructionsFree(aptr);
@@ -742,6 +731,7 @@ void AttackFreeStructures(AS_attacks *aptr) {
     // free packets already prepared in final outgoing structure for AS_queue()
     PacketsFree(&aptr->packets);
 }
+
 
 // build packets relating to a set of instructions being passed
 // fromm somme other function which generated the session(s)
@@ -767,6 +757,9 @@ void BuildPackets(AS_attacks *aptr) {
         if (BuildSinglePacket(ptr) == 1) {
             ptr->ok = 1;
         } else {
+            // using this bad variable isnt the best .. I know..
+            // im releasing ths for functionality.. not coding practice.
+            // maybe ill redesign the logic later.
             bad = 1;
             break;
         }
@@ -781,21 +774,18 @@ void BuildPackets(AS_attacks *aptr) {
         ptr = ptr->next;
     }
 
-    // if something went wrong.. lets free all packets & mark attack closed
+    // sometheing went wrong.. mark this attack as completed so it can be removed
     if (bad == 1) {
-        AttackFreeStructures(aptr);
-        
+
         aptr->completed = 1;
         
         return;
     }
 
-    // all packets should be OK.. lets put them into a final staging area...
+    // All packets were successful.. lets move them to a different PacketInfo structure..
+    // PacketInfo is the structure used to put into the outgoing network buffer..
     // this mightt be possible to remove.. but i wanted to give some room for additional
     // protocols later.. so i decided to keep for now...
-    // besides this will all run distributed.. id optimize if you wanna spit this out on fiber lines
-    // maybe ill get bored one night and optimizze for maxximum pps.. but..
-    // i dont think itll even be necessary ;)
     ptr = aptr->packet_build_instructions;
 
     while (ptr != NULL) {
@@ -825,17 +815,15 @@ void BuildPackets(AS_attacks *aptr) {
         ptr = ptr->next;
     }
 
-    if (bad == 1) {
-        AttackFreeStructures(aptr);
-        
+    if (bad == 1)
         aptr->completed = 1;
-    }
 
     return;
 }
 
 
 //https://tools.ietf.org/html/rfc1323
+// Incomplete but within 1 day it should emulate Linux, Windows, and Mac...
 int PacketBuildOptions(PacketBuildInstructions *iptr) {
     // need to see what kind of packet by the flags....
     // then determine which options are necessaray...
@@ -873,12 +861,22 @@ int PacketBuildOptions(PacketBuildInstructions *iptr) {
 
 
 
-// takes a packets build instructions and makes a ready for the wire version
+/* took some packet forging stuff I found online, and modified it...
+   It was better than my wireshark -> C array dumping w memcpy... trying to hack this together as quickly as possible isnt fun :)
+
+   /*!	forgetcp.c
+ * 	\Brief Generate TCP packets
+ * 	\Author jve
+ * 	\Date  sept. 2008
+*/
+// Takes build instructions from things like HTTP Session generation, and creates the final network ready
+// data buffers which will flow across the Internet
 int BuildSinglePacket(PacketBuildInstructions *iptr) {
     int ret = -1;
     int TCPHSIZE = 20;
 
-    iptr->tcp_window_size = 1500;
+    // this should be getting set elsewhere... it relates to OS emulation as well
+    //iptr->tcp_window_size = 1500;
 
     if (iptr->options_size) TCPHSIZE += iptr->options_size;
     // calculate full length of packet.. before we allocate memory for storage
@@ -1056,6 +1054,9 @@ PacketBuildInstructions *BuildInstructionsNew(PacketBuildInstructions **list, ui
     bptr->flags = flags;
     bptr->ttl = ttl;
 
+    // this relates to operating system emulation.. i'll get the variable here soon
+    bptr->tcp_window_size = 1500;
+
     L_link_ordered((LINK **)list, (LINK *)bptr);
 
     return bptr;
@@ -1073,6 +1074,8 @@ int DataPrepare(char **data, char *ptr, int size) {
 }
 
 
+
+// **** this is the old version just kept here during active development ****
 
 // create build instructions surrounding an http session.. and the client body/server response..
 // these instructions are the 'over view' of generating the fake tcp session..
@@ -1093,6 +1096,7 @@ int DataPrepare(char **data, char *ptr, int size) {
 // later we can emulate some packet loss in here.. its just  random()%100 < some percentage..
 // with a loop resending the packet.. super simple to handle.  we can also falsify other scenarios
 // involving ICMP etc.. some very nasty tricks coming.  
+
 // **** this is the old version just kept here during active development ****
 int GenerateBuildInstructionsHTTP(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, uint32_t server_port,  char *client_body,  int client_size, char *server_body, int server_size) {
     PacketBuildInstructions *bptr = NULL;
@@ -1261,7 +1265,11 @@ int GenerateBuildInstructionsHTTP(AS_attacks *aptr, uint32_t server_ip, uint32_t
     aptr->completed = 1;
     return -1;
 }
+// **** this is the old version just kept here during active development ****
 
+
+
+// Below here are the new ways to fabricate the sessions.... :)
 
 
 // Generates instructions for fabricating a TCP connection being opened between two hosts..
@@ -1304,7 +1312,7 @@ int GenerateTCPConnectionInstructions(ConnectionProperties *cptr, PacketBuildIns
     return 0;
 }
 
-// Generates the instructions for fabricating a TCP data transfer between two hosts
+// Generates the instructions for the fabrication of TCP data transfer between two hosts
 // Its general enough to be used with binary protocols, and supports client or server side to opposite
 int GenerateTCPSendDataInstructions(ConnectionProperties *cptr, PacketBuildInstructions **final_build_list, int from_client, char *data, int size) {
     PacketBuildInstructions *bptr = NULL;
@@ -1382,6 +1390,7 @@ int GenerateTCPSendDataInstructions(ConnectionProperties *cptr, PacketBuildInstr
     err:;
     return 0;
 }
+
 
 
 // Generates fabricated packets required to disconnect a TCP session between two hosts.. starting with one side (client or server)
@@ -1468,11 +1477,6 @@ int GenerateTCPCloseConnectionInstructions(ConnectionProperties *cptr, PacketBui
 
 
 
-/*
-
-this new way to build connections allows doing many different packets from source to dest, etc, etc...
-it should allow all protocols TCP/IP
-*/
 
 /*
 // This will fabricate an SMTP connection thus injecting any e-mail messages into mass surveillance platforms
@@ -1570,6 +1574,11 @@ int BuildSMTPsession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, u
 }
 */
 
+
+
+
+
+
 // Fabricates a fake HTTP session to inject information directly into mass surveillance platforms
 // or help perform DoS attacks on their systems to disrupt their usages. This is the NEW HTTP function.
 int BuildHTTPSession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, uint32_t server_port,  char *client_body,  int client_size, char *server_body, int server_size) {
@@ -1586,7 +1595,7 @@ int BuildHTTPSession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, u
     // os emulation and general statistics required here from operating systems, etc..
     //// find correct MTU, subtract headers.. calculate.
     // this is the max size of each packet while sending the bodies...
-    int max_packet_size_client = 1500; 
+    int max_packet_size_client = 1500;
     int max_packet_size_server = 1500; 
 
     int client_port = 1024 + (rand()%(65535-1024));
@@ -1639,6 +1648,25 @@ int BuildHTTPSession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, u
 }
 
 
+
+
+
+
+
+
+
+#ifdef TEST
+// Anything below here was made intended on testing the system and dumping connections to a packet capture file..
+// PCAP may be useful to have in the full blown application but im interested in fully automated personally..
+// but you could just as well generate pre-timestamp scenarios and SCP/prepare boxes worldwide for attacking
+// worldwide platforms.
+
+
+char *G_client_body = NULL;
+char *G_server_body = NULL;
+int G_client_body_size = 0;
+int G_server_body_size = 0;
+
 // this function was created as a test during genertion of the TEST mode (define TEST at top)
 // it should be removed, and handled in anoother location for final version..
 // its smart to keep it separate fromm AS_session_queue() so AS_session_queue() can call this, or other functions
@@ -1661,35 +1689,6 @@ void *HTTP_Create(AS_attacks *aptr) {
     #endif
     }
     
-    
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-#ifdef TEST
-// Anything below here was made intended on testing the system and dumping connections to a packet capture file..
-// PCAP may be useful to have in the full blown application but im interested in fully automated personally..
-// but you could just as well generate pre-timestamp scenarios and SCP/prepare boxes worldwide for attacking
-// worldwide platforms.
-
-
-char *G_client_body = NULL;
-char *G_server_body = NULL;
-int G_client_body_size = 0;
-int G_server_body_size = 0;
 
 
 #pragma pack(push, 1)
@@ -1713,6 +1712,7 @@ typedef struct pcaprec_hdr_s {
 
 #pragma pack(pop)
 
+// dump all outgoing queued network packets to a pcap file (to be viewed/analyzed, or played directly to the Internet)
 int dump_pcap(char *filename, AttackOutgoingQueue *packets) {    
     AttackOutgoingQueue *ptr = packets;
     pcap_hdr_t hdr;
@@ -1731,19 +1731,11 @@ int dump_pcap(char *filename, AttackOutgoingQueue *packets) {
     char dst_mac[] = {1,2,3,4,5,6};
     char src_mac[] = {7,8,9,10,11,12};
 
-    ethhdr.ether_type = ntohs(ETHERTYPE_IP);
-    memcpy((void *)&ethhdr.ether_dhost, dst_mac, 6);
-    memcpy((void *)&ethhdr.ether_dhost, src_mac, 6);
-    
-    
-
+    // zero these..
     memset((void *)&packet_hdr, 0, sizeof(pcaprec_hdr_t)); 
     memset((void *)&hdr, 0, sizeof(pcap_hdr_t));
-
-
-    if ((fd = fopen(filename, "wb")) == NULL) return -1;
-
     
+    // prepare global header for the pcap file format
     hdr.magic_number = 0xa1b2c3d4;
     hdr.version_major = 2;
     hdr.version_minor = 4;
@@ -1751,9 +1743,18 @@ int dump_pcap(char *filename, AttackOutgoingQueue *packets) {
     hdr.snaplen = 65535;
     hdr.network = 1;//layer = ethernet
 
+    // set ether header (enough for wireshark, tcpdump, or whatever)
+    ethhdr.ether_type = ntohs(ETHERTYPE_IP);
+    memcpy((void *)&ethhdr.ether_dhost, dst_mac, 6);
+    memcpy((void *)&ethhdr.ether_dhost, src_mac, 6);
+
+    // open output file
+    if ((fd = fopen(filename, "wb")) == NULL) return -1;
+    
     // write the global header...
     fwrite((void *)&hdr, 1, sizeof(pcap_hdr_t), fd);
 
+    // for each packet we have in the outgoing queue.. write it to disk
     while (ptr != NULL) {
 
         packet_hdr.ts_sec = ts;
@@ -1775,7 +1776,7 @@ int dump_pcap(char *filename, AttackOutgoingQueue *packets) {
 
 }
 
-
+// put a files contents into a memory buffer
 char *FileContents(char *filename, int *size) {
     FILE *fd = fopen(filename,"rb");
     char *buf = NULL;
@@ -1792,15 +1793,11 @@ char *FileContents(char *filename, int *size) {
 
     fclose(fd);
 
-    
-
     return buf;
 }
 
 
-// lets test this system..
-// lets build an http session, and write it to a pcap file.. then we can write 10,000 sessions to another capture file
-// all can be replayed to the wire, and viewed in wireshark...
+// This was created to test this code standalone.  The final should integrate easily into other applications.
 int main(int argc, char *argv[]) {
     int server_port, client_port;
     uint32_t server_ip, client_ip;
