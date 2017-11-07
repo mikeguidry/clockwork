@@ -113,6 +113,17 @@ icmpp messages such as redirect and host not available, ad port not available co
 
 -----
 
+
+    // we set the ts to the time of the last packet submission.. this way the separation is by the messages being completed..
+    // this can allow full blown  simulated conversations being pushed directly into intelligence platforms to manipulate them
+    // ie: generate text, neural network verify it seems human vs not, then randomly choose whne the two parties would be online together,
+    // or not.. it can keep context information about parties (even possibly transmitted over p2p to keep on somme remote server for IoT hacked devices
+    // to reload..)
+    // this could allow using simulated messages where two parties arent even online at the same time but send small messages...
+    // all of this couldd be trained, automated and directed to fconfuse manipulate or disrupt intelligence platforms...
+    // thats why this timestamp is extremely impoortant ;)
+
+
 */
 /*
 geoip [ 
@@ -312,25 +323,20 @@ ResearchInfo *research_list = NULL;
 AS_attacks *attack_list = NULL;
 
 
-// this is flushed to wire as quickly as possible...
-// this allows using a separate thread to ensure speed is fast enough
-// in that case we shouldnt affect the attack_info from another thread
-// without mutex, etc but it might not be worth it
+// The outgoing queue which gets wrote directly to the Internet wire.
 AttackOutgoingQueue *network_queue = NULL, *network_queue_last = NULL;
 
-// do we have a raw socket?
+// The raw socket file descriptor for writing the spoofed packets
 int raw_socket = 0;
 
-// grabbed this code from forge2.c (other code w checksum, and original tcp low level building iphd,tcphdr, checksum,etc)
-// anything before options+data (forge does SYN)
+// Open a raw socket and use the global variable to store it
 int prepare_socket() {
     int rawsocket = 0;
     int one = 1;
     
     rawsocket = socket (PF_INET, SOCK_RAW, IPPROTO_TCP);
-    if (setsockopt(rawsocket,IPPROTO_IP,IP_HDRINCL,(char *)&one,sizeof(one)) < 0) {
+    if (setsockopt(rawsocket,IPPROTO_IP,IP_HDRINCL,(char *)&one,sizeof(one)) < 0)
         return -1;
-    }
 
     raw_socket = rawsocket;
 
@@ -340,7 +346,7 @@ int prepare_socket() {
 
 // flushes the attack outgoing queue to the network, and then frees up the lists..
 // raw sockets here.. or we could use a writing pcap mode..
-// itd be smart to attempt to finnd a naming scheme, and an instructions file
+// itd be smart to attempt to find a naming scheme, and an instructions file
 // so this can be paired with command line tools so things like scp, and ssh can be used
 // with a timing mechanism (ntp, or something else which allows correct timing for launching commands)
 // so that future pakets can be generated (weeks, days, etc) in advance.. and sent to correct locations
@@ -361,12 +367,15 @@ int FlushAttackOutgoingQueueToNetwork() {
     
     while (optr != NULL) {
 
+        // parameters required to write the spoofed packet to the socket.. it ensures the OS fills in the ethernet layer (src/dst mac
+        // addresses for the local IP, and local IP's gateway
         rawsin.sin_family       = AF_INET;
         rawsin.sin_port         = optr->dest_port;
         rawsin.sin_addr.s_addr  = optr->dest_ip;
     
         int bytes_sent = sendto(raw_socket, optr->buf, optr->size, 0, (struct sockaddr *) &rawsin, sizeof(rawsin));
 
+        // I need to perform some better error checking than just the size..
         if (bytes_sent != optr->size) break;
 
         count++;
@@ -418,10 +427,11 @@ int AS_queue(AS_attacks *attack, PacketInfo *qptr) {
     optr->dest_ip = qptr->dest_ip;
     optr->dest_port = qptr->dest_port;
 
+    // Just in case some function later (during flush) will want to know which attack the buffer was generated for
     optr->attack_info = attack;
 
-    // put into queue.. using a laast queue quick pointer to optimize time required
-    // it beat using L_last() every addition
+    // Put into the linked list using a small optimization of keeping information regarding the last
+    // structure that was appended.. It allows us to quickly add another entry.  
     if (network_queue == NULL) {
         network_queue = network_queue_last = optr;
     } else {
@@ -438,8 +448,7 @@ int AS_queue(AS_attacks *attack, PacketInfo *qptr) {
 int AS_session_queue(int id, uint32_t src, uint32_t dst, int src_port, int dst_port, int count, int interval, int depth, void *function) {
     AS_attacks *aptr = NULL;
 
-    aptr = (AS_attacks *)calloc(1, sizeof(AS_attacks));
-    if (aptr == NULL)
+    if ((aptr = (AS_attacks *)calloc(1, sizeof(AS_attacks))) == NULL)
         return -1;
 
     // identifier for the attack..in case we need to find it in queue later
@@ -510,16 +519,37 @@ void PacketAdjustments(AS_attacks *aptr) {
     return;
 }
 
+//https://www.linuxquestions.org/questions/programming-9/how-to-calculate-time-difference-in-milliseconds-in-c-c-711096/
+int timeval_subtract (struct timeval *result, struct timeval  *x, struct timeval  *y) {
+    if (x->tv_usec < y->tv_usec) {
+        int nsec = (y->tv_usec - x->tv_usec) / 1000000 + 1;
+
+        y->tv_usec -= 1000000 * nsec;
+        y->tv_sec += nsec;
+    }
+
+    if (x->tv_usec - y->tv_usec > 1000000) {
+        int nsec = (y->tv_usec - x->tv_usec) / 1000000;
+
+        y->tv_usec += 1000000 * nsec;
+        y->tv_sec -= nsec;
+    }
+
+    result->tv_sec = x->tv_sec - y->tv_sec;
+    result->tv_usec = x->tv_usec - y->tv_usec;
+
+    return x->tv_sec < y->tv_sec;
+}
+
 // This is one of the main logic functions.  It handles sessions which are to be replayed many times, along with the timing 
 // logic, and it calls other functions to queue into the network outgoing queue
 void PacketQueue(AS_attacks *aptr) {
     int ts = 0;
     PacketInfo *pkt = NULL;
     struct timeval tv;
-    struct timeval pkt_tv;
+    struct timeval time_diff;
 
     gettimeofday(&tv, NULL);
-    ts = tv.tv_sec;
 
     // if its already finished.. lets just move forward
     if (aptr->completed) return;
@@ -530,15 +560,17 @@ void PacketQueue(AS_attacks *aptr) {
     else {
         // we do have to reprocess these packets fromm packet #1?
         if (aptr->count == 0) {
-            // lets free the packets....we dont have anymore times to push to wire...
+            // Free all packets (it will put a NULL at its pointer location afterwards)
             PacketsFree(&aptr->packets);
-    
+
+            // If there was anything in current_packet then its freed already from the function above
             aptr->current_packet = NULL;
-            aptr->packets = NULL;
+            
             aptr->completed = 1;
-    
+
             return;
         }
+
         // lets start it over..
         pkt = aptr->packets;        
     }
@@ -549,68 +581,44 @@ void PacketQueue(AS_attacks *aptr) {
 
         return;
     }
+
     // is it the first packet?
     if (pkt == aptr->packets) {
-        // by here we have more counts to start this session over.. lets ensure its within the time frame we set
-        // remember on the first time.. the ts is 0 so this will never mistake that it hasnt been enough time
-        // subtracting 0 from epoch
-        if ((ts - aptr->ts) < aptr->repeat_interval) {
+        // if we are about to replay this attack again from the first packet due to a repeat count.. then
+        // verify enough time has elapsed to match our repeat interval (IN seconds)
+        timeval_subtract(&time_diff, &aptr->ts, &tv);
+        if (time_diff.tv_usec < aptr->repeat_interval) {
             // we are on the first packet and it has NOT been long enough...
             return;
         }
+
         // derement the count..
         aptr->count--;
 
-        // later.. sinnce this is the first packet.. we need to allow modifications using particular ranges (such as source ports, etc)
-        // it would go here.. :) so it can modify quickly before bufferinng againn... IE: lots of messages to social sites, or blogs..
-        // could insert different messages here into the session and prepare it right before the particular connection gets pushed out
-
-        // small logic bug here for the momment.. its adjusting and doing two sets of packets (diff source numbers, so the adjustments work properly
-        // for falsifying thousaands of connections from a single attack body.. glad that works) but for testing i just see 20 packets instead of 10
-        // will figure it out tomoorrow.. noothing serious.
-        if (aptr->ts) // means it was already used once..
+        // aptr->ts is only set if it was already used once..
+        if (aptr->ts.tv_sec)
+            // If so, then we have some adjustments to make (source port, identifiers, etc)
             PacketAdjustments(aptr);
-        // if it failed itll show as completed...
+
+        // If its marked as completed for any reason, then we are done.
         if (aptr->completed) return;
     } else {
-        
-        if ((ts - aptr->ts) < pkt->wait_time) {
-            // the next packet needs more time before being sent
+        // Is it too soon to send this packet? (we check its milliseconds)
+        timeval_subtract(&time_diff, &aptr->ts, &tv);
+
+        if (time_diff.tv_usec < pkt->wait_time) {
             return;
         } 
-                
-        /*
-
-            finish millisecond ***
-
-            gettimeofday(&pkt_tv, NULL);
-            
-            // we arent the first packet.. lets be sure we dont have to wait some amount of time before
-            // sending the next packet
-                    if (((pkt_tv.tv_usec - tv.tv_usec) < pkt->wait_time)) {
-                    // the next packet needs more time before being sent
-                return;
-            }
-        */ 
     }
 
-    // queue this packet (first, or next) into the outgoing buffer set...
-    // it uses the same pointer from pkt so it doesnt copy again...
-    // expect it removed after this..
+
+    // Queue this packet into the outgoing queue for the network wire
     AS_queue(aptr, pkt);
 
-    // lets prepare the next packet (if it exists.. otherise itll complete)
+    // We set this pointer to the next packet for next iteration of AS_perform()
     aptr->current_packet = pkt->next;
 
-    // we set the ts to the time of the last packet submission.. this way the separation is by the messages being completed..
-    // this can allow full blown  simulated conversations being pushed directly into intelligence platforms to manipulate them
-    // ie: generate text, neural network verify it seems human vs not, then randomly choose whne the two parties would be online together,
-    // or not.. it can keep context information about parties (even possibly transmitted over p2p to keep on somme remote server for IoT hacked devices
-    // to reload..)
-    // this could allow using simulated messages where two parties arent even online at the same time but send small messages...
-    // all of this couldd be trained, automated and directed to fconfuse manipulate or disrupt intelligence platforms...
-    // thats why this timestamp is extremely impoortant ;)
-    aptr->ts = ts;
+    gettimeofday(&aptr->ts, NULL);
 
     return;
 }
@@ -766,8 +774,8 @@ void AttackFreeStructures(AS_attacks *aptr) {
 }
 
 
-// build packets relating to a set of instructions being passed
-// fromm somme other function which generated the session(s)
+// This function takes the linked list of build instructions, and loops to build out each packet
+// preparing it to be wrote to the Internet.
 void BuildPackets(AS_attacks *aptr) {
     int bad = 0;
     PacketBuildInstructions *ptr = aptr->packet_build_instructions;
@@ -779,39 +787,28 @@ void BuildPackets(AS_attacks *aptr) {
     }
 
     while (ptr != NULL) {
-        // rebuild options for the tcp packets now.. will require changes such as timestamps
-        // to correctly emulate operating systems
+        // Rebuild TCP options for this packet (useful for OS emulation etc)
         if (ptr->flags & TCP_OPTIONS) {
             if (PacketBuildOptions(ptr) != 1) {
+                // If it failed for some reason...
                 aptr->completed = 1;
+
                 return;
             }
         }
-        if (BuildSinglePacket(ptr) == 1) {
-            ptr->ok = 1;
-        } else {
-            // using this bad variable isnt the best .. I know..
-            // im releasing ths for functionality.. not coding practice.
-            // maybe ill redesign the logic later.
-            bad = 1;
-            break;
+
+        // Build the single packet, and verify it worked out alright.
+        if ((BuildSinglePacket(ptr) != 1) || (ptr->packet == NULL) || (ptr->packet_size <= 0)) {
+            // Mark for deletion otherwise
+            aptr->completed = 1;
+
+            return;
         }
 
-        if (ptr->packet == NULL || ptr->packet_size <= 0) {
-            // something went wrong.
-            bad = 1;
-            
-            break;
-        }
+        // everything went well...
+        ptr->ok = 1;
 
         ptr = ptr->next;
-    }
-
-    // sometheing went wrong.. mark this attack as completed so it can be removed
-    if (bad == 1) {
-        aptr->completed = 1;
-        
-        return;
     }
 
     // All packets were successful.. lets move them to a different PacketInfo structure..
@@ -821,10 +818,10 @@ void BuildPackets(AS_attacks *aptr) {
     ptr = aptr->packet_build_instructions;
 
     while (ptr != NULL) {
-        qptr = (PacketInfo *)calloc(1, sizeof(PacketInfo));
-        if (qptr == NULL) {
-            bad = 1;
-            break;
+        if ((qptr = (PacketInfo *)calloc(1, sizeof(PacketInfo))) == NULL) {
+            // Allocation issue.. mark completed
+            aptr->completed = 1;
+            return;
         }
 
         qptr->buf = ptr->packet;
@@ -846,9 +843,6 @@ void BuildPackets(AS_attacks *aptr) {
 
         ptr = ptr->next;
     }
-
-    if (bad == 1)
-        aptr->completed = 1;
 
     return;
 }
@@ -995,7 +989,7 @@ int BuildSinglePacket(PacketBuildInstructions *iptr) {
         free(checkbuf);
     }
 
-    // copy the IP, adn TCP header to the final packet
+    // copy the IP, and TCP header to the final packet
     memcpy(final_packet, p, sizeof(struct packet));
 
     // copy the TCP options to the final packet
@@ -1434,7 +1428,7 @@ int BuildHTTPSession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, u
     cptr.server_port = server_port;
     cptr.client_ip = client_ip;
     cptr.client_port = client_port;
-    cptr.ts = time(0);
+    gettimeofday(&cptr.ts, NULL);
     cptr.max_packet_size_client = max_packet_size_client;
     cptr.max_packet_size_server = max_packet_size_server;
     cptr.server_ttl = 53;

@@ -252,7 +252,7 @@ typedef struct _as_attacks {
     // do we repeat this attack again whenever its completed?
     int count;
     int repeat_interval;
-    int ts;
+    struct timeval ts;
 
     // if it has a count>0 then completed would get set whenever
     int completed;
@@ -357,8 +357,10 @@ typedef struct _connection_properties {
 	uint32_t server_identifier;
 	uint32_t client_identifier;
 	uint32_t server_seq;
-	uint32_t client_seq;
-    int ts;
+    uint32_t client_seq;
+    
+    struct timeval ts;
+    
     int client_ttl;
     int server_ttl;
     int max_packet_size_client;
