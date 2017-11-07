@@ -459,6 +459,9 @@ int AS_session_queue(int id, uint32_t src, uint32_t dst, int src_port, int dst_p
     // how much time in between each replay?
     aptr->repeat_interval = interval;
 
+    // what function will be used to generate this sessions parameters? (ie: HTTP_Create())
+    aptr->function = function;
+
     // LIFO i decided it doesnt matter since the attacks are all happening simultaneously...
     // if it becomes a problem its a small fix.  but your queues should also flush properly anyhow..
     aptr->next = attack_list;
@@ -806,7 +809,6 @@ void BuildPackets(AS_attacks *aptr) {
 
     // sometheing went wrong.. mark this attack as completed so it can be removed
     if (bad == 1) {
-
         aptr->completed = 1;
         
         return;
@@ -830,7 +832,7 @@ void BuildPackets(AS_attacks *aptr) {
         qptr->dest_ip = ptr->destination_ip;
         qptr->dest_port = ptr->destination_port;
 
-        // lets emulate wait times in the future (and turn to microsecondss from seconds)
+        // We should decide wait times soon.  30-200milliseconds will suffice
         qptr->wait_time = 0;
 
         // so we dont double free.. lets just keep in the new structure..
@@ -1049,8 +1051,7 @@ unsigned short in_cksum(unsigned short *addr,int len) {
 PacketBuildInstructions *BuildInstructionsNew(PacketBuildInstructions **list, uint32_t source_ip, uint32_t destination_ip, int source_port, int dst_port, int flags, int ttl) {
     PacketBuildInstructions *bptr = NULL;
 
-    bptr = (PacketBuildInstructions *)calloc(1, sizeof(PacketBuildInstructions));
-    if (bptr == NULL) return NULL;
+    if ((bptr = (PacketBuildInstructions *)calloc(1, sizeof(PacketBuildInstructions))) == NULL) return NULL;
 
     bptr->source_ip = source_ip;
     bptr->source_port = source_port;
@@ -1064,6 +1065,7 @@ PacketBuildInstructions *BuildInstructionsNew(PacketBuildInstructions **list, ui
     // this relates to operating system emulation.. i'll get the variable here soon
     bptr->tcp_window_size = 1500;
 
+    // FIFO ordering
     L_link_ordered((LINK **)list, (LINK *)bptr);
 
     return bptr;
@@ -1079,8 +1081,6 @@ int DataPrepare(char **data, char *ptr, int size) {
 
     return 1;
 }
-
-
 
 
 // Generates instructions for fabricating a TCP connection being opened between two hosts..
@@ -1122,7 +1122,6 @@ int GenerateTCPConnectionInstructions(ConnectionProperties *cptr, PacketBuildIns
     err:;
     return 0;
 }
-
 
 
 
@@ -1500,7 +1499,7 @@ int G_server_body_size = 0;
 // to fabricate sessions of different protocols
 void *HTTP_Create(AS_attacks *aptr) {
     
-        int i = 0;
+    int i = 0;
     
     #ifndef BIG_TEST
         printf("client body %p size %d\nserver body %p size %d\n",G_client_body, G_client_body_size, G_server_body, G_server_body_size);
@@ -1635,6 +1634,7 @@ int main(int argc, char *argv[]) {
     int repeat = 1000000;
 #endif
     if (argc == 1) {
+        bad_syntax:;
         printf("%s client_ip client_port server_ip server_port client_body_file server_body_file repeat_count repeat_interval\n",
             argv[0]);
         exit(-1);
@@ -1661,6 +1661,9 @@ int main(int argc, char *argv[]) {
     // this is because its expecting to handling tens of thousands simul from each machine
     // millions depending on how much of an area the box will cover for disruption of the surveillance platforms
     repeat_interval = atoi(argv[8]);
+
+    if (!client_ip || !server_ip || !client_port || !server_port || !G_client_body || !G_server_body || !count || !repeat_interval) goto bad_syntax;
+
 #ifdef BIG_TEST
     while (repeat--) {
         server_ip = rand()%0xFFFFFFFF;
