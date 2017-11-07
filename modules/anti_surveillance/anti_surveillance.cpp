@@ -1,3 +1,8 @@
+/*
+A lot of random notes here from various different moments.. Just skip down to the code below it, or don't think too far
+into routines which are either already coded, or changed..
+*/
+
 /* thiis can also be used standalone .. fi you select sources, and dest correctly.. you can split up the pcaps by 2 sides
 and also set timestamps to future.. and prepare for attqacks at particular times
 
@@ -7,22 +12,41 @@ the good thing is.. they prob do not accurately represent things like checksums 
 so its possible to get text into their databases regardless of everything being 100%
 so a libpcap replacing text alone might work well for a lot of them
 
+In other words: if you take a packet capture of MSN messager.. you can probably just overwrite the text, and it should
+make it into their databases.  I highly dobut they would be critical of every protocols internal checksum routines for their
+packets.  Its an assumption but one I believe is justified by time, and CPU resources..
+
 */
 
 
 /*
 
-this is the main file which takes care of DoS against surveillance platforms worldwide
-it is meant to exhaust CPU, memory, and possibly pipes/linked relationships... it will be
-three staged (released/versioned) ... first is just to stop connections from being monitored
-then itll go further (due to the possible ways to fix that issue) although i plan to release
-all possible scenarios as soon as possible.. in other words: plan for every possible fix...
-since these hackish systems use fiber taps etc then there will always be a way to disrupt them
-and as long as this code continously runs on several machines then ... no more surveillance
+This application is designed to handle as many different virtual connections, or attacks against
+mass surveillance platforms that you can populate with information.  I was able to generate 8300 full HTTP
+sessions every second without any real optimizations yet. That's 30 million at hour on a single slow laptop I'm developing
+with.  The leaked NSA documents state 40 billion records for 30 days.  If you consider my laptop being able to
+handle this many, then what could a small network perform?  How much would it take to disrupt their networks permanently?
+Obviously it depends on the information you are inserting.  You could also use compression attacks in the middle of
+HTTP TCP/IP sessions to force their machines to have to decompress gigabytes of information using only a few bytes
+in each attack session queue.  I don't think these guys have been paying attention to my papers well enough.
+If so they would have stopped drugging me, or fucking with my life.  It's too late now.
+
+E-Mail is another story.  Each protocol online which is used by the majority of populations are going to be
+fully supported by most governments mass surveillance platforms.  Step 1 of the software is completed.  It
+has all building blocks required to advance into other protocols.  I'm talking about populating their databases
+with so much false information that they essentially become useless.  CPU/Memory exhaustion to the point to where
+it makes no sense to even risk the illegal surveillance to begin with...
 
 */
 
 /*
+Attacking particular things such as chained identities (relationships), etc will require generating sessions of
+random names, or IP addresses towards various websites.  It'd be smart to use real sites which are being scooped up
+so that you can ensure the attack is worth the packets.  The whole goal is to make these fabricated connections seem
+so real that there is no way computationally to separate them.  It decreases the reasoning of supporting the platforms
+to begin with.
+.. below are random notes throughout development.. it'll give an overall concept, but some things have changed, etc, etc
+
 discovery:
 all major sites (prism related, facebook, those kinds) in a list
 DNS them all.. and begin to reverse their ranges, and analyze traceroutes to find ones with same hops
@@ -68,7 +92,7 @@ and ...its going to be SO CPU intensive, and annoying due to BGP routing and man
 and just protocol gibberish... yeah.. but itll be prepared anyhow.
 
 
-------
+s------
 at some stage the surveillance systems are going to start randomly accepting connections by some % and only adding them to a permanent
 list if they contain actionable intelligence which means that if you declare enough real connections (full sessions) captured and replayed
 to autheticate host/ips then it will begin to delegate the falsified ones as well
