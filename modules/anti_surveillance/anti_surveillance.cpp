@@ -1,3 +1,14 @@
+/* thiis can also be used standalone .. fi you select sources, and dest correctly.. you can split up the pcaps by 2 sides
+and also set timestamps to future.. and prepare for attqacks at particular times
+
+
+notes on binaray protocols:
+the good thing is.. they prob do not accurately represent things like checksums et
+so its possible to get text into their databases regardless of everything being 100%
+so a libpcap replacing text alone might work well for a lot of them
+
+*/
+
 
 /*
 
@@ -132,6 +143,7 @@ isnt sure then havinng somme situations like this only helps)
 #include <fcntl.h>
 #include <resolv.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 //#include "structs.h"
 //#include <list.h>
 //#include "utils.h"
@@ -192,7 +204,7 @@ unsigned short in_cksum(unsigned short *addr,int len);
 void AttackFreeStructures(AS_attacks *aptr);
 
 
-
+// no negotiating.
 // queue for futher requests to the DNS lookup which will populate IPs for major sites, and corporations
 // it should find mail servers, name servers, and other IPs related to these companies which  are different
 // from the front facing sites
@@ -268,8 +280,86 @@ AS_attacks *attack_list = NULL;
 // this allows using a separate thread to ensure speed is fast enough
 // in that case we shouldnt affect the attack_info from another thread
 // without mutex, etc but it might not be worth it
-AttackOutgoingQueue *network_queue = NULL;
+AttackOutgoingQueue *network_queue = NULL, *network_queue_last = NULL;
 
+// do we have a raw socket?
+int raw_socket = 0;
+
+int one = 1;
+
+// grabbed this code from forge2.c (other code w checksum, and original tcp low level building iphd,tcphdr, checksum,etc)
+// anything before options+data (forge does SYN)
+int prepare_socket() {
+    int rawsocket = 0;
+
+    rawsocket = socket (PF_INET, SOCK_RAW, IPPROTO_TCP);
+    if (setsockopt(rawsocket,IPPROTO_IP,IP_HDRINCL,(char *)&one,sizeof(one)) < 0) {
+        return -1;
+    }
+
+    raw_socket = rawsocket;
+
+    return rawsocket;
+}
+
+
+// flushes the attack outgoing queue to the network, and then frees up the lists..
+// raw sockets here.. or we could use a writing pcap mode..
+// itd be smart to attempt to finnd a naming scheme, and an instructions file
+// so this can be paired with command line tools so things like scp, and ssh can be used
+// with a timing mechanism (ntp, or something else which allows correct timing for launching commands)
+// so that future pakets can be generated (weeks, days, etc) in advance.. and sent to correct locations
+// worldwide to be replayed for particular reasons, or just continous...
+// we arent always sure the queues will flush.. so.. we should allow checking, and ensuring some packets can stay in queue
+// itd be nice to get them out as quickly as possible since AS_perform() or other commands handle timings
+// timings needs to be moved from seconds to milliseconds (for advanced protocol emulation)
+int FlushAttackOutgoingQueueToNetwork() {
+    int done = 0;
+    int count = 0;
+    AttackOutgoingQueue *optr = network_queue, *onext = NULL;
+    struct sockaddr_in rawsin;
+
+    // we need some raw sockets.
+    if (raw_socket <= 0) {
+        if (prepare_socket() <= 0) return -1;
+    }
+    
+    while (optr != NULL) {
+
+        rawsin.sin_family       = AF_INET;
+        rawsin.sin_port         = optr->dest_port;
+        rawsin.sin_addr.s_addr  = optr->dest_ip;
+    
+        int bytes_sent = sendto(raw_socket, optr->buf, optr->size, 0, (struct sockaddr *) &rawsin, sizeof(rawsin));
+
+        if (bytes_sent != optr->size) break;
+
+        count++;
+
+        // what comes after? we are about to free the pointer so..
+        onext = optr->next;
+
+        // clear buffer
+        if (optr->buf)
+            free(optr->buf);
+
+        // free structure..
+        free(optr);
+
+        // fix up the linked lists
+        if (network_queue == optr)
+            network_queue = onext;
+
+        if (network_queue_last == optr)
+            network_queue_last = NULL;
+
+        // move to the next link
+        optr = onext;
+    }
+
+    // return how many successful packets were transmitted
+    return count;
+}
 
 /*
 
@@ -299,10 +389,22 @@ int AS_queue(AS_attacks *attack, PacketInfo *qptr) {
     optr->size = qptr->size;
     qptr->size = 0;
 
+    // required for writing to wire:
+    optr->dest_ip = qptr->dest_ip;
+    optr->dest_port = qptr->dest_port;
+
     optr->attack_info = attack;
 
+    // put into queue.. using a aqueue laast quick variable for addition
+    // it beat using L_last() every addition
+    if (network_queue == NULL) {
+        network_queue = network_queue_last = optr;
+    } else {
+        network_queue_last->next = optr;
+        network_queue_last = optr;
+    }
     // link to outgoing queue (FIFO)
-    L_link_ordered((LINK **)&network_queue, (LINK *)optr);
+    //L_link_ordered((LINK **)&network_queue, (LINK *)optr);
 
     // this was a major reason it was slowing down.. didnt use a jump table or keep track of the last element..
     // since its supposed to go to wire.. lets just keep pushing it there and see how  quickly it functions.
@@ -313,9 +415,13 @@ int AS_queue(AS_attacks *attack, PacketInfo *qptr) {
     return 1;
 }
 
+// session queue is a bit direct i didnt mean it to be only http
+// might be smart to send a pointer to the funnction in question for the type of attack..
+// ie: HTTP_Create() or whatever
+// depth for http would be which packet to cut off (we can kill 50% of the packets so the connectioons are left open)
 
 // queue an http session attack (generates, and plays HTTP requests to the wire)
-int AS_session_queue(int id, uint32_t src, uint32_t dst, int src_port, int dst_port, int count, int interval, int depth) {
+int AS_session_queue(int id, uint32_t src, uint32_t dst, int src_port, int dst_port, int count, int interval, int depth, void *function) {
     AS_attacks *aptr = NULL;
 
     aptr = (AS_attacks *)calloc(1, sizeof(AS_attacks));
@@ -391,8 +497,13 @@ void PacketAdjustments(AS_attacks *aptr) {
 
 
 void PacketQueue(AS_attacks *aptr) {
-    int ts = time(0);
+    int ts = 0;
     PacketInfo *pkt = NULL;
+    struct timeval tv;
+    struct timeval pkt_tv;
+
+    gettimeofday(&tv, NULL);
+    ts = tv.tv_sec;
 
     // if its already finished.. lets just move forward
     if (aptr->completed) return;
@@ -446,12 +557,25 @@ void PacketQueue(AS_attacks *aptr) {
         // if it failed itll show as completed...
         if (aptr->completed) return;
     } else {
-        // we arent the first packet.. lets be sure we dont have to wait some amount of time before
-        // sending the next packet
+        
         if ((ts - aptr->ts) < pkt->wait_time) {
             // the next packet needs more time before being sent
             return;
         } 
+                
+        /*
+
+            finish millisecond ***
+
+            gettimeofday(&pkt_tv, NULL);
+            
+            // we arent the first packet.. lets be sure we dont have to wait some amount of time before
+            // sending the next packet
+                    if (((pkt_tv.tv_usec - tv.tv_usec) < pkt->wait_time)) {
+                    // the next packet needs more time before being sent
+                return;
+            }
+        */ 
     }
 
     // queue this packet (first, or next) into the outgoing buffer set...
@@ -563,9 +687,13 @@ int AS_perform() {
 
         aptr = aptr->next;
     }
+
     // every loop lets remove completed sessions... we could choose to perform this every X iterations, or seconds
     // to increase speed at times.. depending on queue, etc
     AS_remove_completed();
+
+    // flush network packets queued to wire
+    FlushAttackOutgoingQueueToNetwork();
 
     return 1;
 }
@@ -682,7 +810,9 @@ void BuildPackets(AS_attacks *aptr) {
 
         qptr->buf = ptr->packet;
         qptr->size = ptr->packet_size;
-        
+        qptr->dest_ip = ptr->destination_ip;
+        qptr->dest_port = ptr->destination_port;
+
         // lets emulate wait times in the future (and turn to microsecondss from seconds)
         qptr->wait_time = 0;
 
@@ -796,10 +926,7 @@ int BuildSinglePacket(PacketBuildInstructions *iptr) {
     // syn/ack used the most
     p->tcp.syn	= (iptr->flags & TCP_FLAG_SYN) ? 1 : 0;
     p->tcp.ack	= (iptr->flags & TCP_FLAG_ACK) ? 1 : 0;
-
-    // push so far gets used when connection gets established fromo sserver to source
     p->tcp.psh	= (iptr->flags & TCP_FLAG_PSH) ? 1 : 0;
-    // fin and rst are ending flags...
     p->tcp.fin	= (iptr->flags & TCP_FLAG_FIN) ? 1 : 0;
     p->tcp.rst	= (iptr->flags & TCP_FLAG_RST) ? 1 : 0;
 
@@ -851,8 +978,7 @@ int BuildSinglePacket(PacketBuildInstructions *iptr) {
         // allocating and copying.. *** optimize
         memcpy(&p_tcp->tcp, &p->tcp, TCPHSIZE);
         memcpy(checkbuf + sizeof(struct pseudo_tcp), iptr->options, iptr->options_size);
-        memcpy(checkbuf + sizeof(struct pseudo_tcp) + iptr->options_size,
-        iptr->data, iptr->data_size);        
+        memcpy(checkbuf + sizeof(struct pseudo_tcp) + iptr->options_size, iptr->data, iptr->data_size);        
         
 
         /*! compute the tcp checksum
@@ -1137,11 +1263,6 @@ int GenerateBuildInstructionsHTTP(AS_attacks *aptr, uint32_t server_ip, uint32_t
 
 
 
-
-
-
-
-
 // this is a linked list so we can possible keep conectoin open over long periods of time pushing packet as needed... 
 typedef struct _connection_properties {
 	struct _connection_properties *next;
@@ -1160,6 +1281,8 @@ typedef struct _connection_properties {
     int server_ttl;
     int max_packet_size_client;
     int max_packet_size_server;
+    int client_emulated_operating_system;
+    int server_emulated_operating_system;
 } ConnectionProperties;
 
 
@@ -1201,7 +1324,6 @@ int GenerateTCPConnectionInstructions(ConnectionProperties *cptr, PacketBuildIns
 
     return 1;
     err:;
-    printf("err\n");
     return 0;
 }
 
@@ -1247,42 +1369,39 @@ int GenerateTCPSendDataInstructions(ConnectionProperties *cptr, PacketBuildInstr
 
     // now the client must loop until it sends all daata
     while (data_size > 0) {
-        
-                packet_size = min(data_size, from_client ? cptr->max_packet_size_client : cptr->max_packet_size_server);
-        
-                // the client sends its request... split into packets..
-                packet_flags = TCP_FLAG_PSH|TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
-                packet_ttl = from_client ? cptr->client_ttl : cptr->server_ttl;
-                if ((bptr = BuildInstructionsNew(&build_list, source_ip, dest_ip, source_port, dest_port, packet_flags, packet_ttl)) == NULL) goto err;
-                if (DataPrepare(&bptr->data, data_ptr, packet_size) != 1) goto err;
-                bptr->data_size = packet_size;
-                bptr->header_identifier = *src_identifier++;
-                bptr->client = from_client;
-                bptr->ack = *remote_seq;
-                bptr->seq = *my_seq;
-            
-                *my_seq += packet_size;
-        
-                data_size -= packet_size;
-                data_ptr += packet_size;
-        
-                // server sends ACK packet for this packet
-                packet_flags = TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
-                packet_ttl = from_client ? cptr->server_ttl : cptr->client_ttl;
-                if ((bptr = BuildInstructionsNew(&build_list, dest_ip, source_ip, dest_port, source_port, packet_flags, packet_ttl)) == NULL) goto err;
-                bptr->header_identifier = *dst_identifier++;
-                bptr->ack = *my_seq;
-                bptr->seq = *remote_seq;
-                bptr->client = !from_client;
-        
-            }
+        packet_size = min(data_size, from_client ? cptr->max_packet_size_client : cptr->max_packet_size_server);
 
-            L_link_ordered((LINK **)final_build_list, (LINK *)build_list);
+        // the client sends its request... split into packets..
+        packet_flags = TCP_FLAG_PSH|TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
+        packet_ttl = from_client ? cptr->client_ttl : cptr->server_ttl;
+        if ((bptr = BuildInstructionsNew(&build_list, source_ip, dest_ip, source_port, dest_port, packet_flags, packet_ttl)) == NULL) goto err;
+        if (DataPrepare(&bptr->data, data_ptr, packet_size) != 1) goto err;
+        bptr->data_size = packet_size;
+        bptr->header_identifier = *src_identifier++;
+        bptr->client = from_client;
+        bptr->ack = *remote_seq;
+        bptr->seq = *my_seq;
+    
+        *my_seq += packet_size;
+        data_size -= packet_size;
+        data_ptr += packet_size;
+
+        // server sends ACK packet for this packet
+        packet_flags = TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
+        packet_ttl = from_client ? cptr->server_ttl : cptr->client_ttl;
+        if ((bptr = BuildInstructionsNew(&build_list, dest_ip, source_ip, dest_port, source_port, packet_flags, packet_ttl)) == NULL) goto err;
+        bptr->header_identifier = *dst_identifier++;
+        bptr->ack = *my_seq;
+        bptr->seq = *remote_seq;
+        bptr->client = !from_client;
+
+    }
+
+    L_link_ordered((LINK **)final_build_list, (LINK *)build_list);
 
 
     return 1;
     err:;
-    printf("err\n");
     return 0;
 }
 
@@ -1328,7 +1447,7 @@ int GenerateTCPCloseConnectionInstructions(ConnectionProperties *cptr, PacketBui
     packet_flags = TCP_FLAG_FIN|TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
     packet_ttl = from_client ? cptr->client_ttl : cptr->server_ttl;
     if ((bptr = BuildInstructionsNew(&build_list, source_ip, dest_ip, source_port, dest_port, packet_flags, packet_ttl)) == NULL) goto err;
-    bptr->header_identifier = *src_identifier++;
+    bptr->header_identifier =  *src_identifier; *src_identifier += 1;
     bptr->ack = *remote_seq;
     bptr->seq = *my_seq;
     *my_seq += 1;
@@ -1338,7 +1457,7 @@ int GenerateTCPCloseConnectionInstructions(ConnectionProperties *cptr, PacketBui
     packet_flags = TCP_FLAG_FIN|TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
     packet_ttl = from_client ? cptr->server_ttl : cptr->client_ttl;
     if ((bptr = BuildInstructionsNew(&build_list, dest_ip, source_ip, dest_port, source_port, packet_flags, packet_ttl)) == NULL) goto err;
-    bptr->header_identifier = *(src_identifier)++;
+    bptr->header_identifier = *src_identifier; *src_identifier += 1;
     bptr->ack = *my_seq;
 
     bptr->seq = *remote_seq;
@@ -1350,7 +1469,7 @@ int GenerateTCPCloseConnectionInstructions(ConnectionProperties *cptr, PacketBui
     packet_flags = TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
     packet_ttl = from_client ? cptr->client_ttl : cptr->server_ttl;
     if ((bptr = BuildInstructionsNew(&build_list, source_ip, dest_ip, source_port, dest_port, packet_flags, packet_ttl)) == NULL) goto err;
-    bptr->header_identifier = *(src_identifier)++;
+    bptr->header_identifier = *src_identifier; *src_identifier += 1;
     bptr->ack = *remote_seq;
     bptr->seq = *my_seq;
     bptr->client = from_client;
@@ -1359,8 +1478,7 @@ int GenerateTCPCloseConnectionInstructions(ConnectionProperties *cptr, PacketBui
 
     return 1;
     err:;
-    printf("err\n");
-    return -1;
+    return 0;
 }
 
 
@@ -1376,7 +1494,9 @@ this new way to build connections allows doing many different packets from sourc
 it should allow all protocols TCP/IP
 */
 
-int BuildHTTPSession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, uint32_t server_port,  char *client_body,  int client_size, char *server_body, int server_size) {
+/*
+// lets build an email message (smtp)
+int BuildSMTPsession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, uint32_t server_port,  char *source_email, char *destination_email, char *body, int body_size) {
     PacketBuildInstructions *bptr = NULL;
     PacketBuildInstructions *build_list = NULL;
     ConnectionProperties cptr;
@@ -1384,16 +1504,6 @@ int BuildHTTPSession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, u
     // decide OS later..
     int client_emulation = 0;
     int server_emulation = 0;
-
-    // what do we need for building all packets?
-    int packet_size = 0;
-    // for SYN,ACK,FIN,etc... up to OPTIONS(timestamp+window size)
-    int packet_flags = 0;
-    // packet time to live
-    int packet_ttl = 64;
-
-    char *client_body_ptr = client_body;
-    char *server_body_ptr = server_body;
 
     // these are in headers.. and seems to be +1 fromm start..
     // we need to get more requests for when they begin to *attempt* to filter these out..
@@ -1425,29 +1535,128 @@ int BuildHTTPSession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, u
     cptr.server_identifier = server_identifier;
     cptr.client_identifier = client_identifier;
     cptr.aptr = aptr;
+    cptr.client_seq = client_seq;
+    cptr.server_seq = server_seq;
+
+
+    // generate our name
+    // pick email address from
+    // pick email to (and find its correct MX server
+    // possibly connect to get its accurate email info but it shouldnt matter much.. they prob dont check due to too many packets
+    // tcp connecct
 
     // open the connection...
     if (GenerateTCPConnectionInstructions(&cptr, &build_list) != 1) goto err;
-
-    // now we must send data from client to server (request)
-    if (GenerateTCPSendDataInstructions(&cptr, &build_list, 1,
-        client_body, client_size) != 1) goto err;
     
-    // now the server must respond with its body..
-    // now we must send data from client to server (request)
-    if (GenerateTCPSendDataInstructions(&cptr, &build_list, 0,
-        server_body, server_size) != 1) goto err;
+    // ehlo
+    sprintf(buf, "EHLO %s\n", remote_email_name)
+    if (GenerateTCPSendDataInstructions(&cptr, &build_list, 1, buf, strlen(buf)) != 1) goto err;
+    // responsse
+    if (GenerateTCPSendDataInstructions(&cptr, &build_list, 0, buf, strlen(buf)) != 1) goto err;
 
-    // now lets close the connection from client side...
+    // mail from:
+    sprintf(buf, "MAIL FROM: %s\n", source_email);
+    if (GenerateTCPSendDataInstructions(&cptr, &build_list, 1, buf, strlen(buf)) != 1) goto err;
+    // fake responsse
+    if (GenerateTCPSendDataInstructions(&cptr, &build_list, 0, buf, strlen(buf)) != 1) goto err;
+
+    // rcpt to:
+    sprintf(buf, "RCPT TO: %s\n", destination_email);
+    if (GenerateTCPSendDataInstructions(&cptr, &build_list, 1, buf, strlen(buf)) != 1) goto err;
+    // fake responsse
+    if (GenerateTCPSendDataInstructions(&cptr, &build_list, 0, buf, strlen(buf)) != 1) goto err;
+
+    // body
+    // body or data string?
+    if (GenerateTCPSendDataInstructions(&cptr, &build_list, 1, buf, strlen(buf)) != 1) goto err;
+    // fake responsse
+    if (GenerateTCPSendDataInstructions(&cptr, &build_list, 0, buf, strlen(buf)) != 1) goto err;
+
+
+    // done. send string to end i think maybe . or .. or exit i dont rem..
+    if (GenerateTCPSendDataInstructions(&cptr, &build_list, 1, buf, strlen(buf)) != 1) goto err;
+    // fake responsse
+    if (GenerateTCPSendDataInstructions(&cptr, &build_list, 0, buf, strlen(buf)) != 1) goto err;
+
+    // end connection
     if (GenerateTCPCloseConnectionInstructions(&cptr, &build_list, 1) != 1) goto err;
 
     aptr->packet_build_instructions = build_list;
     // all packets done! good to go!
     return 1;
     err:;
-    printf("error\n");
     return -1;
 }
+*/
+
+    
+int BuildHTTPSession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, uint32_t server_port,  char *client_body,  int client_size, char *server_body, int server_size) {
+    PacketBuildInstructions *bptr = NULL;
+    PacketBuildInstructions *build_list = NULL;
+    ConnectionProperties cptr;
+
+    // these are in headers.. and seems to be +1 fromm start..
+    // we need to get more requests for when they begin to *attempt* to filter these out..
+    // good luck with that.
+    uint32_t client_identifier = rand()%0xFFFFFFFF;
+    uint32_t server_identifier = rand()%0xFFFFFFFF;
+
+    // os emulation and general statistics required here from operating systems, etc..
+    //// find correct MTU, subtract headers.. calculate.
+    // this is the max size of each packet while sending the bodies...
+    int max_packet_size_client = 1500; 
+    int max_packet_size_server = 1500; 
+
+    int client_port = 1024 + (rand()%(65535-1024));
+
+    uint32_t client_seq = rand()%0xFFFFFFFF;
+    uint32_t server_seq = rand()%0xFFFFFFFF;
+
+
+    cptr.server_ip = server_ip;
+    cptr.server_port = server_port;
+    cptr.client_ip = client_ip;
+    cptr.client_port = client_port;
+    cptr.ts = time(0);
+    cptr.max_packet_size_client = max_packet_size_client;
+    cptr.max_packet_size_server = max_packet_size_server;
+    cptr.server_ttl = 53;
+    cptr.client_ttl = 64;
+    cptr.server_identifier = server_identifier;
+    cptr.client_identifier = client_identifier;
+    cptr.aptr = aptr;
+    cptr.client_seq = client_seq;
+    cptr.server_seq = server_seq;
+    // deal with it later when code is completed..
+    cptr.client_emulated_operating_system = 0;
+    cptr.server_emulated_operating_system = 0;
+    
+
+    // open the connection...
+    if (GenerateTCPConnectionInstructions(&cptr, &build_list) != 1) goto err;
+
+    // now we must send data from client to server (request)
+    if (GenerateTCPSendDataInstructions(&cptr, &build_list, 1, client_body, client_size) != 1) goto err;
+    
+    // now the server must respond with its body..
+    // now we must send data from client to server (request)
+    if (GenerateTCPSendDataInstructions(&cptr, &build_list, 0, server_body, server_size) != 1) goto err;
+
+    // now lets close the connection from client side first
+    if (GenerateTCPCloseConnectionInstructions(&cptr, &build_list, 1) != 1) goto err;
+
+    aptr->packet_build_instructions = build_list;
+
+    // now lets build the low level packets for writing to the network interface
+    BuildPackets(aptr);
+
+    // all packets done! good to go!
+    return 1;
+    err:;
+    return -1;
+}
+
+
 
 
 
@@ -1477,17 +1686,11 @@ void *HTTP_Create(AS_attacks *aptr) {
     printf("client body %p size %d\nserver body %p size %d\n",G_client_body, G_client_body_size, G_server_body, G_server_body_size);
 #endif
 
-    //i = GenerateBuildInstructionsHTTP(aptr,aptr->dst, aptr->src, aptr->destination_port, G_client_body, G_client_body_size,G_server_body, G_server_body_size);
     // lets try new method    
     i = BuildHTTPSession(aptr,aptr->dst, aptr->src, aptr->destination_port, G_client_body, G_client_body_size,G_server_body, G_server_body_size);
 
-    BuildPackets(aptr);
-
 #ifndef BIG_TEST
     printf("GenerateBuildInstructionsHTTP() = %d\n", i);
-
-    
-    printf("BuildPackets() done\n");
 
     printf("Packet Count: %d\n", L_count((LINK *)aptr->packets));
 #endif
@@ -1523,12 +1726,13 @@ int dump_pcap(char *filename, AttackOutgoingQueue *packets) {
     pcap_hdr_t hdr;
     pcaprec_hdr_t packet_hdr;
     FILE *fd;
-    int ts = time(0);
-
+    struct timeval tv;
     struct ether_header ethhdr;
+    int ts = 0;
 
+    gettimeofday(&tv, NULL);
 
-
+    ts = tv.tv_sec;
 
     // since we are just testinng how our packet looks fromm the generator.. lets just increase usec by 1
     unsigned long usec = 0;
@@ -1561,16 +1765,13 @@ int dump_pcap(char *filename, AttackOutgoingQueue *packets) {
     while (ptr != NULL) {
 
         packet_hdr.ts_sec = ts;
-        packet_hdr.ts_usec++;
+        packet_hdr.ts_usec += 200; 
         //packet_hdr.ts_sec = 0;
         packet_hdr.incl_len = ptr->size + sizeof(struct ether_header);
         packet_hdr.orig_len = ptr->size + sizeof(struct ether_header);
 
         fwrite((void *)&packet_hdr, 1, sizeof(pcaprec_hdr_t), fd);
-
         fwrite((void *)&ethhdr, 1, sizeof(struct ether_header), fd);
-        
-
         fwrite((void *)ptr->buf, 1, ptr->size, fd);
 
         ptr = ptr->next;
@@ -1649,25 +1850,15 @@ int main(int argc, char *argv[]) {
 #endif
         // queue this session to create an attack structure 
         // was the initial session created ok?
-        if ((r = AS_session_queue(1, client_ip, server_ip, client_port, server_port, count, repeat_interval, 1)) != 1) {
+        if ((r = AS_session_queue(1, client_ip, server_ip, client_port, server_port, count, repeat_interval, 1, (void *)&HTTP_Create)) != 1) {
             printf("error adding session\n");
             exit(-1);
         }
-#ifndef BIG_TEST        
-        
-        
-#else
-        if (r == 1)
-#endif    
-        attack_list->function = (void *)&HTTP_Create;
         
 #ifndef BIG_TEST
          printf("AS_session_queue() = %d\n", r);
 #else
-
-        
-
-        r = AS_perform();
+       r = AS_perform();
 
         if (repeat % 1000) {
             printf("\rCount: %05d\t\t", repeat);
@@ -1690,15 +1881,12 @@ int main(int argc, char *argv[]) {
 
     // how many packes are queued in the output supposed to go to the internet?
     printf("network queue: %p\n", network_queue);
-    if (network_queue) {
-        printf("queue size: %d\n", L_count((LINK *)network_queue));  
-    }
-
+    if (network_queue)
+        printf("packet count ready for wire: %d\n", L_count((LINK *)network_queue));  
 
     // now lets write to pcap file.. all of those packets.. open up wireshark.
     dump_pcap((char *)"output.pcap", network_queue);
 
     exit(0);
 }
-
 #endif

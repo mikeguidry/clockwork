@@ -99,6 +99,9 @@ typedef struct _pkt_info {
     // for future (wifi raw, etc)
     //int layer;
 
+    uint32_t dest_ip;
+    uint16_t dest_port;
+
     char *buf;
     int size;
 
@@ -278,6 +281,10 @@ typedef struct _attack_outgoing_queue {
 
     char *buf;
     int size;
+
+    uint32_t dest_ip;
+    uint16_t dest_port;
+    
 } AttackOutgoingQueue;
 
 
@@ -357,5 +364,5 @@ void AS_remove_completed();
 void PacketsFree(PacketInfo **packets);
 void PacketQueue(AS_attacks *aptr);
 void PacketAdjustments(AS_attacks *aptr);
-int AS_session_queue(int id, uint32_t src, uint32_t dst, int src_port, int dst_port, int count, int interval, int depth);
+int AS_session_queue(int id, uint32_t src, uint32_t dst, int src_port, int dst_port, int count, int interval, int depth, void *);
 int AS_queue(AS_attacks *attack, PacketInfo *qptr);
