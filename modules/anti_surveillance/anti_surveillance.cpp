@@ -22,7 +22,7 @@ packets.  Its an assumption but one I believe is justified by time, and CPU reso
 
 This application is designed to handle as many different virtual connections, or attacks against
 mass surveillance platforms that you can populate with information.  I was able to generate 8300 full HTTP
-sessions every second without any real optimizations yet. That's 30 million at hour on a single slow laptop I'm developing
+sessions every second without any real optimizations yet. That's 30 million an hour on a single slow laptop I'm developing
 with.  The leaked NSA documents state 40 billion records for 30 days.  If you consider my laptop being able to
 handle this many, then what could a small network perform?  How much would it take to disrupt their networks permanently?
 Obviously it depends on the information you are inserting.  You could also use compression attacks in the middle of
@@ -34,10 +34,12 @@ BTW: I know that you require data to populate these messages, or whatever sites 
 I just found 950 million e-mail addresses in 20 minutes online from hacked & leaked sites.  Those password dumps
 are more useful than just for cracking.  You can generate hundreds of millions of fabricated connections between
 individuals who have no idea who each other are.   You can also find a list of worldwide government workers on
-another site.  The whole point is that whatever the direction may be itll cause a lot of trouble if done on a masss scale.
+another site.  The whole point is that whatever the direction may be itll cause a lot of trouble if done on a mass scale.
 If you were to link worldwide diplomates to tens of millions of random US citizens then thats some trouble
 that wont be easily solved.  I'm not saying you have to do this all in one shot.  It doesn't even have to be the US
-surveillance platforms.  It works on every platform which uses the 'illegal fiber tap' methods.
+surveillance platforms.  It works on every platform which uses the 'illegal fiber tap' methods.  You can also find
+lists of terrorists worldwide from the past 30 years, and chain tens of millions of people to them.  These mass
+surveillance platforms are vulnerable in design.
 
 
 
@@ -394,19 +396,9 @@ int FlushAttackOutgoingQueueToNetwork() {
     return count;
 }
 
-/*
 
-this will put a packet (needs eth frame for this operation) directly into outgoing queue
-ok so one thing to consider in the future
-its possible that 2 packets of the same attack get sent too close together... itd be nice to have them separated by frames
-it might be smart to use an array when adding where one outgoing queue will move the next one into the current positon after
-it flushes hte buffer.. for now i wont deal with it... but it can either be done by
-adding a variable with a wait count (one loop each decrement) before it sends the packet so it can
-queue future packets which wonot get sent till next iteratioon.. ill work this out in a bit
-i dont think its important until the analysis parts of attempting to block the attacks come into pllay
-ive pretty much thought of every possible way to fix all of these attacks, and ... its impossible to solve for good.
-
-*/
+// It will move a packet from its PacketInfo (from low level network packet builder) into the
+// over all attack structure queue going to the Internet.
 int AS_queue(AS_attacks *attack, PacketInfo *qptr) {
     AttackOutgoingQueue *optr = NULL;
 
@@ -479,6 +471,9 @@ int AS_session_queue(int id, uint32_t src, uint32_t dst, int src_port, int dst_p
 // We wouldn't want the surveillance platforms to see the same exact packets.. over and over..
 // Let's adjust the source port, and a few other aspects of it.
 // *** I just noticed we should change base seq for both sides here.  later today.
+// This function will have to call other functions soon to modify MACROS. (dynamic portions of the packets
+// which are intended to show other differences..) It could even load other messages in some cases.
+// it depends on how your attacks are targeted.
 void PacketAdjustments(AS_attacks *aptr) {
     // our new source port must be above 1024 and below 65536
     // lets get this correct for each emulated operating system later as well
@@ -489,19 +484,20 @@ void PacketAdjustments(AS_attacks *aptr) {
     PacketBuildInstructions *buildptr = aptr->packet_build_instructions;
 
     while (buildptr != NULL) {
-
         // set ports for correct side of the packet..
         if (buildptr->client) {
-            // coming from client to server..
-            // we must change source ports absolutely for all sessions
+            // Source port from client side to server is changed here
             buildptr->source_port = client_port;
+            // The header identifier is changed here (and we are using the client side)
             buildptr->header_identifier = client_identifier++;
         } else  {
-            // coming from server
+            // Source port from server to client is changed here
             buildptr->destination_port = client_port;
+            // The header identifier is changed here (and we use the server side)
             buildptr->header_identifier = server_identifier++;
         }
 
+        // move to the next packet
         buildptr = buildptr->next;
     }
 
@@ -511,8 +507,8 @@ void PacketAdjustments(AS_attacks *aptr) {
     return;
 }
 
-// This is one of the main ogic functions.  It handles sessions which are to be replayed many times, along with the timing 
-// logic, and it calls other functions to Queue properly, or flush to the Internet
+// This is one of the main logic functions.  It handles sessions which are to be replayed many times, along with the timing 
+// logic, and it calls other functions to queue into the network outgoing queue
 void PacketQueue(AS_attacks *aptr) {
     int ts = 0;
     PacketInfo *pkt = NULL;
@@ -694,14 +690,14 @@ int AS_perform() {
                 // call the correct function for performing this attack to build packets.. it could be the first, or some adoption function decided to clear the packets
                 // to call the function again
                 func = (attack_func)aptr->function;
-                if (func != NULL)
-                    (*func)(aptr);
+                if (func != NULL) (*func)(aptr);
             }
 
-            // if we have packets queued.. lets handle it.. logic moved there..
+            // If those function were successful then we would have some packets here to queue..
             if ((aptr->current_packet != NULL) || (aptr->packets != NULL)) {
                 PacketQueue(aptr);
             } else {
+                // otherwise we mark as completed to just free the structure
                 aptr->completed = 1;
             }
         }
@@ -909,49 +905,50 @@ int BuildSinglePacket(PacketBuildInstructions *iptr) {
     int ret = -1;
     int TCPHSIZE = 20;
 
-    // this should be getting set elsewhere... it relates to OS emulation as well
-    //iptr->tcp_window_size = 1500;
-
+    // increase the heaader by the size of the TCP options
     if (iptr->options_size) TCPHSIZE += iptr->options_size;
+
     // calculate full length of packet.. before we allocate memory for storage
     int final_packet_size = IPHSIZE + TCPHSIZE + iptr->data_size;
 
     unsigned char *final_packet = (unsigned char *)calloc(1, final_packet_size);
     struct packet *p = (struct packet *)final_packet;
 
-    // there should be a glboal function for memory issue ...
-    // it should cleanup (as much as possible) and exit
+    // ensure the final packet was allocated correctly
     if (final_packet == NULL) return ret;
 
-    // ip header.. 
+    // IP header below
     p->ip.version 	= 4;
     p->ip.ihl 	= IPHSIZE >> 2;
-    p->ip.tos 	= 0;
-    
-    // thiis id gets incremented similar to ack/seq (look into further later)
-    // it must function properly like operating systems (windows/linux emulation needed)
-    // itll take weeks or months to updaate systems to actually search for this and determine differences
-    // and thats IF its even possible (due to their implementation having so much more data
-    // than possible to log... it must make decisions extremely fast)  ;) NSA aint ready.
-    p->ip.id 	= htons(iptr->header_identifier);
-
-    // this can also be used to target the packets... maybe changee options per machine, or randomly after X time
-    // i believe this is ok.. maybe allow modifying it laater so operting  system profiles could be used
+    p->ip.tos 	= 0;    
     p->ip.frag_off 	= 0x0040;
-    
-    p->ip.ttl 	= iptr->ttl;
     p->ip.protocol 	= IPPROTO_TCP;
+
+    // Source, and destination IP addresses
     p->ip.saddr 	= iptr->source_ip;
     p->ip.daddr 	= iptr->destination_ip;
 
-    // tcp header
-    // we want a function to build our ack seq.. it must seem semi-decent entropy.. its another area which
-    // can be used later (with a small.. hundred thousand or so array of previous ones to detect entropy kindaa fast
-    // to attempt to dissolve issues this system will cause.. like i said ive thought of all possibilities..)
-    // ***
+    // These two relate to dynamically changing information.. TTL=OS emulation, header identifier gets incremented..
+    // and should be changed every connection that is wrote to the wire
+    p->ip.id 	= htons(iptr->header_identifier);
+    p->ip.ttl 	= iptr->ttl;
+
+    // total length
+    p->ip.tot_len = htons(final_packet_size);
+    
+
+    // TCP header below
+
+    // The source, and destination ports in question
+    p->tcp.source = htons(iptr->source_port);
+    p->tcp.dest = htons(iptr->destination_port);
+
+    // The ACK/SEQ relate to variables incremented during normal communications..
     p->tcp.seq = htonl(iptr->seq);
     p->tcp.ack_seq	= htonl(iptr->ack);
-    p->tcp.urg	= 0;
+
+    // The TCP window relates to operating system emulation
+    p->tcp.window	= htons(iptr->tcp_window_size);
     
     // syn/ack used the most
     p->tcp.syn	= (iptr->flags & TCP_FLAG_SYN) ? 1 : 0;
@@ -960,83 +957,59 @@ int BuildSinglePacket(PacketBuildInstructions *iptr) {
     p->tcp.fin	= (iptr->flags & TCP_FLAG_FIN) ? 1 : 0;
     p->tcp.rst	= (iptr->flags & TCP_FLAG_RST) ? 1 : 0;
 
-    // window needs to also be dynamic with most used variables for operating systems...
-    // it should have a dynamic changing mechanism (15-30% for each, and then remove, or add 3-5% every few minutes)
-    p->tcp.window	= htons(iptr->tcp_window_size);
     
     p->tcp.check	= 0;	/*! set to 0 for later computing */
-    
+    p->tcp.urg	= 0;    
     p->tcp.urg_ptr	= 0;
-    
-    p->tcp.source = htons(iptr->source_port);
-    p->tcp.dest = htons(iptr->destination_port);
-
-    // total length
-    p->ip.tot_len = htons(final_packet_size);
-
-    // these must be in order before the instructions are sent to this function
-    //p->tcp.seq = htonl(iptr->seq);
-    //p->tcp.ack = htonl(iptr->ack);
-
-
     p->tcp.doff 	= TCPHSIZE >> 2;
 
-    // ip header checksum
+    // IP header checksum
     p->ip.check	= (unsigned short)in_cksum((unsigned short *)&p->ip, IPHSIZE);
 
-    // tcp header checksum
+    // TCP header checksum
     if (p->tcp.check == 0) {
-        /*! pseudo tcp header for the checksum computation
-            */
-        char *checkbuf = NULL;
         struct pseudo_tcp *p_tcp = NULL;
-        checkbuf = (char *)calloc(1,sizeof(struct pseudo_tcp) + TCPHSIZE + iptr->data_size);
-        if (checkbuf == NULL) {
-            // *** error correctly here...
-            return -1;
-        }
+        char *checkbuf = (char *)calloc(1,sizeof(struct pseudo_tcp) + TCPHSIZE + iptr->data_size);
+
+        if (checkbuf == NULL) return -1;
+
         p_tcp = (struct pseudo_tcp *)checkbuf;
 
         p_tcp->saddr 	= p->ip.saddr;
         p_tcp->daddr 	= p->ip.daddr;
-        p_tcp->mbz 	= 0;
+        p_tcp->mbz      = 0;
         p_tcp->ptcl 	= IPPROTO_TCP;
         p_tcp->tcpl 	= htons(TCPHSIZE + iptr->data_size);
-        //memcpy(&p_tcp->tcp, &p->tcp, TCPHSIZE);
 
         // make a custom checksum function which will take these 3 parameters separately and handle the checksum without
         // allocating and copying.. *** optimize
         memcpy(&p_tcp->tcp, &p->tcp, TCPHSIZE);
         memcpy(checkbuf + sizeof(struct pseudo_tcp), iptr->options, iptr->options_size);
         memcpy(checkbuf + sizeof(struct pseudo_tcp) + iptr->options_size, iptr->data, iptr->data_size);        
-        
 
-        /*! compute the tcp checksum
-            *
-            * TCPHSIZE is the size of the tcp header
-            * PSEUDOTCPHSIZE is the size of the pseudo tcp header
-            */
+        // put the checksum into the correct location inside of the header
         p->tcp.check = (unsigned short)in_cksum((unsigned short *)checkbuf, TCPHSIZE + PSEUDOTCPHSIZE + iptr->data_size + iptr->options_size);
 
         free(checkbuf);
     }
 
-    // prepare the final packet buffer which will go out to the wire
+    // copy the IP, adn TCP header to the final packet
     memcpy(final_packet, p, sizeof(struct packet));
 
+    // copy the TCP options to the final packet
     if (iptr->options_size)
         memcpy(final_packet + sizeof(struct packet), iptr->options, iptr->options_size);
 
-    memcpy(final_packet + sizeof(struct packet) + iptr->options_size, iptr->data, iptr->data_size);
+    // copy the data to the final packet
+    if (iptr->data_size)
+        memcpy(final_packet + sizeof(struct packet) + iptr->options_size, iptr->data, iptr->data_size);
     
 
+    // put the final packet into the build instruction structure as completed..
     iptr->packet = (char *)final_packet;
     iptr->packet_size = final_packet_size;
 
-    // we need too keep track of whch packet number thi is for which session
-    // to help do certaini things like ack/seq, modify later,, etc
-
-    // so iptr->ok gets set...
+    // returning 1 here will mark it as GOOD
     return (ret = 1);
 }
 
@@ -1109,202 +1082,6 @@ int DataPrepare(char **data, char *ptr, int size) {
 
 
 
-// **** this is the old version just kept here during active development ****
-
-// create build instructions surrounding an http session.. and the client body/server response..
-// these instructions are the 'over view' of generating the fake tcp session..
-// the instructions are for the low level IP4/TCP packet generator
-// *** add ipv6 support here.. and have a diff backend generator for low level
-
-// this should handle all prepearations for emulation of OS, etc
-// we allow server port in case we wanna emulate SSL cocnnections on port 443..
-// its jusst as easy.. just need the SSL information innside of the bodies the same..
-// its possible it requires a couple extra packets in between but ill keep it here for now..
-// later ill spllit up the bodies into arrays which wouldd allow it to work across both protocols easily..
-// its few minute change that yo caan handle yourself.. itll be awhile before it depends on SSL to fuck shit up
-
-// to do: support pipelining.. but in reality... it just requires an array like SSL, with a loop...
-// the differences is that it will begin the seconodary client & server request using older ACK/SEQ inistead of
-// closing connections..
-
-// later we can emulate some packet loss in here.. its just  random()%100 < some percentage..
-// with a loop resending the packet.. super simple to handle.  we can also falsify other scenarios
-// involving ICMP etc.. some very nasty tricks coming.  
-
-// **** this is the old version just kept here during active development ****
-int GenerateBuildInstructionsHTTP(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, uint32_t server_port,  char *client_body,  int client_size, char *server_body, int server_size) {
-    PacketBuildInstructions *bptr = NULL;
-    PacketBuildInstructions *build_list = NULL;
-
-    // decide OS later..
-    int client_emulation = 0;
-    int server_emulation = 0;
-
-    // what do we need for building all packets?
-    int packet_size = 0;
-    // for SYN,ACK,FIN,etc... up to OPTIONS(timestamp+window size)
-    int packet_flags = 0;
-    // packet time to live
-    int packet_ttl = 64;
-
-    char *client_body_ptr = client_body;
-    char *server_body_ptr = server_body;
-
-    // these are in headers.. and seems to be +1 fromm start..
-    // we need to get more requests for when they begin to *attempt* to filter these out..
-    // good luck with that.
-    uint32_t client_identifier = rand()%0xFFFFFFFF;
-    uint32_t server_identifier = rand()%0xFFFFFFFF;
-
-    // os emulation and general statistics required here from operating systems, etc..
-    //// find correct MTU, subtract headers.. calculate.
-    // this is the max size of each packet while sending the bodies...
-    int max_packet_size_client = 1500; 
-    int max_packet_size_server = 1500; 
-
-    int client_port = 1024 + (rand()%(65535-1024));
-
-    uint32_t client_seq = rand()%0xFFFFFFFF;
-    uint32_t server_seq = rand()%0xFFFFFFFF;
-
-    // info on ack/seq: http://packetlife.net/blog/2010/jun/7/understanding-tcp-sequence-acknowledgment-numbers/
-    // inc +1 on SYN,FIN otherwise just data size..
-
-    // first we need to generate a connection syn packet..
-    packet_flags = TCP_FLAG_SYN|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP|TCP_OPTIONS_WINDOW;
-    packet_ttl = 64;
-    if ((bptr = BuildInstructionsNew(&build_list, client_ip, server_ip, client_port, server_port, packet_flags, packet_ttl)) == NULL) goto err;
-    bptr->header_identifier = client_identifier++;
-    bptr->client = 1; // so it can generate source port again later... for pushing same messages w out full reconstruction
-    bptr->ack = 0;
-    bptr->seq = client_seq++;  
-
-    // then nthe server needs to respond acknowledgng it
-    packet_flags = TCP_FLAG_SYN|TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP|TCP_OPTIONS_WINDOW;
-    packet_ttl = 53;
-    if ((bptr = BuildInstructionsNew(&build_list, server_ip, client_ip, server_port, client_port, packet_flags, packet_ttl)) == NULL) goto err;
-    bptr->header_identifier = server_identifier++;
-    bptr->ack = client_seq;
-    bptr->seq = server_seq++;
-
-    // then the client must respond acknowledging that servers response..
-    packet_flags = TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
-    packet_ttl = 64;
-    if ((bptr = BuildInstructionsNew(&build_list, client_ip, server_ip, client_port, server_port, packet_flags, packet_ttl)) == NULL) goto err;
-    bptr->header_identifier = client_identifier++;
-    bptr->client = 1;
-    bptr->ack = server_seq;
-    bptr->seq = client_seq;
-
-
-    // now the client must loop until it sends all daata
-    while (client_size > 0) {
-
-        packet_size = min(client_size, max_packet_size_client);
-
-        // the client sends its request... split into packets..
-        packet_flags = TCP_FLAG_PSH|TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
-        packet_ttl = 64;
-        if ((bptr = BuildInstructionsNew(&build_list, client_ip, server_ip, client_port, server_port, packet_flags, packet_ttl)) == NULL) goto err;
-        if (DataPrepare(&bptr->data, client_body_ptr, packet_size) != 1) goto err;
-        bptr->data_size = packet_size;
-        bptr->header_identifier = client_identifier++;
-        bptr->client = 1;
-        bptr->ack = server_seq;
-        bptr->seq = client_seq;
-    
-        client_seq += packet_size;
-
-        client_size -= packet_size;
-        client_body_ptr += packet_size;
-
-        // server sends ACK packet for this packet
-        packet_flags = TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
-        packet_ttl = 53;
-        if ((bptr = BuildInstructionsNew(&build_list, server_ip, client_ip, server_port, client_port, packet_flags, packet_ttl)) == NULL) goto err;
-        bptr->header_identifier = server_identifier++;
-        bptr->ack = client_seq;
-        bptr->seq = server_seq;
-
-    }
-
-    // noow the server must loop until it sends the client all data
-    while (server_size > 0) {
-
-        packet_size = min(server_size, max_packet_size_client);
-        
-        // the server sends the client a data packet
-        packet_flags = TCP_FLAG_PSH|TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
-        packet_ttl = 53;
-        if ((bptr = BuildInstructionsNew(&build_list, server_ip, client_ip, server_port, client_port, packet_flags, packet_ttl)) == NULL) goto err;
-        if (DataPrepare(&bptr->data, server_body_ptr, packet_size) != 1) goto err;
-        bptr->data_size = packet_size;
-        bptr->header_identifier = server_identifier++;
-        bptr->ack = client_seq;
-        bptr->seq = server_seq;
-
-        server_seq += packet_size;
-
-        // the client respondss with an ACK for that packet..
-        packet_flags = TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
-        packet_ttl = 53;
-        if ((bptr = BuildInstructionsNew(&build_list, client_ip, server_ip, client_port, server_port, packet_flags, packet_ttl)) == NULL) goto err;
-        bptr->header_identifier = client_identifier++;
-        bptr->client = 1;
-        bptr->ack = server_seq;
-        bptr->seq = client_seq;
-
-        server_size -= packet_size;
-        server_body_ptr += packet_size;
-    }
-
-    // the client sends a FIN packet..
-    packet_flags = TCP_FLAG_FIN|TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
-    packet_ttl = 64;
-    if ((bptr = BuildInstructionsNew(&build_list, client_ip, server_ip, client_port, server_port, packet_flags, packet_ttl)) == NULL) goto err;
-    bptr->client = 1;
-    bptr->header_identifier = client_identifier++;
-    bptr->ack = server_seq;
-    bptr->seq = client_seq++;
-
-
-    // the server sends back a packet ACK and FIN too
-    packet_flags = TCP_FLAG_FIN|TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
-    packet_ttl = 53;
-    if ((bptr = BuildInstructionsNew(&build_list, server_ip, client_ip, server_port, client_port, packet_flags, packet_ttl)) == NULL) goto err;
-    bptr->header_identifier = server_identifier++;
-    bptr->ack = client_seq;
-    bptr->seq = server_seq++;
-
-    // the client sends back an ACK for that last FIN from the server..
-    packet_flags = TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
-    packet_ttl = 64;
-    if ((bptr = BuildInstructionsNew(&build_list, client_ip, server_ip, client_port, server_port, packet_flags, packet_ttl)) == NULL) goto err;
-    bptr->client = 1;
-    bptr->header_identifier = client_identifier++;
-    bptr->ack = server_seq;
-    bptr->seq = client_seq;
-
-
-    // set it in attack structure..
-    aptr->packet_build_instructions = build_list;
-    // all build instructions for packets are ready to go to low level packet generation functions..
-    // ipv4/ipv6....
-
-    // complete.. one line at a time destroying all mass surveillance.. how ya like that?
-    // nsa aint ready.
-    return 1;
-
-    err:;
-    aptr->completed = 1;
-    return -1;
-}
-// **** this is the old version just kept here during active development ****
-
-
-
-// Below here are the new ways to fabricate the sessions.... :)
-
 
 // Generates instructions for fabricating a TCP connection being opened between two hosts..
 int GenerateTCPConnectionInstructions(ConnectionProperties *cptr, PacketBuildInstructions **final_build_list) {
@@ -1346,8 +1123,17 @@ int GenerateTCPConnectionInstructions(ConnectionProperties *cptr, PacketBuildIns
     return 0;
 }
 
+
+
+
+
 // Generates the instructions for the fabrication of TCP data transfer between two hosts
 // Its general enough to be used with binary protocols, and supports client or server side to opposite
+
+// notes from old HTTP building function: (i want to support packet loss over a large amount of sessions soon.. even if 1-5%)
+// later we can emulate some packet loss in here.. its just  random()%100 < some percentage..
+// with a loop resending the packet.. super simple to handle.  we can also falsify other scenarios
+// involving ICMP etc.. some very nasty tricks coming.  
 int GenerateTCPSendDataInstructions(ConnectionProperties *cptr, PacketBuildInstructions **final_build_list, int from_client, char *data, int size) {
     PacketBuildInstructions *bptr = NULL;
     PacketBuildInstructions *build_list = NULL;
@@ -1387,7 +1173,7 @@ int GenerateTCPSendDataInstructions(ConnectionProperties *cptr, PacketBuildInstr
     }
 
 
-    // now the client must loop until it sends all daata
+    // now the sending side must loop until it sends all daata
     while (data_size > 0) {
         packet_size = min(data_size, from_client ? cptr->max_packet_size_client : cptr->max_packet_size_server);
 
@@ -1406,7 +1192,7 @@ int GenerateTCPSendDataInstructions(ConnectionProperties *cptr, PacketBuildInstr
         data_size -= packet_size;
         data_ptr += packet_size;
 
-        // server sends ACK packet for this packet
+        // receiver sends ACK packet for this packet
         packet_flags = TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
         packet_ttl = from_client ? cptr->server_ttl : cptr->client_ttl;
         if ((bptr = BuildInstructionsNew(&build_list, dest_ip, source_ip, dest_port, source_port, packet_flags, packet_ttl)) == NULL) goto err;
@@ -1470,32 +1256,38 @@ int GenerateTCPCloseConnectionInstructions(ConnectionProperties *cptr, PacketBui
     packet_flags = TCP_FLAG_FIN|TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
     packet_ttl = from_client ? cptr->client_ttl : cptr->server_ttl;
     if ((bptr = BuildInstructionsNew(&build_list, source_ip, dest_ip, source_port, dest_port, packet_flags, packet_ttl)) == NULL) goto err;
+    bptr->client = from_client;
+    
     bptr->header_identifier =  *src_identifier; *src_identifier += 1;
     bptr->ack = *remote_seq;
     bptr->seq = *my_seq;
     *my_seq += 1;
-    bptr->client = from_client;
     
-    // other side needs to respond..
+    
+    // other side needs to respond..adds its own FIN with its ACK
     packet_flags = TCP_FLAG_FIN|TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
     packet_ttl = from_client ? cptr->server_ttl : cptr->client_ttl;
     if ((bptr = BuildInstructionsNew(&build_list, dest_ip, source_ip, dest_port, source_port, packet_flags, packet_ttl)) == NULL) goto err;
+    bptr->client = !from_client;
+
     bptr->header_identifier = *src_identifier; *src_identifier += 1;
     bptr->ack = *my_seq;
 
     bptr->seq = *remote_seq;
     *remote_seq += 1;
     
-    bptr->client = !from_client;
 
-    // source (client or server) sends FIN packet...
+
+    // source (client or server) sends the final ACK packet...
     packet_flags = TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
     packet_ttl = from_client ? cptr->client_ttl : cptr->server_ttl;
     if ((bptr = BuildInstructionsNew(&build_list, source_ip, dest_ip, source_port, dest_port, packet_flags, packet_ttl)) == NULL) goto err;
+    bptr->client = from_client;
+
     bptr->header_identifier = *src_identifier; *src_identifier += 1;
     bptr->ack = *remote_seq;
     bptr->seq = *my_seq;
-    bptr->client = from_client;
+    
 
     L_link_ordered((LINK **)final_build_list, (LINK *)build_list);
 
@@ -1614,7 +1406,8 @@ int BuildSMTPsession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, u
 
 
 // Fabricates a fake HTTP session to inject information directly into mass surveillance platforms
-// or help perform DoS attacks on their systems to disrupt their usages. This is the NEW HTTP function.
+// or help perform DoS attacks on their systems to disrupt their usages. This is the NEW HTTP function
+// which uses the modular building routines.
 int BuildHTTPSession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, uint32_t server_port,  char *client_body,  int client_size, char *server_body, int server_size) {
     PacketBuildInstructions *bptr = NULL;
     PacketBuildInstructions *build_list = NULL;
@@ -1660,16 +1453,16 @@ int BuildHTTPSession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, u
     // open the connection...
     if (GenerateTCPConnectionInstructions(&cptr, &build_list) != 1) goto err;
 
-    // now we must send data from client to server (request)
+    // now we must send data from client to server (http request)
     if (GenerateTCPSendDataInstructions(&cptr, &build_list, 1, client_body, client_size) != 1) goto err;
     
-    // now the server must respond with its body..
-    // now we must send data from client to server (request)
+    // now we must send data from the server to the client (web page body)
     if (GenerateTCPSendDataInstructions(&cptr, &build_list, 0, server_body, server_size) != 1) goto err;
 
     // now lets close the connection from client side first
     if (GenerateTCPCloseConnectionInstructions(&cptr, &build_list, 1) != 1) goto err;
 
+    // that concludes all packets
     aptr->packet_build_instructions = build_list;
 
     // now lets build the low level packets for writing to the network interface
@@ -1873,8 +1666,7 @@ int main(int argc, char *argv[]) {
         server_ip = rand()%0xFFFFFFFF;
         client_ip = rand()%0xFFFFFFFF;
 #endif
-        // queue this session to create an attack structure 
-        // was the initial session created ok?
+        // Initialize an attack structure regarding passed information
         if ((r = AS_session_queue(1, client_ip, server_ip, client_port, server_port, count, repeat_interval, 1, (void *)&HTTP_Create)) != 1) {
             printf("error adding session\n");
             exit(-1);
@@ -1883,6 +1675,7 @@ int main(int argc, char *argv[]) {
 #ifndef BIG_TEST
          printf("AS_session_queue() = %d\n", r);
 #else
+       // This is the main function to use which will loop, and handle things for the attacks
        r = AS_perform();
 
         if (repeat % 1000) {
@@ -1895,9 +1688,9 @@ int main(int argc, char *argv[]) {
 #endif
 
 #ifndef BIG_TEST
-    // since we are handling lots of connections in this application
-    // many identities,, falsified connections,etc.. we need to process it faster than it would
-    // just to queue all the packets for this first session..
+    // We loop to call this abunch of times because theres a chance all packets do not get generated
+    // on the first call.  It is designed this way to handle a large amount of fabricated sessions 
+    // simultaneously... since this is just a test... let's loop a few times just to be sure.
     for (i = 0; i < 30; i++) {
         r = AS_perform();     
         printf("AS_perform() = %d\n", r);
