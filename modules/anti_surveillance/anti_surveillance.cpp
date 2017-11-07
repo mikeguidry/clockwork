@@ -285,13 +285,12 @@ AttackOutgoingQueue *network_queue = NULL, *network_queue_last = NULL;
 // do we have a raw socket?
 int raw_socket = 0;
 
-int one = 1;
-
 // grabbed this code from forge2.c (other code w checksum, and original tcp low level building iphd,tcphdr, checksum,etc)
 // anything before options+data (forge does SYN)
 int prepare_socket() {
     int rawsocket = 0;
-
+    int one = 1;
+    
     rawsocket = socket (PF_INET, SOCK_RAW, IPPROTO_TCP);
     if (setsockopt(rawsocket,IPPROTO_IP,IP_HDRINCL,(char *)&one,sizeof(one)) < 0) {
         return -1;
@@ -751,16 +750,11 @@ void BuildPackets(AS_attacks *aptr) {
     PacketBuildInstructions *ptr = aptr->packet_build_instructions;
     PacketInfo *qptr = NULL;
 
-    // all packets must be rebuilt.. so free old ones which were already queued
-
-    //PacketsFree(&aptr->packets);
-    //aptr->current_packet = NULL;
-
-
     if (ptr == NULL) {
         aptr->completed = 1;
         return;
     }
+
     while (ptr != NULL) {
         // rebuild options for the tcp packets now.. will require changes such as timestamps
         // to correctly emulate operating systems
@@ -786,6 +780,7 @@ void BuildPackets(AS_attacks *aptr) {
 
         ptr = ptr->next;
     }
+
     // if something went wrong.. lets free all packets & mark attack closed
     if (bad == 1) {
         AttackFreeStructures(aptr);
@@ -794,6 +789,7 @@ void BuildPackets(AS_attacks *aptr) {
         
         return;
     }
+
     // all packets should be OK.. lets put them into a final staging area...
     // this mightt be possible to remove.. but i wanted to give some room for additional
     // protocols later.. so i decided to keep for now...
@@ -801,6 +797,7 @@ void BuildPackets(AS_attacks *aptr) {
     // maybe ill get bored one night and optimizze for maxximum pps.. but..
     // i dont think itll even be necessary ;)
     ptr = aptr->packet_build_instructions;
+
     while (ptr != NULL) {
         qptr = (PacketInfo *)calloc(1, sizeof(PacketInfo));
         if (qptr == NULL) {
@@ -833,6 +830,7 @@ void BuildPackets(AS_attacks *aptr) {
         
         aptr->completed = 1;
     }
+
     return;
 }
 
@@ -875,7 +873,7 @@ int PacketBuildOptions(PacketBuildInstructions *iptr) {
 
 
 
-
+// takes a packets build instructions and makes a ready for the wire version
 int BuildSinglePacket(PacketBuildInstructions *iptr) {
     int ret = -1;
     int TCPHSIZE = 20;
@@ -1042,6 +1040,7 @@ unsigned short in_cksum(unsigned short *addr,int len) {
 }
 
 
+// creates the base structure for instruction to build a for the wire packet..
 PacketBuildInstructions *BuildInstructionsNew(PacketBuildInstructions **list, uint32_t source_ip, uint32_t destination_ip, int source_port, int dst_port, int flags, int ttl) {
     PacketBuildInstructions *bptr = NULL;
 
@@ -1062,6 +1061,7 @@ PacketBuildInstructions *BuildInstructionsNew(PacketBuildInstructions **list, ui
     return bptr;
 }
 
+// allocates & copies data into a new pointer
 int DataPrepare(char **data, char *ptr, int size) {
     char *buf = (char *)calloc(1, size);
     if (buf == NULL) return -1;
@@ -1093,6 +1093,7 @@ int DataPrepare(char **data, char *ptr, int size) {
 // later we can emulate some packet loss in here.. its just  random()%100 < some percentage..
 // with a loop resending the packet.. super simple to handle.  we can also falsify other scenarios
 // involving ICMP etc.. some very nasty tricks coming.  
+// **** this is the old version just kept here during active development ****
 int GenerateBuildInstructionsHTTP(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, uint32_t server_port,  char *client_body,  int client_size, char *server_body, int server_size) {
     PacketBuildInstructions *bptr = NULL;
     PacketBuildInstructions *build_list = NULL;
@@ -1263,31 +1264,7 @@ int GenerateBuildInstructionsHTTP(AS_attacks *aptr, uint32_t server_ip, uint32_t
 
 
 
-// this is a linked list so we can possible keep conectoin open over long periods of time pushing packet as needed... 
-typedef struct _connection_properties {
-	struct _connection_properties *next;
-
-	AS_attacks *aptr;
-	uint32_t server_ip;
-	uint32_t client_ip;
-	uint32_t server_port;
-	uint32_t client_port;
-	uint32_t server_identifier;
-	uint32_t client_identifier;
-	uint32_t server_seq;
-	uint32_t client_seq;
-    int ts;
-    int client_ttl;
-    int server_ttl;
-    int max_packet_size_client;
-    int max_packet_size_server;
-    int client_emulated_operating_system;
-    int server_emulated_operating_system;
-} ConnectionProperties;
-
-
-
-
+// Generates instructions for fabricating a TCP connection being opened between two hosts..
 int GenerateTCPConnectionInstructions(ConnectionProperties *cptr, PacketBuildInstructions **final_build_list) {
     PacketBuildInstructions *bptr = NULL;
     PacketBuildInstructions *build_list = NULL;
@@ -1327,7 +1304,8 @@ int GenerateTCPConnectionInstructions(ConnectionProperties *cptr, PacketBuildIns
     return 0;
 }
 
-// sending from client, or server?
+// Generates the instructions for fabricating a TCP data transfer between two hosts
+// Its general enough to be used with binary protocols, and supports client or server side to opposite
 int GenerateTCPSendDataInstructions(ConnectionProperties *cptr, PacketBuildInstructions **final_build_list, int from_client, char *data, int size) {
     PacketBuildInstructions *bptr = NULL;
     PacketBuildInstructions *build_list = NULL;
@@ -1405,6 +1383,8 @@ int GenerateTCPSendDataInstructions(ConnectionProperties *cptr, PacketBuildInstr
     return 0;
 }
 
+
+// Generates fabricated packets required to disconnect a TCP session between two hosts.. starting with one side (client or server)
 int GenerateTCPCloseConnectionInstructions(ConnectionProperties *cptr, PacketBuildInstructions **final_build_list, int from_client) {
     PacketBuildInstructions *bptr = NULL;
     PacketBuildInstructions *build_list = NULL;
@@ -1495,7 +1475,8 @@ it should allow all protocols TCP/IP
 */
 
 /*
-// lets build an email message (smtp)
+// This will fabricate an SMTP connection thus injecting any e-mail messages into mass surveillance platforms
+// which are monitoring connections that the packets pass through.
 int BuildSMTPsession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, uint32_t server_port,  char *source_email, char *destination_email, char *body, int body_size) {
     PacketBuildInstructions *bptr = NULL;
     PacketBuildInstructions *build_list = NULL;
@@ -1589,7 +1570,8 @@ int BuildSMTPsession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, u
 }
 */
 
-    
+// Fabricates a fake HTTP session to inject information directly into mass surveillance platforms
+// or help perform DoS attacks on their systems to disrupt their usages. This is the NEW HTTP function.
 int BuildHTTPSession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, uint32_t server_port,  char *client_body,  int client_size, char *server_body, int server_size) {
     PacketBuildInstructions *bptr = NULL;
     PacketBuildInstructions *build_list = NULL;
@@ -1657,6 +1639,29 @@ int BuildHTTPSession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, u
 }
 
 
+// this function was created as a test during genertion of the TEST mode (define TEST at top)
+// it should be removed, and handled in anoother location for final version..
+// its smart to keep it separate fromm AS_session_queue() so AS_session_queue() can call this, or other functions
+// to fabricate sessions of different protocols
+void *HTTP_Create(AS_attacks *aptr) {
+    
+        int i = 0;
+    
+    #ifndef BIG_TEST
+        printf("client body %p size %d\nserver body %p size %d\n",G_client_body, G_client_body_size, G_server_body, G_server_body_size);
+    #endif
+    
+        // lets try new method    
+        i = BuildHTTPSession(aptr,aptr->dst, aptr->src, aptr->destination_port, G_client_body, G_client_body_size,G_server_body, G_server_body_size);
+    
+    #ifndef BIG_TEST
+        printf("GenerateBuildInstructionsHTTP() = %d\n", i);
+    
+        printf("Packet Count: %d\n", L_count((LINK *)aptr->packets));
+    #endif
+    }
+    
+    
 
 
 
@@ -1670,6 +1675,15 @@ int BuildHTTPSession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, u
 
 
 
+
+
+
+
+#ifdef TEST
+// Anything below here was made intended on testing the system and dumping connections to a packet capture file..
+// PCAP may be useful to have in the full blown application but im interested in fully automated personally..
+// but you could just as well generate pre-timestamp scenarios and SCP/prepare boxes worldwide for attacking
+// worldwide platforms.
 
 
 char *G_client_body = NULL;
@@ -1677,28 +1691,6 @@ char *G_server_body = NULL;
 int G_client_body_size = 0;
 int G_server_body_size = 0;
 
-
-void *HTTP_Create(AS_attacks *aptr) {
-
-    int i = 0;
-
-#ifndef BIG_TEST
-    printf("client body %p size %d\nserver body %p size %d\n",G_client_body, G_client_body_size, G_server_body, G_server_body_size);
-#endif
-
-    // lets try new method    
-    i = BuildHTTPSession(aptr,aptr->dst, aptr->src, aptr->destination_port, G_client_body, G_client_body_size,G_server_body, G_server_body_size);
-
-#ifndef BIG_TEST
-    printf("GenerateBuildInstructionsHTTP() = %d\n", i);
-
-    printf("Packet Count: %d\n", L_count((LINK *)aptr->packets));
-#endif
-}
-
-
-
-#ifdef TEST
 
 #pragma pack(push, 1)
 typedef struct pcap_hdr_s {
@@ -1805,6 +1797,7 @@ char *FileContents(char *filename, int *size) {
     return buf;
 }
 
+
 // lets test this system..
 // lets build an http session, and write it to a pcap file.. then we can write 10,000 sessions to another capture file
 // all can be replayed to the wire, and viewed in wireshark...
@@ -1823,6 +1816,7 @@ int main(int argc, char *argv[]) {
         exit(-1);
     }
 
+    // *** Not much error checking on anything  here.. its quick & dirty.
     // client information
     client_ip = inet_addr(argv[1]);
     client_port =atoi(argv[2]);

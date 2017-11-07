@@ -345,6 +345,29 @@ enum {
 };
 
 
+// this is a linked list so we can possible keep conectoin open over long periods of time pushing packet as needed... 
+typedef struct _connection_properties {
+	struct _connection_properties *next;
+
+	AS_attacks *aptr;
+	uint32_t server_ip;
+	uint32_t client_ip;
+	uint32_t server_port;
+	uint32_t client_port;
+	uint32_t server_identifier;
+	uint32_t client_identifier;
+	uint32_t server_seq;
+	uint32_t client_seq;
+    int ts;
+    int client_ttl;
+    int server_ttl;
+    int max_packet_size_client;
+    int max_packet_size_server;
+    int client_emulated_operating_system;
+    int server_emulated_operating_system;
+} ConnectionProperties;
+
+
 int GenerateBuildInstructionsHTTP(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, 
     uint32_t server_port,  char *client_body,  int client_size, char *server_body, int server_size);
 
