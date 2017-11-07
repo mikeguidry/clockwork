@@ -3,9 +3,8 @@ A lot of random notes here from various different moments.. Just skip down to th
 into routines which are either already coded, or changed..
 */
 
-/* thiis can also be used standalone .. fi you select sources, and dest correctly.. you can split up the pcaps by 2 sides
-and also set timestamps to future.. and prepare for attqacks at particular times
-
+/* this can also be used standalone .. if you select sources, and dest correctly.. you can split up the pcaps by 2 sides
+and also set timestamps to future.. and prepare for attacks at particular times
 
 notes on binaray protocols:
 the good thing is.. they prob do not accurately represent things like checksums et
@@ -30,6 +29,17 @@ Obviously it depends on the information you are inserting.  You could also use c
 HTTP TCP/IP sessions to force their machines to have to decompress gigabytes of information using only a few bytes
 in each attack session queue.  I don't think these guys have been paying attention to my papers well enough.
 If so they would have stopped drugging me, or fucking with my life.  It's too late now.
+
+BTW: I know that you require data to populate these messages, or whatever sites your emulating..
+I just found 950 million e-mail addresses in 20 minutes online from hacked & leaked sites.  Those password dumps
+are more useful than just for cracking.  You can generate hundreds of millions of fabricated connections between
+individuals who have no idea who each other are.   You can also find a list of worldwide government workers on
+another site.  The whole point is that whatever the direction may be itll cause a lot of trouble if done on a masss scale.
+If you were to link worldwide diplomates to tens of millions of random US citizens then thats some trouble
+that wont be easily solved.  I'm not saying you have to do this all in one shot.  It doesn't even have to be the US
+surveillance platforms.  It works on every platform which uses the 'illegal fiber tap' methods.
+
+
 
 E-Mail is another story.  Each protocol online which is used by the majority of populations are going to be
 fully supported by most governments mass surveillance platforms.  Step 1 of the software is completed.  It
