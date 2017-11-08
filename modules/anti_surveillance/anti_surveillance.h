@@ -391,3 +391,4 @@ void PacketQueue(AS_attacks *aptr);
 void PacketAdjustments(AS_attacks *aptr);
 int AS_session_queue(int id, uint32_t src, uint32_t dst, int src_port, int dst_port, int count, int interval, int depth, void *);
 int AS_queue(AS_attacks *attack, PacketInfo *qptr);
+int GZipAttack(int options, int *size, char **server_body, int attack_size, int how_many_different_insertions);

