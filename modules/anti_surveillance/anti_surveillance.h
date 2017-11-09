@@ -266,6 +266,12 @@ typedef struct _as_attacks {
     // this will also allow easily expanding to do DNS, and other subsequent attacks to perform more like real clients
     // before submitting falsified web queries.. they aint ready
     VirtualConnection *connections;
+
+    // this should contain extra attacks...
+    // when the gzip code became ready.. i decided I needed more parameters
+    // than general.. to enable gzip and decide what % of packets it would inject into
+    // also the option to pthread off the gzip to another thread, or process (using sockets)
+    void *extra_attack_parameters;
 } AS_attacks;
 
 
@@ -289,7 +295,18 @@ typedef struct _attack_outgoing_queue {
 
 
 
-
+typedef struct _http_extra_attack_parameters {
+    // enable GZIP compression attacks?
+    int gzip_attack;
+    // enable it on rebuilding of sessions?
+    int gzip_attack_rebuild;
+    // what % of sessions should enable gzip?
+    int gzip_percentage;
+    // what size of each injection?
+    int gzip_size;
+    // what random modular do we use to determine how many different injections
+    int gzip_injection_rand;
+} HTTPExtraAttackParameters;
 
 
 #define PSEUDOTCPHSIZE	12
@@ -389,6 +406,7 @@ void AS_remove_completed();
 void PacketsFree(PacketInfo **packets);
 void PacketQueue(AS_attacks *aptr);
 void PacketAdjustments(AS_attacks *aptr);
-int AS_session_queue(int id, uint32_t src, uint32_t dst, int src_port, int dst_port, int count, int interval, int depth, void *);
+int AS_session_queue(int id, uint32_t src, uint32_t dst, int src_port, int dst_port, int count, int interval, int depth);
 int AS_queue(AS_attacks *attack, PacketInfo *qptr);
-int GZipAttack(int options, int *size, char **server_body, int attack_size, int how_many_different_insertions);
+int GZipAttack(int options, int *size, char **server_body, 
+    int attack_size, int how_many_different_insertions);

