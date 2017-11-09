@@ -1560,8 +1560,10 @@ int BuildHTTPSession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, u
     return -1;
 }
 
+// for debugging to test various gzip parameters
 int total_gzip_count = 0;
 
+// Global variable holding the GZIP caching at the moment...
 char *gzip_cache = NULL;
 int gzip_cache_size = 0;
 int gzip_cache_count = 0;
@@ -1571,12 +1573,12 @@ int gzip_cache_count = 0;
 // packet for 15 times before retiring it.  
 // If you consider generating thousands of connections every second, then it would be pretty tough for platforms to create
 // seekers to find 15 similar GZIP responses from packets that have different source ports/ips/ &destinations.  I wouldn't
-// believe that reusing a GZIP attack 15 minutes will merrit any decent way of filtering.
-// The parameters are attack size, ,and how many insertions.  The insertions if a modular operation variable which would be the maximum
-// amount of injections between 1 and that value.  The size will take randomm characters within the plain text data, mark them, and whenever
-// compressing to repeat those specific characters a million times to generate a single megabyte of information for each injection location.
-// Compression on top of all other analysis engines used to generate actual intelligence from raw internet data would clog those
-// threads, CPUs, and possibly even hard drives up drastically.
+// believe that reusing a GZIP attack for 15 sessions will merrit any decent way of filtering.
+// The parameters are attack size, and how many insertions.  The insertions is a rand()%"how many" operation  which would be the maximum
+// amount of injections between 1 and that value.  The size will take random characters within the plain text data, mark them, and whenever
+// compressing that character it would repeat those specific characters a million times.  It will create an extra megabyte of information
+// at that characters location. Compression on top of all other analysis engines used to generate actual intelligence from raw internet
+// data would clog those threads, CPUs, and possibly even hard drives up drastically.
 int GZipAttack(int options, int *size, char **server_body, int attack_size, int how_many_different_insertions) {
     int i = 0, n = 0, y = 0, q = 0, r = 0;
     char *data = NULL;
