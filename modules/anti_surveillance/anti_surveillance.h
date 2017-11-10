@@ -296,6 +296,9 @@ typedef struct _attack_outgoing_queue {
     uint32_t dest_ip;
     uint16_t dest_port;
     
+
+    pthread_t thread;
+
 } AttackOutgoingQueue;
 
 
