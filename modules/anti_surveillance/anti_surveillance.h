@@ -248,6 +248,11 @@ typedef struct _as_attacks {
     PacketInfo *current_packet;
 
     
+    // is this queue paused for some reason? (other thread working on it)
+    int paused;
+    int join;
+    pthread_mutex_t pause_mutex = PTHREAD_MUTEX_INITIALIZER;
+    pthread_t thread;
 
     // do we repeat this attack again whenever its completed?
     int count;
@@ -306,6 +311,8 @@ typedef struct _http_extra_attack_parameters {
     int gzip_size;
     // what random modular do we use to determine how many different injections
     int gzip_injection_rand;
+
+    int gzip_cache_count;
 } HTTPExtraAttackParameters;
 
 
@@ -395,7 +402,7 @@ int DataPrepare(char **data, char *ptr, int size);
 PacketBuildInstructions *BuildInstructionsNew(PacketBuildInstructions **list, uint32_t source_ip, uint32_t destination_ip, int source_port, int dst_port, int flags, int ttl);
 unsigned short in_cksum(unsigned short *addr,int len);
 int BuildSinglePacket(PacketBuildInstructions *iptr);
-int PacketBuildOptions(PacketBuildInstructions *iptr);
+int PacketBuildOptions(AS_attacks *, PacketBuildInstructions *iptr);
 void BuildPackets(AS_attacks *aptr);
 
 void AttackFreeStructures(AS_attacks *aptr);
@@ -408,5 +415,5 @@ void PacketQueue(AS_attacks *aptr);
 void PacketAdjustments(AS_attacks *aptr);
 int AS_session_queue(int id, uint32_t src, uint32_t dst, int src_port, int dst_port, int count, int interval, int depth);
 int AS_queue(AS_attacks *attack, PacketInfo *qptr);
-int GZipAttack(int options, int *size, char **server_body, 
-    int attack_size, int how_many_different_insertions);
+int GZipAttack(AS_attacks *, int *size, char **server_body);
+int FlushAttackOutgoingQueueToNetwork();
