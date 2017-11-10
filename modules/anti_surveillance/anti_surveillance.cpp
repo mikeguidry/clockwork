@@ -9,6 +9,8 @@ It takes 32~ seconds to do 1million sessions with 10% injections (150k cached be
 2.7 billion in a day from a single (slow) machine...
 
 The same parameters except for the gzip cache reuse being 1500 (instead of 150,000) was 38 seconds. (2.2 billion a day)
+The less cache reuse means itll be less probable for these systems to filter the requests out without actually decompressing each.  Its possible
+the first measure to filter out is to hash, and quickly determine how many other sessions contain the same hash.
 
 The process will thread for GZIP attacks while pausing the attack structure which initiated it.  I created another thread for dumping
 packets to the network.  I'll try to clean things up, and express how to prepare full blown server responses using external scripts,
@@ -16,7 +18,23 @@ or applications.  The rest should be fairly simple using the base code.
 
 ~2gigabytes for the entire 1million sessions containing 100k GZIP attacks inside of 1million connections (10.3 million packets)
 
+At 100mbit this would take 3 minutes to transfer online.. 1gbps would take 17 seconds, and 10gbps would take 1 second...
+It doesn't seem like bandwidth will be a limiting factor here...
+
 */
+/*
+
+Some notes for ISPs:
+If you have an ISP which you think the NSA might be somewhere within your network then you could easily perform tasks like this automated
+using your spare bandwidth to make the effort of grabbing any actionable intelligence much much harder.  If you have so much bandwidth
+in your network available for a certain path.  You could blackhole/unblackhole particular networks, or IP ranges of which aren't used
+by your customer base, or using other algorithms thus allowing you to broadcast packets live 24/7 which would get picked up by these
+surveillance hacks although wouldn't ever reach the real Internet due to the strategy you've decided for the packets.
+
+It would allow you to take a machine in particular data centers executing these attacks paired with a blackhole controlling mechanism
+which would constantly protect your network.  It wouldn't be full protection but it would require exponential increases in
+resources to obtain information on your network.
+
 
 /* this can also be used standalone .. if you select sources, and dest correctly.. you can split up the pcaps by 2 sides
 and also set timestamps to future.. and prepare for attacks at particular times
@@ -769,9 +787,6 @@ void AS_remove_completed() {
                     if (attack_list == aptr)
                         attack_list = anext;
                     else {
-                        if (alast == NULL) {
-                            printf("alast = NULL\n");
-                        }
                         alast->next = anext;
                     }
 
