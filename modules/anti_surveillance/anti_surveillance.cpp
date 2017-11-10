@@ -1,6 +1,21 @@
 /*
 A lot of random notes here from various different moments.. Just skip down to the code below it, or don't think too far
 into routines which are either already coded, or changed..
+
+
+11/10 -
+Starting doing some testing/developing on VMware rather than WSL (Ubuntu on Windows 10)
+It takes 32~ seconds to do 1million sessions with 10% injections (150k cached between 1-5 injections at 1megabyta GZIP attacak parameters)
+2.7 billion in a day from a single (slow) machine...
+
+The same parameters except for the gzip cache reuse being 1500 (instead of 150,000) was 38 seconds. (2.2 billion a day)
+
+The process will thread for GZIP attacks while pausing the attack structure which initiated it.  I created another thread for dumping
+packets to the network.  I'll try to clean things up, and express how to prepare full blown server responses using external scripts,
+or applications.  The rest should be fairly simple using the base code.
+
+~2gigabytes for the entire 1million sessions containing 100k GZIP attacks inside of 1million connections (10.3 million packets)
+
 */
 
 /* this can also be used standalone .. if you select sources, and dest correctly.. you can split up the pcaps by 2 sides
@@ -230,6 +245,7 @@ int L_count(LINK *ele) {
   
 // finds the last element in a linked list
 LINK *L_last(LINK *list) {
+    if (list == NULL) return NULL;
     while (list->next != NULL) {
       list = list->next;
     }
@@ -250,6 +266,11 @@ void L_link_ordered(LINK **list, LINK *ele) {
 
     // find the last element
     _last = L_last(*list);
+    if (_last == NULL) {
+        printf("Error finding last!\n");
+        sleep(3);
+        return;
+    }
     // and append this to that one..
     _last->next = ele;
 }
@@ -470,7 +491,7 @@ int AS_queue(AS_attacks *attack, PacketInfo *qptr) {
             network_queue_last->next = optr;
             network_queue_last = optr;
         } else {
-            L_link_ordered((LINK **)network_queue, (LINK *)optr);
+            //L_link_ordered((LINK **)network_queue, (LINK *)optr);
         }
     }
 
@@ -735,7 +756,7 @@ void AS_remove_completed() {
     while (aptr != NULL) {
         if (pthread_mutex_trylock(&aptr->pause_mutex) == 0) {
 
-            if (aptr->completed == 1) {
+            if (aptr->completed == 1 && 1==1) {
                 // try to lock this mutex
                 
                     // we arent using a normal for loop because
@@ -747,8 +768,12 @@ void AS_remove_completed() {
 
                     if (attack_list == aptr)
                         attack_list = anext;
-                    else
+                    else {
+                        if (alast == NULL) {
+                            printf("alast = NULL\n");
+                        }
                         alast->next = anext;
+                    }
 
                     pthread_mutex_unlock(&aptr->pause_mutex);
                     
@@ -757,6 +782,8 @@ void AS_remove_completed() {
 
                     //printf("removed\n");
                     aptr = anext;
+
+                    //return;
 
                     continue;
                 }
@@ -880,7 +907,7 @@ void AttackFreeStructures(AS_attacks *aptr) {
     // free packets already prepared in final outgoing structure for AS_queue()
     PacketsFree(&aptr->packets);
 
-    //if (aptr->extra_attack_parameters) PtrFree((char **)&aptr->extra_attack_parameters);
+    if (aptr->extra_attack_parameters) PtrFree((char **)&aptr->extra_attack_parameters);
 }
 
 
@@ -1277,7 +1304,6 @@ int GenerateTCPConnectionInstructions(ConnectionProperties *cptr, PacketBuildIns
 
     return 1;
     err:;
-    printf("error\n");
     return ret;
 }
 
@@ -1334,6 +1360,7 @@ int GenerateTCPSendDataInstructions(ConnectionProperties *cptr, PacketBuildInstr
     while (data_size > 0) {
         packet_size = min(data_size, from_client ? cptr->max_packet_size_client : cptr->max_packet_size_server);
 
+        //printf("pkpt size %d data %d from cl %d max cl %d max serv %d\n", packet_size, data_size, from_client, cptr->max_packet_size_client, cptr->max_packet_size_server);
         // the client sends its request... split into packets..
         packet_flags = TCP_FLAG_PSH|TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
         packet_ttl = from_client ? cptr->client_ttl : cptr->server_ttl;
@@ -1356,7 +1383,6 @@ int GenerateTCPSendDataInstructions(ConnectionProperties *cptr, PacketBuildInstr
         packet_flags = TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
         packet_ttl = from_client ? cptr->server_ttl : cptr->client_ttl;
         if ((bptr = BuildInstructionsNew(&build_list, dest_ip, source_ip, dest_port, source_port, packet_flags, packet_ttl)) == NULL) goto err;
-
         bptr->header_identifier = *dst_identifier;
         *dst_identifier += 1;
 
@@ -1598,7 +1624,7 @@ int BuildHTTPSession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, u
     uint32_t server_seq = rand()%0xFFFFFFFF;
     /*
     int body_size = 0;
-    char *body = (char *)malloc(server_size + 1);
+    char *body = (char *)malloc(server_size +%d 1);
     
     if (body != NULL) {
         memcpy(body, server_body, server_size);
@@ -1612,6 +1638,10 @@ int BuildHTTPSession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, u
 
     cptr.client_ttl = 64;
     cptr.server_ttl = 53;
+
+    cptr.max_packet_size_client = max_packet_size_client;
+    cptr.max_packet_size_server = max_packet_size_server;
+
 
     cptr.server_ip = server_ip;
     cptr.server_port = server_port;
@@ -1631,16 +1661,16 @@ int BuildHTTPSession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, u
     //GZipAttack(aptr, &body_size, &body);
 
     // open the connection...
-    if (GenerateTCPConnectionInstructions(&cptr, &build_list) != 1) goto err;
+    if (GenerateTCPConnectionInstructions(&cptr, &build_list) != 1) { ret = -2; goto err; }
 
     // now we must send data from client to server (http request)
-    if (GenerateTCPSendDataInstructions(&cptr, &build_list, 1, client_body, client_size) != 1) goto err;
+    if (GenerateTCPSendDataInstructions(&cptr, &build_list, 1, client_body, client_size) != 1) { ret = -3; goto err; }
     
     // now we must send data from the server to the client (web page body)
-    if (GenerateTCPSendDataInstructions(&cptr, &build_list, 0, server_body, server_size) != 1) goto err;
+    if (GenerateTCPSendDataInstructions(&cptr, &build_list, 0, server_body, server_size) != 1) { ret = -4; goto err; }
 
     // now lets close the connection from client side first
-    if (GenerateTCPCloseConnectionInstructions(&cptr, &build_list, 1) != 1) goto err;
+    if (GenerateTCPCloseConnectionInstructions(&cptr, &build_list, 1) != 1) { ret = -5; goto err; }
 
     // that concludes all packets
     aptr->packet_build_instructions = build_list;
@@ -1675,7 +1705,7 @@ void gzip_init() {
         pthread_mutexattr_setprotocol(&attr, PTHREAD_PRIO_NONE);
         pthread_mutexattr_setprioceiling(&attr, 0); 
 
-        pthread_mutex_init(&gzip_cache_mutex, &attr);
+        pthread_mutex_init(&gzip_cache_mutex, NULL);
 
         
     }
@@ -1727,11 +1757,12 @@ int GZipAttack(AS_attacks *aptr, int *size, char **server_body) {
     // the megabytes are the same character randomly in the output 1meg times
     pthread_mutex_lock(&gzip_cache_mutex);
 
-    if (options) {
+    if (options != NULL) {
         if (gzip_cache && gzip_cache_count > 0) {
             buf = (char *)malloc(gzip_cache_size + 1);
             if (buf == NULL) {
                 pthread_mutex_unlock(&gzip_cache_mutex);
+
                 return 0;
             }
             memcpy(buf, gzip_cache, gzip_cache_size);
@@ -1759,7 +1790,7 @@ int GZipAttack(AS_attacks *aptr, int *size, char **server_body) {
         }
     }
 
-    pthread_mutex_unlock(&gzip_cache_mutex);
+    //pthread_mutex_unlock(&gzip_cache_mutex);
 
     // first we unzip it so we can modify..
     // ill do some proper verification later.. but remember? we are supplying the body ourselves..
@@ -1981,7 +2012,7 @@ int GZipAttack(AS_attacks *aptr, int *size, char **server_body) {
     *size = compressed_out + header_size;
 
 
-    pthread_mutex_lock(&gzip_cache_mutex);
+    //pthread_mutex_lock(&gzip_cache_mutex);
 
     // cache this gzip attack for the next 15 requests of another
     if (gzip_cache == NULL) {
@@ -1995,7 +2026,7 @@ int GZipAttack(AS_attacks *aptr, int *size, char **server_body) {
         }
     }
 
-    pthread_mutex_unlock(&gzip_cache_mutex);
+    
 
     //printf("\rgzip injected\t\t\n");
     ret = 1;
@@ -2011,6 +2042,8 @@ end:;
 
     // free the attack buffer (which was used to set the current character X times so it would be compressed by that X size)
     PtrFree(&buf);
+
+    pthread_mutex_unlock(&gzip_cache_mutex);
 
     return ret;
 }
@@ -2065,6 +2098,7 @@ void *thread_gzip_attack(void *arg) {
     GZIPDetails *dptr = (GZIPDetails *)arg;
     AS_attacks *aptr = dptr->aptr;
 
+    //printf("locking id: %d %d %d\n", aptr->id, dptr->client_body_size, dptr->server_body_size);
     // lock mutex so AS_perform() leaves it alone for the time being
     pthread_mutex_lock(&aptr->pause_mutex);
 
@@ -2100,7 +2134,7 @@ void *thread_gzip_attack(void *arg) {
 
 int GZIP_Thread(AS_attacks *aptr, char *client_body, int client_body_size, char *server_body, int server_body_size) {
     GZIPDetails *dptr = (GZIPDetails *)calloc(1, sizeof(GZIPDetails));
-    if (dptr == NULL) return -1;
+    if (dptr == NULL) return 0;
 
     // all details the thread will need to complete its tasks
     dptr->aptr = aptr;
@@ -2111,7 +2145,7 @@ int GZIP_Thread(AS_attacks *aptr, char *client_body, int client_body_size, char 
 
     if (pthread_create(&aptr->thread, NULL, thread_gzip_attack, (void *)dptr) == 0) {
         // if we created the thread successful, then we want to pause the thread
-        //aptr->paused = 1;
+        aptr->paused = 1;
         
         return 1;
     } else {
@@ -2139,13 +2173,13 @@ void *HTTP_Create(AS_attacks *aptr) {
             // enable gzip attacks
             eptr->gzip_attack = 1;
             // percentage of sessions to perform gzip attacks on
-            eptr->gzip_percentage = 30;
+            eptr->gzip_percentage = 10;
             // size of the gzip injections (100 megabytes here)
             eptr->gzip_size = 1024*1024 * 1;
             // between 1-5 injections
             eptr->gzip_injection_rand = 5;
             // how many times to reuse the same cache before creating a new one?
-            eptr->gzip_cache_count = 150000;
+            eptr->gzip_cache_count = 1500;
 
             // attach the extra attack parameters to this session
             aptr->extra_attack_parameters = eptr;
@@ -2280,9 +2314,7 @@ int dump_pcap(char *filename, AttackOutgoingQueue *packets) {
 
         ptr = qnext;
 
-        if (out_count++ > 1000) break;
-
-        
+        //if (out_count++ > 1000) break;
     }
 
     fclose(fd);
