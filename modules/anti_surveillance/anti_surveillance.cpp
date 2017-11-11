@@ -519,9 +519,8 @@ void *AS_queue_threaded(void *arg) {
 int AS_queue(AS_attacks *attack, PacketInfo *qptr) {
     AttackOutgoingQueue *optr = NULL;
 
-    if ((optr = (AttackOutgoingQueue *)calloc(1, sizeof(AttackOutgoingQueue))) == NULL) {
+    if ((optr = (AttackOutgoingQueue *)calloc(1, sizeof(AttackOutgoingQueue))) == NULL)
         return -1;
-    }
 
     // we move the pointer so its not going to use CPU usage to copy it again...
     // the calling function should release the pointer (set to NULL) so that it doesnt
@@ -574,7 +573,7 @@ int AS_session_queue(int id, uint32_t src, uint32_t dst, int src_port, int dst_p
 
     // how many times will we replay this session?
     aptr->count = count;
-    // how much time in between each replay?
+    // how much time in seconds between each replay?
     aptr->repeat_interval = interval;
 
     // what function will be used to generate this sessions parameters? (ie: HTTP_Create())
@@ -624,8 +623,7 @@ int AS_pause(AS_attacks *attack, int id, int resume) {
 
 
 // We wouldn't want the surveillance platforms to see the same exact packets.. over and over..
-// Let's adjust the source port, and a few other aspects of it.
-// *** I just noticed we should change base seq for both sides here.  later today.
+// Let's adjust the source port, identifiers, ACK/SEQ bases, etc here..
 // This function will have to call other functions soon to modify MACROS. (dynamic portions of the packets
 // which are intended to show other differences..) It could even load other messages in some cases.
 // it depends on how your attacks are targeted.
@@ -635,6 +633,12 @@ void PacketAdjustments(AS_attacks *aptr) {
     int client_port = (1024 + rand()%(65535 - 1024));
     int client_identifier = rand()%0xFFFFFFFF;
     int server_identifier = rand()%0xFFFFFFFF;
+    
+    int client_new_seq = rand()%0xFFFFFFFF;
+    int server_new_seq = rand()%0xFFFFFFFF;
+
+    uint32_t client_seq_diff = 0;
+    uint32_t server_seq_diff = 0;
 
     PacketBuildInstructions *buildptr = aptr->packet_build_instructions;
 
@@ -645,20 +649,38 @@ void PacketAdjustments(AS_attacks *aptr) {
             buildptr->source_port = client_port;
             // The header identifier is changed here (and we are using the client side)
             buildptr->header_identifier = client_identifier++;
+
+            // replace tcp/ip ack/seq w new base
+            client_seq_diff = buildptr->seq - aptr->client_base_seq;
+            buildptr->seq = client_new_seq + client_seq_diff;
+
+            server_seq_diff = buildptr->ack - aptr->server_base_seq;
+            buildptr->ack = server_new_seq + server_seq_diff;
+
         } else  {
             // Source port from server to client is changed here
             buildptr->destination_port = client_port;
             // The header identifier is changed here (and we use the server side)
             buildptr->header_identifier = server_identifier++;
+
+            server_seq_diff = buildptr->seq - aptr->server_base_seq;
+            buildptr->seq = server_new_seq + server_seq_diff;
+
+            client_seq_diff = buildptr->ack - aptr->client_base_seq;
+            buildptr->ack = client_new_seq + client_seq_diff;
         }
 
         // move to the next packet
         buildptr = buildptr->next;
     }
 
+    // make sure we update the attack structure for next ACK/SEQ adjustment
+    aptr->client_base_seq = client_new_seq;
+    aptr->server_base_seq = server_new_seq;
+
     // Rebuild all packets using the modified instructions
     BuildPackets(aptr);
-    
+
     return;
 }
 
@@ -742,9 +764,19 @@ void PacketQueue(AS_attacks *aptr) {
         aptr->count--;
 
         // aptr->ts is only set if it was already used once..
-        if (aptr->ts.tv_sec)
-            // If so, then we have some adjustments to make (source port, identifiers, etc)
+        if (aptr->ts.tv_sec) {
+
+            // free older packets since we will rebuild
+            PacketsFree(&aptr->packets);
+            // we wanna start fresh..
+            aptr->current_packet = NULL;
+
+            // we have some adjustments to make (source port, identifiers, etc)
             PacketAdjustments(aptr);
+
+            // we must refresh this pointer after that..
+            pkt = aptr->packets;
+        }
 
         // If its marked as completed for any reason, then we are done.
         if (aptr->completed) return;
@@ -756,7 +788,6 @@ void PacketQueue(AS_attacks *aptr) {
             return;
         } 
     }
-
 
     // Queue this packet into the outgoing queue for the network wire
     AS_queue(aptr, pkt);
@@ -807,7 +838,7 @@ void AS_remove_completed() {
     while (aptr != NULL) {
         if (pthread_mutex_trylock(&aptr->pause_mutex) == 0) {
 
-            if (aptr->completed == 1 && 1==1) {
+            if (aptr->completed == 1) {
                 // try to lock this mutex
                 
                     // we arent using a normal for loop because
@@ -828,10 +859,7 @@ void AS_remove_completed() {
                     // free the structure itself
                     free(aptr);
 
-                    //printf("removed\n");
                     aptr = anext;
-
-                    //return;
 
                     continue;
                 }
@@ -1157,8 +1185,6 @@ int BuildSinglePacket(PacketBuildInstructions *iptr) {
         p_tcp->ptcl 	= IPPROTO_TCP;
         p_tcp->tcpl 	= htons(TCPHSIZE + iptr->data_size);
 
-        // make a custom checksum function which will take these 3 parameters separately and handle the checksum without
-        // allocating and copying.. *** optimize
         memcpy(&p_tcp->tcp, &p->tcp, TCPHSIZE);
         memcpy(checkbuf + sizeof(struct pseudo_tcp), iptr->options, iptr->options_size);
         memcpy(checkbuf + sizeof(struct pseudo_tcp) + iptr->options_size, iptr->data, iptr->data_size);        
@@ -1468,7 +1494,7 @@ int GenerateTCPCloseConnectionInstructions(ConnectionProperties *cptr, PacketBui
     uint32_t *dst_identifier = NULL;
     uint32_t *my_seq = NULL;
     uint32_t *remote_seq = NULL;
-    int packet_ttl;
+    int packet_ttl = 0;
 
     // prepare variables depending on the side of the that the data is going from -> to
     if (from_client) {
@@ -1673,6 +1699,10 @@ int BuildHTTPSession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, u
 
     uint32_t client_seq = rand()%0xFFFFFFFF;
     uint32_t server_seq = rand()%0xFFFFFFFF;
+
+    // so we can change the seqs again later if we repeat this packet (w rebuilt source ports, identifiers and now seq)
+    aptr->client_base_seq = client_seq;
+    aptr->server_base_seq = server_seq;
     /*
     int body_size = 0;
     char *body = (char *)malloc(server_size +%d 1);
@@ -2435,7 +2465,6 @@ int main(int argc, char *argv[]) {
         printf("couldnt start network thread\n");
     }*/
 
-    // *** Not much error checking on anything  here.. its quick & dirty.
     // client information
     client_ip       = inet_addr(argv[1]);
     client_port     = atoi(argv[2]);
@@ -2509,11 +2538,13 @@ int main(int argc, char *argv[]) {
     // on the first call.  It is designed this way to handle a large amount of fabricated sessions 
     // simultaneously... since this is just a test... let's loop a few times just to be sure.
     for (i = 0; i < 30; i++) {
-        r = AS_perform();     
-        printf("AS_perform() = %d\n", r);
+        r = AS_perform();
+        //if (r != 1)
+            printf("AS_perform() = %d\n", r);
     }
 #endif
-3;
+
+    
     // how many packes are queued in the output supposed to go to the internet?
     printf("network queue: %p\n", network_queue);
     if (network_queue)

@@ -243,6 +243,9 @@ typedef struct _as_attacks {
     // instructions for building raw packets..
     PacketBuildInstructions *packet_build_instructions;
 
+    uint32_t client_base_seq;
+    uint32_t server_base_seq;
+    
     // actual built packets ready for going out
     PacketInfo *packets;
     PacketInfo *current_packet;
