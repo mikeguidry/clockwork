@@ -99,6 +99,9 @@ typedef struct _pkt_info {
     // for future (wifi raw, etc)
     //int layer;
 
+    // ipv4 tcp/udp/icmp? ipv6...?
+    int type;
+
     uint32_t dest_ip;
     uint16_t dest_port;
 
@@ -245,7 +248,7 @@ typedef struct _as_attacks {
 
     uint32_t client_base_seq;
     uint32_t server_base_seq;
-    
+
     // actual built packets ready for going out
     PacketInfo *packets;
     PacketInfo *current_packet;
@@ -400,6 +403,32 @@ typedef struct _connection_properties {
 } ConnectionProperties;
 
 
+
+enum {
+    FROM_SERVER = 0,
+    FROM_CLIENT = 1
+};
+
+
+
+// details required for the new thread to understand its current parameters
+typedef struct _gzip_thread_details {
+    AS_attacks *aptr;
+    char *client_body;
+    int client_body_size;
+    char *server_body;
+    int server_body_size;
+} GZIPDetails;
+
+enum {
+    PACKET_TYPE_TCP_4,
+    PACKET_TYPE_UDP_4,
+    PACKET_TYPE_ICMP_4,
+    PACKET_TYPE_TCP_6,
+    PACKET_TYPE_UDP_6,
+    PACKET_TYPE_ICMP_6
+};
+
 int GenerateBuildInstructionsHTTP(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, 
     uint32_t server_port,  char *client_body,  int client_size, char *server_body, int server_size);
 
@@ -407,9 +436,9 @@ int dump_pcap(char *filename, PacketInfo *packets);
 int DataPrepare(char **data, char *ptr, int size);
 PacketBuildInstructions *BuildInstructionsNew(PacketBuildInstructions **list, uint32_t source_ip, uint32_t destination_ip, int source_port, int dst_port, int flags, int ttl);
 unsigned short in_cksum(unsigned short *addr,int len);
-int BuildSinglePacket(PacketBuildInstructions *iptr);
-int PacketBuildOptions(AS_attacks *, PacketBuildInstructions *iptr);
-void BuildPackets(AS_attacks *aptr);
+int BuildSingleTCP4Packet(PacketBuildInstructions *iptr);
+int PacketTCP4BuildOptions(AS_attacks *, PacketBuildInstructions *iptr);
+void BuildTCP4Packets(AS_attacks *aptr);
 
 void AttackFreeStructures(AS_attacks *aptr);
 void PacketBuildInstructionsFree(AS_attacks *aptr);

@@ -292,8 +292,6 @@ void L_link_ordered(LINK **list, LINK *ele) {
     // find the last element
     _last = L_last(*list);
     if (_last == NULL) {
-        printf("Error finding last!\n");
-        sleep(3);
         return;
     }
     // and append this to that one..
@@ -506,6 +504,7 @@ int AttackQueueAdd(AttackOutgoingQueue *optr, int only_try) {
     return 1;
 }
 
+// thread for queueing into outgoing attack queue.. just to ensure the software doesnt pause from generation of new sessions
 void *AS_queue_threaded(void *arg) {
     AttackOutgoingQueue *optr = (AttackOutgoingQueue *)arg;
 
@@ -679,7 +678,7 @@ void PacketAdjustments(AS_attacks *aptr) {
     aptr->server_base_seq = server_new_seq;
 
     // Rebuild all packets using the modified instructions
-    BuildPackets(aptr);
+    BuildTCP4Packets(aptr);
 
     return;
 }
@@ -946,8 +945,9 @@ void PtrFree(char **ptr) {
 }
 
 // clean up the structures used to keep information requira ed for building the low level network packets
-void PacketBuildInstructionsFree(AS_attacks *aptr) {
-    PacketBuildInstructions *iptr = aptr->packet_build_instructions, *inext = NULL;
+void PacketBuildInstructionsFree(PacketBuildInstructions **list) {
+    
+    PacketBuildInstructions *iptr = *list, *inext = NULL;
 
     while (iptr != NULL) {
         PtrFree(&iptr->data);
@@ -970,7 +970,7 @@ void PacketBuildInstructionsFree(AS_attacks *aptr) {
     }
 
     // they were all cleared so we can ensure the linked list is empty.
-    aptr->packet_build_instructions = NULL;
+    *list = NULL;
 
     return;
 }
@@ -978,7 +978,7 @@ void PacketBuildInstructionsFree(AS_attacks *aptr) {
 // frees all extra information being stored in an attack structure
 void AttackFreeStructures(AS_attacks *aptr) {
     // free build instructions
-    PacketBuildInstructionsFree(aptr);
+    PacketBuildInstructionsFree(&aptr->packet_build_instructions);
 
     // free packets already prepared in final outgoing structure for AS_queue()
     PacketsFree(&aptr->packets);
@@ -989,7 +989,7 @@ void AttackFreeStructures(AS_attacks *aptr) {
 
 // This function takes the linked list of build instructions, and loops to build out each packet
 // preparing it to be wrote to the Internet.
-void BuildPackets(AS_attacks *aptr) {
+void BuildTCP4Packets(AS_attacks *aptr) {
     int bad = 0;
     PacketBuildInstructions *ptr = aptr->packet_build_instructions;
     PacketInfo *qptr = NULL;
@@ -1001,7 +1001,7 @@ void BuildPackets(AS_attacks *aptr) {
 
     while (ptr != NULL) {
         // Build the options, single packet, and verify it worked out alright.
-        if ((PacketBuildOptions(aptr, ptr) != 1) || (BuildSinglePacket(ptr) != 1) ||
+        if ((PacketTCP4BuildOptions(aptr, ptr) != 1) || (BuildSingleTCP4Packet(ptr) != 1) ||
                  (ptr->packet == NULL) || (ptr->packet_size <= 0)) {
             // Mark for deletion otherwise
             aptr->completed = 1;
@@ -1028,6 +1028,7 @@ void BuildPackets(AS_attacks *aptr) {
             return;
         }
 
+        qptr->type = PACKET_TYPE_TCP_4;
         qptr->buf = ptr->packet;
         qptr->size = ptr->packet_size;
         // These are required for sending the packet out on the raw socket.. so lets pass it
@@ -1056,7 +1057,7 @@ void BuildPackets(AS_attacks *aptr) {
 //https://tools.ietf.org/html/rfc1323
 // Incomplete but within 1 day it should emulate Linux, Windows, and Mac...
 // we need access to the attack structure due to the timestampp generator having a response portion from the opposide sides packets
-int PacketBuildOptions(AS_attacks *aptr, PacketBuildInstructions *iptr) {
+int PacketTCP4BuildOptions(AS_attacks *aptr, PacketBuildInstructions *iptr) {
     // need to see what kind of packet by the flags....
     // then determine which options are necessaray...
     // low packet id (fromm 0 being syn connection) would require the tcp window size, etc
@@ -1106,7 +1107,7 @@ int PacketBuildOptions(AS_attacks *aptr, PacketBuildInstructions *iptr) {
 */
 // Takes build instructions from things like HTTP Session generation, and creates the final network ready
 // data buffers which will flow across the Internet
-int BuildSinglePacket(PacketBuildInstructions *iptr) {
+int BuildSingleTCP4Packet(PacketBuildInstructions *iptr) {
     int ret = -1;
     int TCPHSIZE = 20;
 
@@ -1309,6 +1310,7 @@ enum {
 };
 
 // to do add counting logic, and percentage choices
+// *** this code is terrible.. rewrite completely
 void OsPick(int options, int *ttl, int *window_size) {
     int i = 0;
     int *list = NULL;
@@ -1321,14 +1323,16 @@ void OsPick(int options, int *ttl, int *window_size) {
     }
 
     list = (int *)calloc(1,sizeof(int) * (c + 1));
-    if (list == NULL) pick = OS_XP;
+    if (list == NULL) {
+        pick = OS_XP;
 
-    for (i = a = 0; EmulationParameters[i].id != 0; i++) {
-        if (options & EmulationParameters[i].id)
-            list[a] = EmulationParameters[i].id;
+        for (i = a = 0; EmulationParameters[i].id != 0; i++) {
+            if (options & EmulationParameters[i].id)
+                list[a] = EmulationParameters[i].id;
+        }
+        
+        pick = list[rand()%c];
     }
-    
-    pick = list[rand()%c];
 
     *ttl = EmulationParameters[pick].ttl;
     *window_size = EmulationParameters[pick].window_size;
@@ -1567,9 +1571,6 @@ int GenerateTCPCloseConnectionInstructions(ConnectionProperties *cptr, PacketBui
 
 
 
-
-
-
 /*
 // This will fabricate an SMTP connection thus injecting any e-mail messages into mass surveillance platforms
 // which are monitoring connections that the packets pass through.
@@ -1627,33 +1628,33 @@ int BuildSMTPsession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, u
     
     // ehlo
     sprintf(buf, "EHLO %s\n", remote_email_name)
-    if (GenerateTCPSendDataInstructions(&cptr, &build_list, 1, buf, strlen(buf)) != 1) goto err;
+    if (GenerateTCPSendDataInstructions(&cptr, &build_list, FROM_CLIENT, buf, strlen(buf)) != 1) goto err;
     // responsse
-    if (GenerateTCPSendDataInstructions(&cptr, &build_list, 0, buf, strlen(buf)) != 1) goto err;
+    if (GenerateTCPSendDataInstructions(&cptr, &build_list, FROM_SERVER, buf, strlen(buf)) != 1) goto err;
 
     // mail from:
     sprintf(buf, "MAIL FROM: %s\n", source_email);
-    if (GenerateTCPSendDataInstructions(&cptr, &build_list, 1, buf, strlen(buf)) != 1) goto err;
+    if (GenerateTCPSendDataInstructions(&cptr, &build_list, FROM_CLIENT, buf, strlen(buf)) != 1) goto err;
     // fake responsse
-    if (GenerateTCPSendDataInstructions(&cptr, &build_list, 0, buf, strlen(buf)) != 1) goto err;
+    if (GenerateTCPSendDataInstructions(&cptr, &build_list, FROM_SERVER, buf, strlen(buf)) != 1) goto err;
 
     // rcpt to:
     sprintf(buf, "RCPT TO: %s\n", destination_email);
-    if (GenerateTCPSendDataInstructions(&cptr, &build_list, 1, buf, strlen(buf)) != 1) goto err;
+    if (GenerateTCPSendDataInstructions(&cptr, &build_list, FROM_CLIENT, buf, strlen(buf)) != 1) goto err;
     // fake responsse
-    if (GenerateTCPSendDataInstructions(&cptr, &build_list, 0, buf, strlen(buf)) != 1) goto err;
+    if (GenerateTCPSendDataInstructions(&cptr, &build_list, FROM_SERVER, buf, strlen(buf)) != 1) goto err;
 
     // body
     // body or data string?
-    if (GenerateTCPSendDataInstructions(&cptr, &build_list, 1, buf, strlen(buf)) != 1) goto err;
+    if (GenerateTCPSendDataInstructions(&cptr, &build_list, FROM_CLIENT, buf, strlen(buf)) != 1) goto err;
     // fake responsse
-    if (GenerateTCPSendDataInstructions(&cptr, &build_list, 0, buf, strlen(buf)) != 1) goto err;
+    if (GenerateTCPSendDataInstructions(&cptr, &build_list, FROM_SERVER, buf, strlen(buf)) != 1) goto err;
 
 
     // done. send string to end i think maybe . or .. or exit i dont rem..
-    if (GenerateTCPSendDataInstructions(&cptr, &build_list, 1, buf, strlen(buf)) != 1) goto err;
+    if (GenerateTCPSendDataInstructions(&cptr, &build_list, FROM_CLIENT, buf, strlen(buf)) != 1) goto err;
     // fake responsse
-    if (GenerateTCPSendDataInstructions(&cptr, &build_list, 0, buf, strlen(buf)) != 1) goto err;
+    if (GenerateTCPSendDataInstructions(&cptr, &build_list, FROM_SERVER, buf, strlen(buf)) != 1) goto err;
 
     // end connection
     if (GenerateTCPCloseConnectionInstructions(&cptr, &build_list, 1) != 1) goto err;
@@ -1664,8 +1665,8 @@ int BuildSMTPsession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, u
     err:;
     return -1;
 }
-*/
 
+*/
 
 
 
@@ -1674,7 +1675,7 @@ int BuildSMTPsession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, u
 // Fabricates a fake HTTP session to inject information directly into mass surveillance platforms
 // or help perform DoS attacks on their systems to disrupt their usages. This is the NEW HTTP function
 // which uses the modular building routines.
-int BuildHTTPSession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, uint32_t server_port,  char *client_body,
+int BuildHTTP4Session(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, uint32_t server_port,  char *client_body,
         int client_size, char *server_body, int server_size) {
     PacketBuildInstructions *bptr = NULL;
     PacketBuildInstructions *build_list = NULL;
@@ -1703,15 +1704,6 @@ int BuildHTTPSession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, u
     // so we can change the seqs again later if we repeat this packet (w rebuilt source ports, identifiers and now seq)
     aptr->client_base_seq = client_seq;
     aptr->server_base_seq = server_seq;
-    /*
-    int body_size = 0;
-    char *body = (char *)malloc(server_size +%d 1);
-    
-    if (body != NULL) {
-        memcpy(body, server_body, server_size);
-        body_size = server_size;
-    } */
-
 
     //OsPick(int options, int *ttl, int *window_size)
     //OsPick(OS_XP|OS_WIN7, &cptr.client_ttl, &cptr.max_packet_size_client);
@@ -1738,28 +1730,23 @@ int BuildHTTPSession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, u
     cptr.client_emulated_operating_system = 0;
     cptr.server_emulated_operating_system = 0;
     
-    // Moved all logic code inside the attack function
-    //GZipAttack(aptr, &body_size, &body);
-
     // open the connection...
     if (GenerateTCPConnectionInstructions(&cptr, &build_list) != 1) { ret = -2; goto err; }
 
     // now we must send data from client to server (http request)
-    if (GenerateTCPSendDataInstructions(&cptr, &build_list, 1, client_body, client_size) != 1) { ret = -3; goto err; }
+    if (GenerateTCPSendDataInstructions(&cptr, &build_list, FROM_CLIENT, client_body, client_size) != 1) { ret = -3; goto err; }
     
     // now we must send data from the server to the client (web page body)
-    if (GenerateTCPSendDataInstructions(&cptr, &build_list, 0, server_body, server_size) != 1) { ret = -4; goto err; }
+    if (GenerateTCPSendDataInstructions(&cptr, &build_list, FROM_SERVER, server_body, server_size) != 1) { ret = -4; goto err; }
 
     // now lets close the connection from client side first
-    if (GenerateTCPCloseConnectionInstructions(&cptr, &build_list, 1) != 1) { ret = -5; goto err; }
+    if (GenerateTCPCloseConnectionInstructions(&cptr, &build_list, FROM_CLIENT) != 1) { ret = -5; goto err; }
 
     // that concludes all packets
     aptr->packet_build_instructions = build_list;
 
     // now lets build the low level packets for writing to the network interface
-    BuildPackets(aptr);
-
-    //if (body != NULL) free(body);
+    BuildTCP4Packets(aptr);
 
     // all packets done! good to go!
     ret = 1;
@@ -2163,16 +2150,6 @@ int G_server_body_size = 0;
     
 
 
-// details required for the new thread to understand its current parameters
-typedef struct _gzip_thread_details {
-    AS_attacks *aptr;
-    char *client_body;
-    int client_body_size;
-    char *server_body;
-    int server_body_size;
-} GZIPDetails;
-
-
 // The thread has been started to perform a GZIP attack without affecting non GZIP attack packets
 void *thread_gzip_attack(void *arg) {
     int i = 0;
@@ -2189,7 +2166,7 @@ void *thread_gzip_attack(void *arg) {
     GZipAttack(aptr, &dptr->server_body_size, &dptr->server_body);
  
     // build session using the modified server body w gzip attacks
-    i = BuildHTTPSession(aptr, aptr->dst, aptr->src, aptr->destination_port, dptr->client_body, dptr->client_body_size, 
+    i = BuildHTTP4Session(aptr, aptr->dst, aptr->src, aptr->destination_port, dptr->client_body, dptr->client_body_size, 
         dptr->server_body, dptr->server_body_size);
             
     // free the details that were passed to us
@@ -2240,7 +2217,7 @@ int GZIP_Thread(AS_attacks *aptr, char *client_body, int client_body_size, char 
 // it should be removed, and handled in anoother location for final version..
 // its smart to keep it separate fromm AS_session_queue() so AS_session_queue() can call this, or other functions
 // to fabricate sessions of different protocols
-void *HTTP_Create(AS_attacks *aptr) {
+void *HTTP4_Create(AS_attacks *aptr) {
     int i = 0;
     HTTPExtraAttackParameters *eptr = NULL;
     char *server_body = NULL, *client_body = NULL;
@@ -2301,7 +2278,7 @@ void *HTTP_Create(AS_attacks *aptr) {
     #endif
 
     // lets try new method    
-    i = BuildHTTPSession(aptr, aptr->dst, aptr->src, aptr->destination_port, G_client_body, G_client_body_size,
+    i = BuildHTTP4Session(aptr, aptr->dst, aptr->src, aptr->destination_port, G_client_body, G_client_body_size,
         G_server_body, G_server_body_size);
 
     #ifndef BIG_TEST
@@ -2447,7 +2424,7 @@ int main(int argc, char *argv[]) {
 #endif
     if (argc == 1) {
         bad_syntax:;
-        printf("%s client_ip client_port server_ip server_port client_body_file server_body_file repeat_count repeat_interval\n",
+        printf("%s ipv4_client_ip client_port ipv4_server_ip server_port client_body_file server_body_file repeat_count repeat_interval\n",
             argv[0]);
         exit(-1);
     }
@@ -2513,7 +2490,7 @@ int main(int argc, char *argv[]) {
 #endif
         // Initialize an attack structure regarding passed information
         if ((r = AS_session_queue(1, client_ip, server_ip, client_port, server_port, count, repeat_interval, 1,
-                     (void *)&HTTP_Create)) != 1) {
+                     (void *)&HTTP4_Create)) != 1) {
             printf("error adding session\n");
             exit(-1);
         }
@@ -2567,3 +2544,343 @@ int main(int argc, char *argv[]) {
     exit(0);
 }
 #endif
+
+// load a pcap (filtering by either a source port, destination port.. or both)
+// if it has either itll be included into PacketInfo structures.. and then it can be broken down further
+// w anlysis into build instructions which will allow changing ack/seq, identifiers, OS emulation, etc
+// it will allow you to capture your own requests, and build the structures from that
+PacketInfo *PcapLoad(char *filename) {
+    FILE *fd = NULL;
+    char buf[1024];
+    PacketInfo *ret = NULL, *pptr = NULL;
+    pcap_hdr_t hdr;
+    pcaprec_hdr_t packet_hdr;
+    struct timeval tv;
+    struct ether_header ethhdr;
+    char *pkt_buf = NULL;
+    int pkt_size = 0;
+
+    if ((fd = fopen(filename, "rb")) == NULL) goto end;
+
+    // check a few things w the header to ensure its processable
+    if ((hdr.magic_number != 0xa1b2c3d4) || (hdr.network != 1)) goto end;
+
+    while (!feof(fd)) {
+        // first read the packet header..
+        fread((void *)&packet_hdr, 1, sizeof(pcaprec_hdr_t), fd);
+        // be sure the size is acceptable
+        if (!packet_hdr.incl_len || (packet_hdr.incl_len > packet_hdr.orig_len)) break;
+        // read the ether header (for type 1 w ethernet layer)
+        if (fread(&ethhdr, 1, sizeof(struct ether_header), fd) != sizeof(struct ether_header)) break;
+        
+        // calculate size of packet.. its the size of the packet minus the ether header
+        pkt_size = packet_hdr.incl_len - sizeof(struct ether_header);
+
+        // allocate space for the packets buffer
+        if ((pkt_buf = (char *)malloc(pkt_size + 1)) == NULL) break;
+        
+        // read the full packet into that buffer
+        if (fread((void *)pkt_buf, 1, pkt_size, fd) != pkt_size) break;
+
+        // allocate a new packetinfo structure for this
+        if ((pptr = (PacketInfo *)calloc(1, sizeof(PacketInfo))) == NULL) break;
+
+        // set parameters in that new structure for other functions to analyze the data
+        pptr->buf = pkt_buf;
+        pptr->size = pkt_size;
+
+        // link in the correct order to the list that will be returned to the caller..
+        L_link_ordered((LINK **)&ret, (LINK *)pptr);
+    }
+
+    end:;
+    if (fd != NULL) fclose(fd);
+    
+    // return any packets we may have retrieved out of that pcap to the calling function
+    return ret;
+}
+
+// Process sessions from a capture into building instructions to replicate, and massively replay
+// those sessions :) BUT with new IPs, and everything else required to fuck shit up.
+PacketBuildInstructions *PacketsToInstructions(PacketInfo *packets) {
+    PacketBuildInstructions *ret = NULL;
+    PacketBuildInstructions *list = NULL;
+    PacketBuildInstructions *iptr = NULL;
+    PacketInfo *pptr = NULL, *pnext = NULL;
+    struct packet *p = NULL;
+    int flags = 0;
+    int data_size = 0;
+    char *data = NULL;
+    char *sptr = NULL;
+
+    pptr = packets;
+
+    while (pptr != NULL) {
+        // set structure for reading information from this packet
+        p = (struct packet *)pptr->buf;
+        // be sure its ipv4..
+        if (p->ip.version == 4) {
+            // be sure it is tcp/ip
+            if (p->ip.protocol == IPPROTO_TCP) {
+                flags = 0;
+                if (p->tcp.syn) flags |= TCP_FLAG_SYN;
+                if (p->tcp.ack) flags |= TCP_FLAG_ACK;
+                if (p->tcp.psh) flags |= TCP_FLAG_PSH;
+                if (p->tcp.fin) flags |= TCP_FLAG_FIN;
+                if (p->tcp.rst) flags |= TCP_FLAG_RST;
+
+                // create the base instruction for re-building this packet
+                iptr = BuildInstructionsNew(&list, p->ip.saddr, p->ip.daddr,
+                    ntohs(p->tcp.source), ntohs(p->tcp.dest), flags,
+                    p->ip.ttl);
+
+                if (iptr == NULL) goto end;
+
+                // total size from IPv4 header
+                data_size = p->ip.tot_len;
+
+                // subtract header size from total packet size to get data size..
+                data_size -= (p->ip.ihl << 2) + (p->tcp.doff << 2);
+
+                // allocate memory for the data
+                if ((data = (char *)malloc(data_size + 1)) == NULL) goto end;
+
+                // pointer to where the data starts in this packet being analyzed
+                sptr = (char *)((pptr->buf + pptr->size) - data_size);
+
+                // copy into the newly allocated buffer the tcp/ip data..
+                memcpy(data, sptr, data_size);
+
+                iptr->data = data;
+                data = NULL; // so we dont free it below..
+                iptr->data_size = data_size;
+
+                // so we can access the full original packet again later
+                iptr->packet = pptr->buf;
+                pptr->buf = NULL;
+                iptr->packet_size = pptr->size;
+                pptr->size = 0;
+
+                // we need to analyze a couple other parameters...
+                iptr->header_identifier = ntohs(p->ip.id);
+                iptr->tcp_window_size = ntohs(p->tcp.window);
+                iptr->seq = ntohl(p->tcp.seq);
+                iptr->ack = ntohl(p->tcp.ack_seq);
+
+                // can verify checksum somewhere around  here?
+                // also need to calculate size of options (and copy if we want them)
+                // for now when we copied the data.. we passed over it.. if it existed
+                
+                // so we can set the iptr->client variable.. also.. we need to process
+                // the base seq both sides started with..
+                // determine by ->client the ack/seq... and calcuate the base for both sides
+
+                // we need generate an attack structure anad set proper client/server identifier for tcp/ip headaer
+                
+                // that should be it.. it should function like any other fabricated session...
+                // you can insert GZIP attacks, etc
+
+                // *** todo.. get accurate timings (exact milliseconds between packets)
+                // pptr->wait_time = time_diff;
+            }
+            
+        }
+
+        pptr = pptr->next;
+    }
+
+    ret = list;
+
+    end:;
+
+    // if something got us here without ret, and some list.. remove it
+    if (ret == NULL && list != NULL)
+        PacketBuildInstructionsFree(&list);
+
+    PtrFree(&data);
+
+    return ret;
+}
+
+
+PacketBuildInstructions *InstructionsFindConnection(PacketBuildInstructions *instructions) {
+    PacketBuildInstructions *iptr = instructions;
+    uint32_t src_ip=0, dst_ip=0;
+    uint16_t src_port=0, dst_port=0;
+    uint32_t client_base_seq = 0;
+    uint32_t server_base_seq = 0;
+
+
+    while (iptr != NULL) {
+        // a SYN packet with an ACK of 0 should be the first connecting packet
+        if (!src_ip && !dst_ip) {
+            if ((iptr->flags & TCP_FLAG_SYN) && iptr->ack == 0) {
+                // mark this as the client
+                iptr->client = 1;
+                // grab the IP addresses, and ports from packet.. we will use as a reference
+                src_ip = iptr->source_ip;
+                dst_ip = iptr->destination_ip;
+                src_port = iptr->source_port;
+                dst_port = iptr->destination_port;
+
+            }
+        } else {
+
+            // is it the same connection?
+            if (((src_port == iptr->source_port) && (dst_port == iptr->destination_port)) ||
+                (src_port == iptr->destination_port) && (dst_port == iptr->source_port)) {
+
+                    // if its coming from the source IP we found as an initial SYN.. its the client
+                    iptr->client = (src_ip == iptr->source_ip);
+                    
+
+                    // *** we need to analyze using differences to find the base header.. and refix all packets
+                    // i wont worry so muh now... but to ensure all cannot be found/filtered computationally.. i suggest
+                    // finishing it
+
+                    // at this rate i can code a mass surveillance system from scratch almost.
+                    // go figure.
+
+                    // analysis notes:
+                    // for later if we want to take mass packets from pcaps in a directory
+                    // (easy to distribute) and add and automatically attack..
+                    // we should do several paasses over files looking for thingss
+                    // we need functions like FindNextPacket() fromm one to another (looking for ACK/SEQ)
+                    // by taking the current packet + its size and looking for the ACK on the opposite side
+                    // tailed with the connection close, or nothing.. paired with the connection finder.. or nothing
+                    // the point of this is to be able to take half sessions for other reasons
+                    // maybe just pulling out englishs text to use in fabricated messages on a mass scalae
+                    // remember it doesnt have to make sense if its just filling up NSA CPU/dtqabase for no reason..
+                    // it can be the middle or parts of other english text or whatever language
+                    // and just thrown into some new pacet would be justified enough
+                
+                    // as an IoT worm.. it would take random data, and popuate it across millions of
+                    // new messages over & over... .. id say mass surveillance would be over.
+                    // dare to try?
+                }
+        }
+        iptr = iptr->next;
+    }
+}
+
+// Generates an anti surveillance attack structure (AS_attacks) from build instructions that had come from
+// some live pcap capture
+// this function has to ensure it has enough packets for a session, and can analyze
+// enough information to start creating attacks from its data
+AS_attacks *InstructionsToAttack(PacketBuildInstructions *instructions) {
+    PacketBuildInstructions *iptr = instructions;
+    AS_attacks *aptr = NULL;
+    struct packet *p = NULL;
+    AS_attacks *ret = NULL;
+    int found_start = 0;
+    /*
+    int curpkt = 0;
+
+    struct _packet_list {
+        uint32_t seq;
+        uint32_t ack;
+        int from_client;
+        int data_size;
+
+    } Pkts[16] = {
+
+    };*/
+
+    if ((aptr = (AS_attacks *)calloc(1,sizeof(AS_attacks))) == NULL) goto end;
+
+    // set ids randomly.. aybe use ranges later..
+    // from packet file names? or some other way...
+    aptr->id = rand()%0xFFFFFFFF;
+
+    // initialize and lock mutex for this new attack entry
+    pthread_mutex_init(&aptr->pause_mutex, NULL);    
+    pthread_mutex_lock(&aptr->pause_mutex);
+
+    // this is used for awaiting GZIP compression attack
+    aptr->paused = 1;
+
+    // we can get more specific later..
+    // esp when replaying DNS (UDP).. TCP4, ICMP and other protocols all together..
+    aptr->type = ATTACK_SESSION;
+
+    // set instructions list inside of the attack structure.. 
+    aptr->packet_build_instructions = instructions;
+
+    // we need to find a few things... base server/client seq
+    
+
+    // loop through them if we need something from there..    
+    while (iptr != NULL && !found_start) {
+
+        if (!found_start) {
+            if (iptr->client) {
+                aptr->src = iptr->source_ip;
+                aptr->dst = iptr->destination_ip;
+                aptr->source_port = iptr->source_port;
+                iptr->destination_port = iptr->destination_port;
+                
+                found_start = 1;
+            }
+        }
+
+        iptr = iptr->next;
+    }
+
+    // final settings..?
+
+    //iptr->ts = time(0); // we dont set time so itll activate immediately..
+    aptr->count = 0;
+    // lets repeat this connection once every 10 seconds
+    aptr->repeat_interval = 10;
+
+    // successful...
+    ret = aptr;
+
+    // unpause...
+    aptr->paused = 0;
+
+    // lets initialize our adjustments so its different from the input
+    PacketAdjustments(aptr);
+
+    // lets put it in the list..
+    // *** maybe put this in a new list which will only modify attack_list if it can lock mutex
+    aptr->next = attack_list;
+    attack_list = aptr;
+    
+    end:;
+
+    if (aptr) pthread_mutex_unlock(&aptr->pause_mutex);
+
+    // something happened before we successfully set the return  pointer.. free everything
+    // we allocated
+    if (!ret && aptr) {
+        // this was passed to us.. so dont free it
+        aptr->packet_build_instructions = NULL;
+
+        // free any other structures that were created..
+        AttackFreeStructures(aptr);
+
+        PtrFree((char **)&aptr);
+        
+    }
+
+    return ret;
+}
+
+
+/*
+notes for using pcaps, etc....
+
+someone can start wireshark, and browse a site that they want to add to the attack
+if they used macros such as fabricated name, address.. orr other informatin
+that could be automatically found, and modified then it would be the simplest
+way to append more sessions for attacking
+
+if put into a database.. it could have a list of sites
+w management (IE: perform some basic actions using a browser addon
+such as clearing things (cookies, etc, ,etc)) and then it can
+prepare to spoof somme other useragents...
+
+it would allow people who dont undertand technology to easily inisert 
+new sites to aattack
+*/
