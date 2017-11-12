@@ -2518,7 +2518,8 @@ int main(int argc, char *argv[]) {
         //AS_attacks *PCAPtoAttack(char *filename, int dest_port, int count, int interval);
         //aptr = 
         i = PCAPtoAttack(filename, 80, 999999, 10);
-        printf("Total from PCAP: %d\n", i);
+        printf("Total from PCAP(80) : %d\n", i);
+        //i = PCAPtoAttack(filename, 443, 999999, 10); printf("Total from PCAP(443): %d\n", i);
     }
 
 
@@ -2704,15 +2705,7 @@ PacketBuildInstructions *PacketsToInstructions(PacketInfo *packets) {
                     p->ip.ttl);
 
                 if (iptr == NULL) goto end;
-/*
-                src.s_addr = p->ip.saddr;//iptr->source_ip;
-                memcpy((void *)src_ip, inet_ntoa(src), 16);
 
-                dst.s_addr = p->ip.daddr;//iptr->destination_ip;
-                memcpy((void *)dst_ip, inet_ntoa(dst), 16);
-                                    printf("%s:%d -> %s:%d\n",
-                                    src_ip, iptr->source_port, dst_ip, iptr->destination_port);
-  */              
                 // start OK.. until checksum.. or disqualify for other reasons
                 iptr->ok = 1;
 
@@ -3100,6 +3093,11 @@ AS_attacks *InstructionsToAttack(PacketBuildInstructions *instructions, int coun
                 aptr->source_port = iptr->source_port;
                 iptr->destination_port = iptr->destination_port;
                 
+                aptr->destination_port = iptr->destination_port;
+                aptr->source_port = iptr->source_port;
+
+                aptr->dst = iptr->destination_ip;
+                aptr->src = iptr->source_ip;
                 found_start = 1;
             }
         }
@@ -3219,7 +3217,7 @@ int PCAPtoAttack(char *filename, int dest_port, int count, int interval) {
     if ((packetinstructions = PacketsToInstructions(packets)) == NULL) goto end;
         
     // prepare the filter for detination port
-    FilterPrepare(&flt, 0, 0);//FILTER_PACKET_FAMILIAR|FILTER_SERVER_PORT, dest_port);
+    FilterPrepare(&flt, FILTER_PACKET_FAMILIAR|FILTER_SERVER_PORT, dest_port);
     
     // loop and load as many of this type of connection as possible..
     while (i) {
