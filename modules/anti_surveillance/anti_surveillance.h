@@ -450,6 +450,29 @@ enum {
     PACKET_TYPE_ICMP_6
 };
 
+
+// types of filtering we can perform..
+// FAMILIAR means it will match client/server sides of the connection
+enum {
+    FILTER_CLIENT_IP=1,
+    FILTER_SERVER_IP=2,
+    FILTER_CLIENT_PORT=4,
+    FILTER_SERVER_PORT=8,
+    FILTER_PACKET_FLAGS=16,
+    FILTER_PACKET_FAMILIAR=32
+};
+
+typedef struct _filter_information {
+    int flags;
+    int packet_flags;
+    uint32_t source_ip;
+    uint32_t destination_ip;
+    uint16_t source_port;
+    uint16_t destination_port;
+    int init;
+} FilterInformation;
+
+
 int GenerateBuildInstructionsHTTP(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, 
     uint32_t server_port,  char *client_body,  int client_size, char *server_body, int server_size);
 
