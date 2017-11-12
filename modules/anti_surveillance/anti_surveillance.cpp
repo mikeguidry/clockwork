@@ -1,4 +1,11 @@
 /*
+Michael Guidry
+11/12/17
+This is the actual code related to all attacks I've distributed papers for earlier in 2017.
+------
+
+
+
 A lot of random notes here from various different moments.. Just skip down to the code below it, or don't think too far
 into routines which are either already coded, or changed..
 
@@ -21,6 +28,8 @@ or applications.  The rest should be fairly simple using the base code.
 
 At 100mbit this would take 3 minutes to transfer online.. 1gbps would take 17 seconds, and 10gbps would take 1 second...
 It doesn't seem like bandwidth will be a limiting factor here...
+
+Its goiong to get much worse .. this is a building block for something much bigger :)
 
 */
 /*
@@ -1156,6 +1165,9 @@ int BuildSingleTCP4Packet(PacketBuildInstructions *iptr) {
     int ret = -1;
     int TCPHSIZE = 20;
 
+    // this is only for ipv4 tcp
+    if (iptr->type != PACKET_TYPE_TCP_4) return ret;
+
     // increase the heaader by the size of the TCP options
     if (iptr->options_size) TCPHSIZE += iptr->options_size;
 
@@ -1344,14 +1356,15 @@ struct _operating_system_emulation_parameters {
 };
 
 enum {
-    OS_SERVER=1,
-    OS_CLIENT=2,
     OS_LINUX=4,
     OS_GOOGLE_LINUX=8,
     OS_FREEBSD=16,
     OS_XP=32,
     OS_WIN7=64,
-    OS_CISCO=128
+    OS_CISCO=128,
+    OS_CLIENT=OS_XP|OS_WIN7,
+    OS_SERVER=OS_LINUX|OS_FREEBSD
+    
 };
 
 // to do add counting logic, and percentage choices
@@ -2577,10 +2590,10 @@ int main(int argc, char *argv[]) {
     printf("Time before dumping packets to disk: %d seconds\n", (int)(time(0) - start_ts));
 
     if (!filename)
-    // now lets write to pcap file.. all of those packets.. open up wireshark.
-    dump_pcap((char *)"output.pcap", network_queue);
+        // now lets write to pcap file.. all of those packets.. open up wireshark.
+        dump_pcap((char *)"output.pcap", network_queue);
     else
-    dump_pcap((char *)"output2.pcap", network_queue);
+        dump_pcap((char *)"output2.pcap", network_queue);
 
     printf("Time to fabricate, and dump packets to disk: %d seconds\n", (int)(time(0) - start_ts));
 
@@ -2591,14 +2604,12 @@ int main(int argc, char *argv[]) {
 }
 #endif
 
-// load a pcap (filtering by either a source port, destination port.. or both)
-// if it has either itll be included into PacketInfo structures.. and then it can be broken down further
-// w anlysis into build instructions which will allow changing ack/seq, identifiers, OS emulation, etc
-// it will allow you to capture your own requests, and build the structures from that
+// Load an old format (not NG) packet capture into PacketInfo structures to populate information required
+// to perform an attack with the connections
 PacketInfo *PcapLoad(char *filename) {
     FILE *fd = NULL;
     char buf[1024];
-    PacketInfo *ret = NULL, *pptr = NULL;
+    PacketInfo *ret = NULL, *pptr = NULL, *plast = NULL;
     pcap_hdr_t hdr;
     pcaprec_hdr_t packet_hdr;
     struct timeval tv;
@@ -2650,7 +2661,15 @@ PacketInfo *PcapLoad(char *filename) {
         pptr->size = pkt_size;
 
         // link in the correct order to the list that will be returned to the caller..
-        L_link_ordered((LINK **)&ret, (LINK *)pptr);
+        //L_link_ordered((LINK **)&ret, (LINK *)pptr);
+
+        // i was loading hundreds of millions of packets, and it was extremely slow.. so i decided to do it this way ordered..
+        if (plast != NULL)
+            plast->next = pptr;
+        else
+            ret = pptr;
+
+        plast = pptr;
     }
 
     end:;
@@ -2664,7 +2683,7 @@ PacketInfo *PcapLoad(char *filename) {
 // those sessions :) BUT with new IPs, and everything else required to fuck shit up.
 PacketBuildInstructions *PacketsToInstructions(PacketInfo *packets) {
     PacketBuildInstructions *ret = NULL;
-    PacketBuildInstructions *list = NULL;
+    PacketBuildInstructions *list = NULL, *llast = NULL;
     PacketBuildInstructions *iptr = NULL;
     PacketInfo *pptr = NULL, *pnext = NULL;
     struct packet *p = NULL;
@@ -2681,7 +2700,6 @@ PacketBuildInstructions *PacketsToInstructions(PacketInfo *packets) {
     char src_ip[16];
     char dst_ip[16];
 
-    printf("PacketsToInstructions\n");
     pptr = packets;
 
     while (pptr != NULL) {
@@ -2700,11 +2718,36 @@ PacketBuildInstructions *PacketsToInstructions(PacketInfo *packets) {
                 if (p->tcp.rst) flags |= TCP_FLAG_RST;
 
                 // create the base instruction for re-building this packet
-                iptr = BuildInstructionsNew(&list, p->ip.saddr, p->ip.daddr,
+                /*iptr = BuildInstructionsNew(&list, p->ip.saddr, p->ip.daddr,
                     ntohs(p->tcp.source), ntohs(p->tcp.dest), flags,
-                    p->ip.ttl);
+                    p->ip.ttl); */
 
-                if (iptr == NULL) goto end;
+                // Lets do this here.. so we can append it to the list using a jump pointer so its faster
+                // was taking way too long loading a 4gig pcap (hundreds of millions of packets)
+                if ((iptr = (PacketBuildInstructions *)calloc(1, sizeof(PacketBuildInstructions))) == NULL) goto end;
+                
+                iptr->type = PACKET_TYPE_TCP_4;
+
+                if (llast == NULL) {
+                    list = iptr;
+                    llast = iptr;
+                } else {
+                    llast->next = iptr;
+                    llast = iptr;
+                }
+
+                iptr->source_ip = p->ip.saddr;
+                iptr->source_port = ntohs(p->tcp.source);
+                    
+                iptr->destination_ip = p->ip.daddr;
+                iptr->destination_port = ntohs(p->tcp.dest);
+                    
+                iptr->flags = flags;
+                iptr->ttl = p->ip.ttl;
+                    
+
+                // **** obtain window/OS emulation automated from pcaps
+                iptr->tcp_window_size = 1500;
 
                 // start OK.. until checksum.. or disqualify for other reasons
                 iptr->ok = 1;
@@ -2915,9 +2958,9 @@ int FilterCheck(FilterInformation *fptr, PacketBuildInstructions *iptr) {
 }
 
 
-// Takes packets that were loaded, and uses a filter on them.. ones that pass go into a new linked list
-// future: this could be looped until it finds all connections (since it removes the ones it finds fromm the original bucket,
-// meaning it could be repeated until it doesnt find any new ones...)
+// This will filter the main list of information from PacketsToInstructions() by ports, or IPs and then
+// return those connections separately..
+// It is loopable, and it used to load an entire PCAP in a different function.
 PacketBuildInstructions *InstructionsFindConnection(PacketBuildInstructions **instructions, FilterInformation *flt) {
     PacketBuildInstructions *iptr = *instructions;
     PacketBuildInstructions *ilast = NULL, *inext = NULL;
@@ -2933,12 +2976,13 @@ PacketBuildInstructions *InstructionsFindConnection(PacketBuildInstructions **in
     PacketBuildInstructions *packets = NULL;
     PacketBuildInstructions *ret = NULL;
     FilterInformation fptr;
+    int found_rst = 0;
     /*int count = 0, ccount = 0, fcount = 0;
     struct in_addr src, dst;
     char Asrc_ip[16];
     char Adst_ip[16]; */
 
-    printf("InstructionsFindConnection count of incoming packets: %d\n", L_count((LINK *)iptr));
+    //printf("InstructionsFindConnection count of incoming packets: %d\n", L_count((LINK *)iptr));
 
     if (flt == NULL)
         // default filter is port 80 (www) both sides of the packets...
@@ -2946,7 +2990,7 @@ PacketBuildInstructions *InstructionsFindConnection(PacketBuildInstructions **in
     
 
     // enumerate all instruction packets
-    while (iptr != NULL) {
+    while (iptr != NULL && !found_rst) {
         //count++;
         // make sure it matches our filter (right now hard coded for www)
         if (FilterCheck(flt ? flt : &fptr, iptr)) {
@@ -2976,7 +3020,6 @@ PacketBuildInstructions *InstructionsFindConnection(PacketBuildInstructions **in
                     if (iptr->source_port == src_port) {
                         //ccount++;
                         iptr->client = (iptr->source_port == src_port);
-
                     }
 
                     // at this rate i can code a mass surveillance system from scratch almost.
@@ -3015,6 +3058,10 @@ PacketBuildInstructions *InstructionsFindConnection(PacketBuildInstructions **in
                     // put to linked list in order
                     L_link_ordered((LINK **)&packets, (LINK *)iptr);
 
+                    // RST + ACK = last packet.. in the millions of packets it was slow-er without this...
+                    if ((iptr->flags & TCP_FLAG_FIN) && (iptr->flags & TCP_FLAG_ACK))
+                        break;
+
                     // time to process the next
                     iptr = inext;
                     continue;
@@ -3039,10 +3086,8 @@ PacketBuildInstructions *InstructionsFindConnection(PacketBuildInstructions **in
 
 
 
-// Generates an anti surveillance attack structure (AS_attacks) from build instructions that had come from
-// some live pcap capture
-// this function has to ensure it has enough packets for a session, and can analyze
-// enough information to start creating attacks from its data
+// Takes the single connection packet instructions from InstructionsFindConnection() and creates an attack structure
+// around it so that it initializes an attack with its parameters
 AS_attacks *InstructionsToAttack(PacketBuildInstructions *instructions, int count, int interval) {
     PacketBuildInstructions *iptr = instructions;
     AS_attacks *aptr = NULL;
@@ -3083,7 +3128,6 @@ AS_attacks *InstructionsToAttack(PacketBuildInstructions *instructions, int coun
     // we need to find a few things... base server/client seq
     // loop through them if we need something from there..    
     while (iptr != NULL) {
-
         if (!found_start) {
             // if its set as a client from the last function which created these structures, and its a SYN packet..
             // then its the first
@@ -3098,6 +3142,7 @@ AS_attacks *InstructionsToAttack(PacketBuildInstructions *instructions, int coun
 
                 aptr->dst = iptr->destination_ip;
                 aptr->src = iptr->source_ip;
+                
                 found_start = 1;
             }
         }
@@ -3114,7 +3159,6 @@ AS_attacks *InstructionsToAttack(PacketBuildInstructions *instructions, int coun
                 for (i = 1; i < 15; i++) {
                     pptr = Packets[i % 16];
                     if (pptr != NULL) {
-
                         // be sure its the same connection
                         if ((pptr->source_ip == iptr->destination_ip))
                             // the packet before (SYN packet) should have an ACK of 0 since its new... and it has SYN flag
@@ -3199,7 +3243,8 @@ be sure to save as PCAP not PCAPNG
 */
 
 
-// Load a PCAP and all sessions found in it for replaying
+// Loads a PCAP file looking for a particular destination port (for example, www/80)
+// and sets some attack parameters after it completes the process of importing it
 int PCAPtoAttack(char *filename, int dest_port, int count, int interval) {
     PacketInfo *packets = NULL;
     PacketBuildInstructions *packetinstructions = NULL;
@@ -3209,6 +3254,7 @@ int PCAPtoAttack(char *filename, int dest_port, int count, int interval) {
     AS_attacks *ret = NULL;
     int i = 1;
     int total = 0;
+    //int start_ts = time(0);
 
     // load pcap file into packet information structures
     if ((packets = PcapLoad(filename)) == NULL) return 0;
@@ -3225,7 +3271,7 @@ int PCAPtoAttack(char *filename, int dest_port, int count, int interval) {
         // find the connection for some last minute things required for building an attack
         // from the connection
         if ((final_instructions = InstructionsFindConnection(&packetinstructions, &flt)) == NULL) goto end;
-
+    
         if (final_instructions == NULL) break;
 
         // create the attack structure w the most recent filtered packet building parameters
@@ -3236,15 +3282,15 @@ int PCAPtoAttack(char *filename, int dest_port, int count, int interval) {
         attack_list = aptr;
 
         total++;
+        //printf("\rTotal: %05d     \t\t", total);
     }
-
+    
     // if it all worked out...
     ret = aptr;
 
-
     //printf("perfecto we generated an attack directly from a packet capture..\n%d count\n", total);
-
     end:;
+    //printf("\r\nTime to load full file: %d\n", time(0) - start_ts);
     PacketsFree(&packets);
     PacketBuildInstructionsFree(&packetinstructions);
 
@@ -3340,7 +3386,7 @@ int HTTPContentModification(char *data, int size) {
     
     z = (p / size) * 100;
 
-    // probably html since 95% is printable character...
+    // probably html/text since 95% is printable character...
     if (z < 95) return 0;
 
     for (i = 0; tags_to_modify[i] != NULL; i++) {
@@ -3359,3 +3405,34 @@ int HTTPContentModification(char *data, int size) {
 
     return ret;
 }
+
+
+
+/*
+
+int BuildSingleUDP4Packet(PacketBuildInstructions *iptr) {
+    int ret = -1;
+
+    // this is only for ipv4 tcp
+    if (iptr->type != PACKET_TYPE_UDP_4) return ret;
+
+    // calculate full length of packet.. before we allocate memory for storage
+    int final_packet_size = sizeof(struct iphdr) + sizeof(struct udphdr) + iptr->data_size;
+    unsigned char *final_packet = (unsigned char *)calloc(1, final_packet_size);
+    struct packetudp4 *p = (struct packetudp4 *)final_packet;
+
+    // ensure the final packet was allocated correctly
+    if (final_packet == NULL) return ret;
+
+    // IP header below
+    p->ip.version 	= 4;
+    p->ip.ihl   	= IPHSIZE >> 2;
+    p->ip.tos   	= 0;    
+    p->ip.frag_off 	= 0;
+    p->ip.protocol 	= IPPROTO_UDP;
+    p->tot_len      = htons(final_packet_size);
+
+    //p->udp
+
+}
+*/

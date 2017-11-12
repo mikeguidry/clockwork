@@ -175,6 +175,8 @@ typedef struct _virtual_connection {
 typedef struct _tcp_packet_instructions {
     struct _tcp_packet_instructions *next;
 
+    int type;
+    
     int client;
 
     int session_id;
@@ -349,6 +351,12 @@ struct packet
 	struct iphdr ip;
     struct tcphdr tcp;
 };
+
+/*
+struct packetudp4 {
+    struct iphdr ip;
+    struct udphdr udp;
+};*/
 
 #pragma pack(pop)
 
