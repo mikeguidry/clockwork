@@ -473,3 +473,4 @@ int AS_session_queue(int id, uint32_t src, uint32_t dst, int src_port, int dst_p
 int AS_queue(AS_attacks *attack, PacketInfo *qptr);
 int GZipAttack(AS_attacks *, int *size, char **server_body);
 int FlushAttackOutgoingQueueToNetwork();
+AS_attacks *PCAPtoAttack(char *filename, int dest_port, int count, int interval);

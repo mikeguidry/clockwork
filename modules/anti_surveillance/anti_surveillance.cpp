@@ -2759,27 +2759,38 @@ void FilterPrepare(FilterInformation *fptr, int type, uint32_t value) {
     if (fptr->init != 1)
         memset((void *)fptr, 0, sizeof(FilterInformation));
 
+    // does this filter allow looking for specific packet propertieS? like SYN/ACK/PSH/RST
+    if (type & FILTER_PACKET_FLAGS) {
+        fptr->flags |= FILTER_PACKET_FLAGS;
+        fptr->packet_flags = value;
+    }
+
+    // will it look for both sides of the connection? ie: port 80 would allow stuff from server to client as well
     if (type & FILTER_PACKET_FAMILIAR)
         fptr->flags |= FILTER_PACKET_FAMILIAR;
 
+    // does the IP address match?
     if (type & FILTER_CLIENT_IP) {
         fptr->flags |= FILTER_CLIENT_IP;
         fptr->source_ip = value;
     }
 
+    // does the server IP match?
     if (type & FILTER_SERVER_IP) {
         fptr->flags |= FILTER_SERVER_IP;
         fptr->destination_ip = value;
     }
 
+    // does the server port match?
     if (type & FILTER_SERVER_PORT) {
         fptr->flags |= FILTER_SERVER_PORT;
-        fptr->server_port = value;
+        fptr->destination_port = value;
     }
 
+    // does the source port (usually random on client) match?
     if (type & FILTER_CLIENT_PORT) {
         fptr->flags |= FILTER_CLIENT_PORT;
-        fptr->client_port = value;
+        fptr->source_port = value;
     }
 }
 
@@ -2787,6 +2798,7 @@ void FilterPrepare(FilterInformation *fptr, int type, uint32_t value) {
 int FilterCheck(FilterInformation *fptr, PacketBuildInstructions *iptr) {
     int ret = 0;
 
+    // if the filter is empty... its allowed
     if (fptr->flags == 0) return 1;
 
     // verify client IP
@@ -2834,9 +2846,9 @@ int FilterCheck(FilterInformation *fptr, PacketBuildInstructions *iptr) {
 }
 
 
-// OK the last function was to create instruction structures.. IP/TCP header checksum was put inside of that function
-// so it does basic checking.. now we have to perform further analysis to get other parameters required for attacking
-// automatically using these pcaps
+// Takes packets that were loaded, and uses a filter on them.. ones that pass go into a new linked list
+// future: this could be looped until it finds all connections (since it removes the ones it finds fromm the original bucket,
+// meaning it could be repeated until it doesnt find any new ones...)
 PacketBuildInstructions *InstructionsFindConnection(PacketBuildInstructions **instructions, FilterInformation *flt) {
     PacketBuildInstructions *iptr = *instructions;
     PacketBuildInstructions *ilast = NULL, *inext = NULL;
@@ -2857,6 +2869,7 @@ PacketBuildInstructions *InstructionsFindConnection(PacketBuildInstructions **in
         // default filter is port 80 (www) both sides of the packets...
         FilterPrepare(&fptr, FILTER_SERVER_PORT|FILTER_PACKET_FAMILIAR, 80);
     } else
+        // copy filter supplied
         memcpy((void *)&fptr, flt, sizeof(FilterInformation));
 
     // enumerate all instruction packets
@@ -2879,7 +2892,7 @@ PacketBuildInstructions *InstructionsFindConnection(PacketBuildInstructions **in
                     dst_port = iptr->destination_port;
                 }
             }
-            
+
             // is it the same connection?
             if (((src_port == iptr->source_port) && (dst_port == iptr->destination_port)) ||
                 (src_port == iptr->destination_port) && (dst_port == iptr->source_port)) {
@@ -3020,6 +3033,8 @@ AS_attacks *InstructionsToAttack(PacketBuildInstructions *instructions, int coun
                 
             }
 
+            // future analysis go here.. using Packets array for packets before whichever
+
             // most temporary we hold is 16.. we just keep rotating using mod
             Packets[Current_Packet++ % 16] = iptr;
         }
@@ -3035,12 +3050,13 @@ AS_attacks *InstructionsToAttack(PacketBuildInstructions *instructions, int coun
     // successful...
     ret = aptr;
 
-    // unpause...
-    aptr->paused = 0;
 
     // lets initialize our adjustments so its different from the input
     PacketAdjustments(aptr);
 
+    // unpause...
+    aptr->paused = 0;
+    
     // lets put it in the list..
     // *** maybe put this in a new list which will only modify attack_list if it can lock mutex
     aptr->next = attack_list;
@@ -3082,3 +3098,42 @@ prepare to spoof somme other useragents...
 it would allow people who dont undertand technology to easily inisert 
 new sites to aattack
 */
+
+
+// Load a PCAP and call correct functionality to load it as an attack
+AS_attacks *PCAPtoAttack(char *filename, int dest_port, int count, int interval) {
+    PacketInfo *packets = PcapLoad(filename);
+    PacketBuildInstructions *packetinstructions = NULL;
+    PacketBuildInstructions *final_instructions = NULL;
+    FilterInformation flt;
+    AS_attacks *aptr = NULL;
+    AS_attacks *ret = NULL;
+
+    // load pcap file into packet information structures
+    if ((packets = PcapLoad(filename)) == NULL) return NULL;
+    
+    // turn those packet structures into packet building instructions via analysis, etc
+    if ((packetinstructions = PacketsToInstructions(packets)) == NULL) goto end;
+    
+    // prepare the filter for detination port
+    FilterPrepare(&flt, FILTER_PACKET_FAMILIAR|FILTER_SERVER_PORT, dest_port);
+    
+    // find the connection for some last minute things required for building an attack
+    // from the connection
+    if ((final_instructions = InstructionsFindConnection(&packetinstructions, &flt)) == NULL) goto end;
+
+    // create the attack structure w the most recent filtered packet building parameters
+    if ((aptr = InstructionsToAttack(final_instructions, count, interval)) == NULL) goto end;
+
+    // if it all worked out...
+    ret = aptr;
+
+end:;
+    PacketsFree(&packets);
+    PacketBuildInstructionsFree(&packetinstructions);
+
+    if (ret == NULL)
+        PacketBuildInstructionsFree(&final_instructions);
+
+    return ret;
+}
