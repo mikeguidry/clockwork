@@ -497,3 +497,4 @@ int AS_queue(AS_attacks *attack, PacketInfo *qptr);
 int GZipAttack(AS_attacks *, int *size, char **server_body);
 int FlushAttackOutgoingQueueToNetwork();
 int PCAPtoAttack(char *filename, int dest_port, int count, int interval);
+int HTTPContentModification(char *data, int size);

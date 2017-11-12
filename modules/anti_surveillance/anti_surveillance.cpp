@@ -2,7 +2,7 @@
 A lot of random notes here from various different moments.. Just skip down to the code below it, or don't think too far
 into routines which are either already coded, or changed..
 
-To the NSA: this is for rape.
+To the NSA: this is for rape.  I think you guys understand just how much damage this will do.
 
 11/10 -
 Starting doing some testing/developing on VMware rather than WSL (Ubuntu on Windows 10)
@@ -248,10 +248,12 @@ isnt sure then havinng somme situations like this only helps)
 #include <sys/time.h>
 #include <zlib.h>
 #include <pthread.h>
+#include <ctype.h>
 //#include "structs.h"
 //#include <list.h>
 //#include "utils.h"
 #include "anti_surveillance.h"
+
 
 
 
@@ -703,6 +705,11 @@ void PacketAdjustments(AS_attacks *aptr) {
             }
         }
 
+        // do we modify the data? lets try.. changes hashes.. uses more resources
+        if (buildptr->data && buildptr->data_size) {
+            HTTPContentModification(buildptr->data, buildptr->data_size);
+        }
+
         // move to the next packet
         buildptr = buildptr->next;
     }
@@ -838,8 +845,12 @@ void PacketQueue(AS_attacks *aptr) {
 void PacketsFree(PacketInfo **packets) {
     PacketInfo *ptr = NULL, *pnext = NULL;
 
+    if (packets == NULL) return;
+
+    ptr = *packets;
+
     // verify there are packets there to begin with
-    if ((ptr = *packets) == NULL) return;
+    if (ptr == NULL) return;
 
     // free all packets
     while (ptr != NULL) {
@@ -855,7 +866,6 @@ void PacketsFree(PacketInfo **packets) {
 
         // now use that pointer to move forward..
         ptr = pnext;
-        continue;
     }
 
     // no more packets left... so lets ensure it doesn't get double freed
@@ -972,10 +982,11 @@ int AS_perform() {
 
 // free a pointer after verifying it even exists
 void PtrFree(char **ptr) {
-    if (ptr != NULL && *ptr != NULL) {
-        free(*ptr);
-        *ptr = NULL;
-    }
+    if (ptr == NULL) return;
+    if (*ptr == NULL) return;
+    
+    free(*ptr);
+    *ptr = NULL;
 }
 
 // clean up the structures used to keep information requira ed for building the low level network packets
@@ -2362,6 +2373,7 @@ int dump_pcap(char *filename, AttackOutgoingQueue *packets) {
     hdr.network = 1;//layer = ethernet
 
     // set ether header (enough for wireshark, tcpdump, or whatever)
+    memset(&ethhdr, 0, sizeof(struct ether_header));
     ethhdr.ether_type = ntohs(ETHERTYPE_IP);
     memcpy((void *)&ethhdr.ether_dhost, dst_mac, 6);
     memcpy((void *)&ethhdr.ether_dhost, src_mac, 6);
@@ -2444,7 +2456,7 @@ int main(int argc, char *argv[]) {
         exit(-1);
     } else if (argc == 2) {
         filename = argv[1];
-        printf("Will load attck from pcap %s\n", filename);
+        printf("Will load attacks from pcap %s\n", filename);
         
     }
 
@@ -2601,12 +2613,12 @@ PacketInfo *PcapLoad(char *filename) {
     if (hdr.magic_number == 0x0A0D0D0A) {
         //http://www.algissalys.com/network-security/pcap-vs-pcapng-file-information-and-conversion
         //editcap -F pcap <input-pcapng-file> <output-pcap-file>
-        printf("Convert to pcap from pcapNG\n");
+        printf("Convert to pcap from pcapNG: http://www.algissalys.com/network-security/pcap-vs-pcapng-file-information-and-conversion\n");
         return NULL;
     }
     // check a few things w the header to ensure its processable
     if ((hdr.magic_number != 0xa1b2c3d4) || (hdr.network != 1)) {
-        printf("magic fail %X\n", hdr.magic_number);
+        printf("magic fail %X on pcap file\n", hdr.magic_number);
         goto end;
     }
 
@@ -2692,7 +2704,7 @@ PacketBuildInstructions *PacketsToInstructions(PacketInfo *packets) {
                     p->ip.ttl);
 
                 if (iptr == NULL) goto end;
-
+/*
                 src.s_addr = p->ip.saddr;//iptr->source_ip;
                 memcpy((void *)src_ip, inet_ntoa(src), 16);
 
@@ -2700,7 +2712,7 @@ PacketBuildInstructions *PacketsToInstructions(PacketInfo *packets) {
                 memcpy((void *)dst_ip, inet_ntoa(dst), 16);
                                     printf("%s:%d -> %s:%d\n",
                                     src_ip, iptr->source_port, dst_ip, iptr->destination_port);
-                
+  */              
                 // start OK.. until checksum.. or disqualify for other reasons
                 iptr->ok = 1;
 
@@ -2723,6 +2735,8 @@ PacketBuildInstructions *PacketsToInstructions(PacketInfo *packets) {
                 data = NULL; // so we dont free it below..
                 iptr->data_size = data_size;
 
+                //int PtrDuplicate(char *ptr, int size, char **dest, int *dest_size) {
+                //PtrDuplicate(pptr->buf, pptr->size, &iptr->packet, &iptr->packet_size);
                 // so we can access the full original packet again later
                 iptr->packet = pptr->buf;
                 pptr->buf = NULL;
@@ -2796,7 +2810,7 @@ PacketBuildInstructions *PacketsToInstructions(PacketInfo *packets) {
 
     ret = list;
 
-    printf("end count: %d\n", L_count((LINK *)list));
+    //printf("end count: %d\n", L_count((LINK *)list));
 
     end:;
 
@@ -2806,20 +2820,23 @@ PacketBuildInstructions *PacketsToInstructions(PacketInfo *packets) {
 
     PtrFree(&data);
 
+    // this gets freed on calling function.. since a pointer to the pointer (to mark as freed) wasnt passed
+    //PacketsFree(&packets);
+
     return ret;
 }
 
 
 
 void FilterPrepare(FilterInformation *fptr, int type, uint32_t value) {
-    if (fptr->init != 1) {
+    if (fptr->init != 0xAABBCCDD) {
         memset((void *)fptr, 0, sizeof(FilterInformation));
-        fptr->init = 1;
+        fptr->init = 0xAABBCCDD;
     }
 
     // does this filter allow looking for specific packet propertieS? like SYN/ACK/PSH/RST
     if (type & FILTER_PACKET_FLAGS) {
-        fptr->flags = FILTER_PACKET_FLAGS;
+        fptr->flags |= FILTER_PACKET_FLAGS;
         fptr->packet_flags = value;
     }
 
@@ -2858,32 +2875,31 @@ int FilterCheck(FilterInformation *fptr, PacketBuildInstructions *iptr) {
     int ret = 0;
 
     // if the filter is empty... its allowed
-    if (fptr->flags == 0 || fptr->init != 1) return 1;
+    if (fptr->flags == 0 || fptr->init != 0xAABBCCDD) return 1;
 
     // verify client IP
     if (fptr->flags & FILTER_CLIENT_IP)
         if (iptr->source_ip != fptr->source_ip)
-            if (!(fptr->flags & FILTER_PACKET_FAMILIAR) && (iptr->source_ip != fptr->destination_ip))
+            if (!(fptr->flags & FILTER_PACKET_FAMILIAR) || ((fptr->flags & FILTER_PACKET_FAMILIAR) && (iptr->source_ip != fptr->destination_ip)))
                 goto end;
 
     // verify server IP
     if (fptr->flags & FILTER_SERVER_IP)
         if (iptr->destination_ip != fptr->destination_ip)
-            if (!(fptr->flags & FILTER_PACKET_FAMILIAR) && (iptr->destination_ip != fptr->source_ip))
+            if (!(fptr->flags & FILTER_PACKET_FAMILIAR) || ((fptr->flags & FILTER_PACKET_FAMILIAR) && (iptr->destination_ip != fptr->source_ip)))
                 goto end;
 
     // verify server port (for instance www 80)
     if (fptr->flags & FILTER_SERVER_PORT)
         if (iptr->destination_port != fptr->destination_port)
-            if (!(fptr->flags & FILTER_PACKET_FAMILIAR) && (iptr->destination_port != fptr->source_port)) {
+            if (!(fptr->flags & FILTER_PACKET_FAMILIAR) || ((fptr->flags & FILTER_PACKET_FAMILIAR) && (iptr->destination_port != fptr->source_port)))
                 goto end;
-            }
     
     // verify client source port
     if (fptr->flags & FILTER_CLIENT_PORT)
         if (iptr->source_port != fptr->source_port)
-            if (!(fptr->flags & FILTER_PACKET_FAMILIAR) && (iptr->destination_port != fptr->source_port))
-            goto end;
+            if (!(fptr->flags & FILTER_PACKET_FAMILIAR) || ((fptr->flags & FILTER_PACKET_FAMILIAR) && (iptr->destination_port != fptr->source_port)))
+                goto end;
 
     // looking for a specific type of packet by its flags..
     if (fptr->flags & FILTER_PACKET_FLAGS) {
@@ -2924,12 +2940,12 @@ PacketBuildInstructions *InstructionsFindConnection(PacketBuildInstructions **in
     PacketBuildInstructions *packets = NULL;
     PacketBuildInstructions *ret = NULL;
     FilterInformation fptr;
-    int count = 0, ccount = 0, fcount = 0;
+    /*int count = 0, ccount = 0, fcount = 0;
     struct in_addr src, dst;
     char Asrc_ip[16];
-    char Adst_ip[16];
+    char Adst_ip[16]; */
 
-    printf("InstructionsFindConnection count: %d\n", L_count((LINK *)iptr));
+    printf("InstructionsFindConnection count of incoming packets: %d\n", L_count((LINK *)iptr));
 
     if (flt == NULL)
         // default filter is port 80 (www) both sides of the packets...
@@ -2938,10 +2954,10 @@ PacketBuildInstructions *InstructionsFindConnection(PacketBuildInstructions **in
 
     // enumerate all instruction packets
     while (iptr != NULL) {
-        count++;
+        //count++;
         // make sure it matches our filter (right now hard coded for www)
         if (FilterCheck(flt ? flt : &fptr, iptr)) {
-            fcount++; // filter couont..
+            //fcount++; // filter couont..
         
             // ***
             // a SYN packet with an ACK of 0 should be the first connecting packet
@@ -2949,7 +2965,6 @@ PacketBuildInstructions *InstructionsFindConnection(PacketBuildInstructions **in
             // there are numerous utilities to split PCAPs.. Ill come back to this later
             if (!src_ip && !dst_ip && !src_port && !dst_port) {
                 if ((iptr->flags & TCP_FLAG_SYN) && iptr->ack == 0) {
-                    printf("syn w 0 ack\n");
                     // mark this as the client
                     //iptr->client = 1;
 
@@ -2966,7 +2981,7 @@ PacketBuildInstructions *InstructionsFindConnection(PacketBuildInstructions **in
                 (src_port == iptr->destination_port) && (dst_port == iptr->source_port)) {
                     // if its coming from the source IP we found as an initial SYN.. its the client
                     if (iptr->source_port == src_port) {
-                        ccount++;
+                        //ccount++;
                         iptr->client = (iptr->source_port == src_port);
 
                     }
@@ -3022,9 +3037,9 @@ PacketBuildInstructions *InstructionsFindConnection(PacketBuildInstructions **in
 
     ret = packets;
 
-    printf("-----------------\n");
-    printf("done func %d client couont %d filter count %d\n", count, ccount, fcount);
-    printf("-----------------\n");
+/*    printf("-----------------\n");
+    printf("done func %d client count %d filter count %d\n", count, ccount, fcount);
+    printf("-----------------\n"); */
     return ret;
 }
 
@@ -3046,9 +3061,6 @@ AS_attacks *InstructionsToAttack(PacketBuildInstructions *instructions, int coun
     int Current_Packet = 0;
     int found_seq = 0;
     int i = 0;
-struct in_addr src,dst;    
-    char src_ip[16];
-    char dst_ip[16];
 
 
     // ensure that packet array if ZERO for later...
@@ -3104,45 +3116,20 @@ struct in_addr src,dst;
                 for (i = 1; i < 15; i++) {
                     pptr = Packets[i % 16];
                     if (pptr != NULL) {
-                        // the packet before (SYN packet) should have an ACK of 0 since its new... and it has SYN flag
-                        //printf("pptr ack %d\n", pptr->ack);
-                        if ((pptr->ack == 0) && (iptr->flags & TCP_FLAG_SYN) & (iptr->flags & TCP_FLAG_ACK)) {
-/*
-                            src.s_addr = pptr->source_ip;
-                            memcpy((void *)&src_ip, inet_ntoa(src), 16);
-                
-                            dst.s_addr = pptr->destination_ip;
-                            memcpy((void *)&dst_ip, inet_ntoa(dst), 16);
-                
-                            printf("client seq %s:%d -> %s:%d dsize %d flags %X\n", src_ip, pptr->source_port, dst_ip, pptr->destination_port,
-                            pptr->data_size, pptr->flags);
 
-                            
-                            printf("Found ack/seq!\n");
-                            */
-                            // this is the one where we get the clients base seq
-                            aptr->client_base_seq = pptr->seq;
+                        // be sure its the same connection
+                        if ((pptr->source_ip == iptr->destination_ip))
+                            // the packet before (SYN packet) should have an ACK of 0 since its new... and it has SYN flag
+                            if ((pptr->ack == 0) && (iptr->flags & TCP_FLAG_SYN) & (iptr->flags & TCP_FLAG_ACK)) {
+                                // this is the one where we get the clients base seq
+                                aptr->client_base_seq = pptr->seq;
 
-                            // and the current packet that we found (ACK'ing the SYN) is the server's base seq.
-                            aptr->server_base_seq = iptr->ack;
+                                // and the current packet that we found (ACK'ing the SYN) is the server's base seq.
+                                aptr->server_base_seq = iptr->ack;
 
-                            /*
-                            src.s_addr = iptr->source_ip;
-                            memcpy((void *)&src_ip, inet_ntoa(src), 16);
-                
-                            dst.s_addr = iptr->destination_ip;
-                            memcpy((void *)&dst_ip, inet_ntoa(dst), 16);
-                
-                            printf("server seq %s:%d -> %s:%d dsize %d flags %X\n", src_ip, iptr->source_port, dst_ip, iptr->destination_port,
-                                iptr->data_size, iptr->flags);
-
-                            printf("Found ack/seq! client %X server %X\n", aptr->client_base_seq, aptr->server_base_seq);
-
-                            printf("iptr %p pptr %p\n", iptr, pptr);
-                            */
-                            found_seq = 1;
-                            break;
-                        }
+                                found_seq = 1;
+                                break;
+                            }
                     }
                 }
                 
@@ -3208,12 +3195,13 @@ such as clearing things (cookies, etc, ,etc)) and then it can
 prepare to spoof somme other useragents...
 
 it would allow people who dont undertand technology to easily inisert 
-new sites to aattack
+new sites to fabricate transmissions towards
+
+be sure to save as PCAP not PCAPNG
 */
 
 
-// Load a PCAP and call correct functionality to load it as an attack
-//AS_attacks *PCAPtoAttack(char *filename, int dest_port, int count, int interval) {
+// Load a PCAP and all sessions found in it for replaying
 int PCAPtoAttack(char *filename, int dest_port, int count, int interval) {
     PacketInfo *packets = NULL;
     PacketBuildInstructions *packetinstructions = NULL;
@@ -3224,17 +3212,14 @@ int PCAPtoAttack(char *filename, int dest_port, int count, int interval) {
     int i = 1;
     int total = 0;
 
-    printf("pcap to attack filename: %s\n", filename);
     // load pcap file into packet information structures
     if ((packets = PcapLoad(filename)) == NULL) return 0;
     
-    printf("Packets: %p\n", packets);
     // turn those packet structures `into packet building instructions via analysis, etc
     if ((packetinstructions = PacketsToInstructions(packets)) == NULL) goto end;
-    
-    printf("1st instructions: %p\n", packetinstructions);
+        
     // prepare the filter for detination port
-    FilterPrepare(&flt, FILTER_PACKET_FAMILIAR|FILTER_SERVER_PORT, dest_port);
+    FilterPrepare(&flt, 0, 0);//FILTER_PACKET_FAMILIAR|FILTER_SERVER_PORT, dest_port);
     
     // loop and load as many of this type of connection as possible..
     while (i) {
@@ -3243,24 +3228,23 @@ int PCAPtoAttack(char *filename, int dest_port, int count, int interval) {
         // from the connection
         if ((final_instructions = InstructionsFindConnection(&packetinstructions, &flt)) == NULL) goto end;
 
-        printf("filtered instructions: %p\n", final_instructions);
-
         if (final_instructions == NULL) break;
 
         // create the attack structure w the most recent filtered packet building parameters
         if ((aptr = InstructionsToAttack(final_instructions, count, interval)) == NULL) goto end;
-        
+
         // add to the attack list being executed now
         aptr->next = attack_list;
         attack_list = aptr;
 
         total++;
     }
+
     // if it all worked out...
     ret = aptr;
 
 
-    printf("perfecto we generated an attack directly from a packet capture..\n%d count\n", total);
+    //printf("perfecto we generated an attack directly from a packet capture..\n%d count\n", total);
 
     end:;
     PacketsFree(&packets);
@@ -3339,3 +3323,41 @@ int pdiff(int x, int y) {
 
 
 */
+
+// lets do small things to change content hashes...
+int HTTPContentModification(char *data, int size) {
+    int i = 0;
+    int p = 0;
+    float z = 0;
+    char *tags_to_modify[] = {"<html>","<body>","<head>","<title>","</title>","</head>","</body>","</html>",NULL};
+    char *sptr = NULL;
+    int ret = 0;
+
+    //return 0;
+    if (data == NULL || size == 0) return ret;
+
+    for (i = 0; i < size; i++)
+        if (isprint(data[i]))
+            p++;
+    
+    z = (p / size) * 100;
+
+    // probably html since 95% is printable character...
+    if (z < 95) return 0;
+
+    for (i = 0; tags_to_modify[i] != NULL; i++) {
+        if ((sptr = strcasestr(data, tags_to_modify[i])) != NULL) {
+            for (z = 0; z < 3; z++) {
+                p = rand()%strlen(tags_to_modify[i]);
+
+                // at this character.. change case..
+                if (isupper(sptr[p])) sptr[p] = tolower(sptr[p]);
+                if (islower(sptr[p])) sptr[p] = toupper(sptr[p]);
+
+                ret++;
+            }
+        }
+    }
+
+    return ret;
+}
