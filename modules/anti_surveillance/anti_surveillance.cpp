@@ -655,6 +655,9 @@ void PacketAdjustments(AS_attacks *aptr) {
     int client_new_seq = rand()%0xFFFFFFFF;
     int server_new_seq = rand()%0xFFFFFFFF;
 
+    uint32_t src_ip = rand()%0xFFFFFFFF;
+    uint32_t dst_ip = rand()%0xFFFFFFFF;
+
     uint32_t client_seq_diff = 0;
     uint32_t server_seq_diff = 0;
 
@@ -663,42 +666,40 @@ void PacketAdjustments(AS_attacks *aptr) {
     while (buildptr != NULL) {
         // set ports for correct side of the packet..
         if (buildptr->client) {
+
+            buildptr->source_ip = src_ip;
+            buildptr->destination_ip = dst_ip;
+
             // Source port from client side to server is changed here
             buildptr->source_port = client_port;
             // The header identifier is changed here (and we are using the client side)
             buildptr->header_identifier = client_identifier++;
 
-            printf("C original seq: %X\n", buildptr->seq);
             // replace tcp/ip ack/seq w new base
             client_seq_diff = buildptr->seq - aptr->client_base_seq;
             buildptr->seq = client_new_seq + client_seq_diff;
 
-            printf("C new seq: %X\n", buildptr->seq);
-
             if (buildptr->ack != 0) {
-                printf("C original ack: %X\n", buildptr->ack);
                 server_seq_diff = buildptr->ack - aptr->server_base_seq;
                 buildptr->ack = server_new_seq + server_seq_diff;
-                printf("C new ack: %X\n", buildptr->ack);
             }
 
         } else  {
-            printf("0-00000-- NON CLIENT\n");
+
+            buildptr->source_ip = dst_ip;
+            buildptr->destination_ip = src_ip;
+            
             // Source port from server to client is changed here
             buildptr->destination_port = client_port;
             // The header identifier is changed here (and we use the server side)
             buildptr->header_identifier = server_identifier++;
 
-            printf("S original seq: %X\n", buildptr->seq);
             server_seq_diff = buildptr->seq - aptr->server_base_seq;
             buildptr->seq = server_new_seq + server_seq_diff;
-            printf("S new seq: %X\n", buildptr->seq);
 
             if (buildptr->ack != 0) {
-                printf("S original ack: %X\n", buildptr->ack);
                 client_seq_diff = buildptr->ack - aptr->client_base_seq;
                 buildptr->ack = client_new_seq + client_seq_diff;
-                printf("S original ack: %X\n", buildptr->ack);
             }
         }
 
@@ -2540,10 +2541,11 @@ int main(int argc, char *argv[]) {
     // We loop to call this abunch of times because theres a chance all packets do not get generated
     // on the first call.  It is designed this way to handle a large amount of fabricated sessions 
     // simultaneously... since this is just a test... let's loop a few times just to be sure.
-    for (i = 0; i < 30; i++) {
+    for (i = 0; i < 3000; i++) {
         r = AS_perform();
-        if (r != 1)
-            printf("AS_perform() = %d\n", r);
+        if (r != 1) printf("AS_perform() = %d\n", r);
+
+        usleep(5000);
     }
 #endif
 
@@ -2593,8 +2595,18 @@ PacketInfo *PcapLoad(char *filename) {
 
     if (fread((void *)&hdr,1,sizeof(pcap_hdr_t), fd) != sizeof(pcap_hdr_t)) goto end;
 
+    // pcapng format...
+    if (hdr.magic_number == 0x0A0D0D0A) {
+        //http://www.algissalys.com/network-security/pcap-vs-pcapng-file-information-and-conversion
+        //editcap -F pcap <input-pcapng-file> <output-pcap-file>
+        printf("Convert to pcap from pcapNG\n");
+        return NULL;
+    }
     // check a few things w the header to ensure its processable
-    if ((hdr.magic_number != 0xa1b2c3d4) || (hdr.network != 1)) goto end;
+    if ((hdr.magic_number != 0xa1b2c3d4) || (hdr.network != 1)) {
+        printf("magic fail %X\n", hdr.magic_number);
+        goto end;
+    }
 
     while (!feof(fd)) {
         // first read the packet header..
