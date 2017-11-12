@@ -675,10 +675,12 @@ void PacketAdjustments(AS_attacks *aptr) {
 
             printf("C new seq: %X\n", buildptr->seq);
 
-            printf("C original ack: %X\n", buildptr->ack);
-            server_seq_diff = buildptr->ack - aptr->server_base_seq;
-            buildptr->ack = server_new_seq + server_seq_diff;
-            printf("C new ack: %X\n", buildptr->ack);
+            if (buildptr->ack != 0) {
+                printf("C original ack: %X\n", buildptr->ack);
+                server_seq_diff = buildptr->ack - aptr->server_base_seq;
+                buildptr->ack = server_new_seq + server_seq_diff;
+                printf("C new ack: %X\n", buildptr->ack);
+            }
 
         } else  {
             printf("0-00000-- NON CLIENT\n");
@@ -692,10 +694,12 @@ void PacketAdjustments(AS_attacks *aptr) {
             buildptr->seq = server_new_seq + server_seq_diff;
             printf("S new seq: %X\n", buildptr->seq);
 
-            printf("S original ack: %X\n", buildptr->ack);
-            client_seq_diff = buildptr->ack - aptr->client_base_seq;
-            buildptr->ack = client_new_seq + client_seq_diff;
-            printf("S original ack: %X\n", buildptr->ack);
+            if (buildptr->ack != 0) {
+                printf("S original ack: %X\n", buildptr->ack);
+                client_seq_diff = buildptr->ack - aptr->client_base_seq;
+                buildptr->ack = client_new_seq + client_seq_diff;
+                printf("S original ack: %X\n", buildptr->ack);
+            }
         }
 
         // move to the next packet
@@ -2687,7 +2691,7 @@ PacketBuildInstructions *PacketsToInstructions(PacketInfo *packets) {
                 iptr->ok = 1;
 
                 // total size from IPv4 header
-                data_size = p->ip.tot_len;
+                data_size = ntohs(p->ip.tot_len);
 
                 // subtract header size from total packet size to get data size..
                 data_size -= (p->ip.ihl << 2) + (p->tcp.doff << 2);
@@ -2924,13 +2928,6 @@ PacketBuildInstructions *InstructionsFindConnection(PacketBuildInstructions **in
         // make sure it matches our filter (right now hard coded for www)
         if (FilterCheck(flt ? flt : &fptr, iptr)) {
             fcount++; // filter couont..
-            src.s_addr = iptr->source_ip;
-            memcpy((void *)&Asrc_ip, inet_ntoa(src), 16);
-
-            dst.s_addr = iptr->destination_ip;
-            memcpy((void *)&Adst_ip, inet_ntoa(dst), 16);
-
-            printf("%s:%d -> %s:%d\n", Asrc_ip, iptr->source_port, Adst_ip, iptr->destination_port);
         
             // ***
             // a SYN packet with an ACK of 0 should be the first connecting packet
@@ -3035,6 +3032,10 @@ AS_attacks *InstructionsToAttack(PacketBuildInstructions *instructions, int coun
     int Current_Packet = 0;
     int found_seq = 0;
     int i = 0;
+struct in_addr src,dst;    
+    char src_ip[16];
+    char dst_ip[16];
+
 
     // ensure that packet array if ZERO for later...
     memset((void *)&Packets, 0, sizeof(PacketBuildInstructions *) * 16);
@@ -3087,21 +3088,44 @@ AS_attacks *InstructionsToAttack(PacketBuildInstructions *instructions, int coun
                 pptr = Packets[(Current_Packet - 1) % 16];
                 // scan at most prior 16 packets looking for ACK/SEQ
                 for (i = 1; i < 15; i++) {
-                    pptr = Packets[(Current_Packet - i) % 16];
+                    pptr = Packets[i % 16];
                     if (pptr != NULL) {
                         // the packet before (SYN packet) should have an ACK of 0 since its new... and it has SYN flag
-                        printf("pptr ack %d\n", pptr->ack);
-                        if (pptr->ack == 0) {//} && (iptr->flags & TCP_FLAG_SYN)) {
+                        //printf("pptr ack %d\n", pptr->ack);
+                        if ((pptr->ack == 0) && (iptr->flags & TCP_FLAG_SYN) & (iptr->flags & TCP_FLAG_ACK)) {
+/*
+                            src.s_addr = pptr->source_ip;
+                            memcpy((void *)&src_ip, inet_ntoa(src), 16);
+                
+                            dst.s_addr = pptr->destination_ip;
+                            memcpy((void *)&dst_ip, inet_ntoa(dst), 16);
+                
+                            printf("client seq %s:%d -> %s:%d dsize %d flags %X\n", src_ip, pptr->source_port, dst_ip, pptr->destination_port,
+                            pptr->data_size, pptr->flags);
 
+                            
                             printf("Found ack/seq!\n");
+                            */
                             // this is the one where we get the clients base seq
                             aptr->client_base_seq = pptr->seq;
 
                             // and the current packet that we found (ACK'ing the SYN) is the server's base seq.
                             aptr->server_base_seq = iptr->ack;
 
+                            /*
+                            src.s_addr = iptr->source_ip;
+                            memcpy((void *)&src_ip, inet_ntoa(src), 16);
+                
+                            dst.s_addr = iptr->destination_ip;
+                            memcpy((void *)&dst_ip, inet_ntoa(dst), 16);
+                
+                            printf("server seq %s:%d -> %s:%d dsize %d flags %X\n", src_ip, iptr->source_port, dst_ip, iptr->destination_port,
+                                iptr->data_size, iptr->flags);
+
                             printf("Found ack/seq! client %X server %X\n", aptr->client_base_seq, aptr->server_base_seq);
 
+                            printf("iptr %p pptr %p\n", iptr, pptr);
+                            */
                             found_seq = 1;
                             break;
                         }
