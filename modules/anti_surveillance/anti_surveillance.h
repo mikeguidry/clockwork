@@ -352,11 +352,11 @@ struct packet
     struct tcphdr tcp;
 };
 
-/*
+
 struct packetudp4 {
     struct iphdr ip;
     struct udphdr udp;
-};*/
+};
 
 #pragma pack(pop)
 
@@ -481,7 +481,7 @@ typedef struct _filter_information {
 } FilterInformation;
 
 
-int GenerateBuildInstructionsHTTP(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, 
+int GenerateBuildInstructionsHTTP4(AS_attacks *aptr, uint32_t server_ip, uint32_t client_ip, 
     uint32_t server_port,  char *client_body,  int client_size, char *server_body, int server_size);
 
 int dump_pcap(char *filename, PacketInfo *packets);
