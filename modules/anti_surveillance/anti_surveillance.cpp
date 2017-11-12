@@ -389,10 +389,12 @@ void *thread_network_flush(void *arg) {
     while (1) {
         pthread_mutex_lock(&network_queue_mutex);
 
+        // how many packets are successful?
         count = FlushAttackOutgoingQueueToNetwork();
         
         pthread_mutex_unlock(&network_queue_mutex);
 
+        // if none.. then lets sleep..  
         if (!count)
             usleep(200);
     }
@@ -479,7 +481,9 @@ int FlushAttackOutgoingQueueToNetwork() {
     return count;
 }
 
-
+// Adds a queue to outgoing packet list which is protected by a thread.. try means return if it fails
+// This is so we can attempt to add the packet to the outgoing list, and if it would block then we can
+// create a thread... if thread fails for some reason (memory, etc) then itll block for its last call here
 int AttackQueueAdd(AttackOutgoingQueue *optr, int only_try) {
     int i = 0;
 
@@ -595,7 +599,7 @@ int AS_pause(AS_attacks *attack, int id, int resume) {
     AS_attacks *aptr = attack;
 
     // try to find by id if the calling function didnt pass an id
-    if (attack == NULL) {
+    if (attack == NULL && id) {
         // enumerate through attack queue looking for this ID
         aptr = attack_list;
         while (aptr != NULL) {
@@ -610,8 +614,8 @@ int AS_pause(AS_attacks *attack, int id, int resume) {
         return -1;
     }
 
-    // make sure we can lock it..
-    if (pthread_mutex_trylock(&aptr->pause_mutex) != 0) return 0;
+    pthread_mutex_lock(&aptr->pause_mutex);
+
     // if so.. its not being used for anotheer pthread...    
     aptr->paused = resume ? 0 : 1;
 
@@ -2206,11 +2210,12 @@ int GZIP_Thread(AS_attacks *aptr, char *client_body, int client_body_size, char 
         aptr->paused = 1;
         
         return 1;
-    } else {
-        // otherwise we should free that structure we just created to pass to that new thread
-        PtrFree((char **)&dptr);
-        printf("pthread error\n");
     }
+    
+    // otherwise we should free that structure we just created to pass to that new thread
+    PtrFree((char **)&dptr);
+
+    return 0;
 }
 
 // this function was created as a test during genertion of the TEST mode (define TEST at top)
@@ -2293,27 +2298,6 @@ void *HTTP4_Create(AS_attacks *aptr) {
 }
     
 
-
-#pragma pack(push, 1)
-typedef struct pcap_hdr_s {
-    uint32_t magic_number;   /* magic number */
-    uint16_t version_major;  /* major version number */
-    uint16_t version_minor;  /* minor version number */
-    int32_t  thiszone;       /* GMT to local correction */
-    uint32_t sigfigs;        /* accuracy of timestamps */
-    uint32_t snaplen;        /* max length of captured packets, in octets */
-    uint32_t network;        /* data link type */
-} pcap_hdr_t;
-
-
-typedef struct pcaprec_hdr_s {
-    uint32_t ts_sec;         /* timestamp seconds */
-    uint32_t ts_usec;        /* timestamp microseconds */
-    uint32_t incl_len;       /* number of octets of packet saved in file */
-    uint32_t orig_len;       /* actual length of packet */
-} pcaprec_hdr_t;
-
-#pragma pack(pop)
 
 // dump all outgoing queued network packets to a pcap file (to be viewed/analyzed, or played directly to the Internet)
 int dump_pcap(char *filename, AttackOutgoingQueue *packets) {    
@@ -2568,8 +2552,10 @@ PacketInfo *PcapLoad(char *filename) {
     while (!feof(fd)) {
         // first read the packet header..
         fread((void *)&packet_hdr, 1, sizeof(pcaprec_hdr_t), fd);
+
         // be sure the size is acceptable
         if (!packet_hdr.incl_len || (packet_hdr.incl_len > packet_hdr.orig_len)) break;
+
         // read the ether header (for type 1 w ethernet layer)
         if (fread(&ethhdr, 1, sizeof(struct ether_header), fd) != sizeof(struct ether_header)) break;
         
@@ -2612,6 +2598,11 @@ PacketBuildInstructions *PacketsToInstructions(PacketInfo *packets) {
     int data_size = 0;
     char *data = NULL;
     char *sptr = NULL;
+    uint16_t chk = 0;
+    uint16_t pkt_chk = 0;
+    struct pseudo_tcp *p_tcp = NULL;
+    char *checkbuf = NULL;
+    int tcp_header_size = 0;
 
     pptr = packets;
 
@@ -2635,6 +2626,9 @@ PacketBuildInstructions *PacketsToInstructions(PacketInfo *packets) {
                     p->ip.ttl);
 
                 if (iptr == NULL) goto end;
+
+                // start OK.. until checksum.. or disqualify for other reasons
+                iptr->ok = 1;
 
                 // total size from IPv4 header
                 data_size = p->ip.tot_len;
@@ -2667,21 +2661,58 @@ PacketBuildInstructions *PacketsToInstructions(PacketInfo *packets) {
                 iptr->seq = ntohl(p->tcp.seq);
                 iptr->ack = ntohl(p->tcp.ack_seq);
 
-                // can verify checksum somewhere around  here?
-                // also need to calculate size of options (and copy if we want them)
-                // for now when we copied the data.. we passed over it.. if it existed
-                
-                // so we can set the iptr->client variable.. also.. we need to process
-                // the base seq both sides started with..
-                // determine by ->client the ack/seq... and calcuate the base for both sides
+                // start checksum...
+                // get tcp header size (so we know if it has options, or not)
+                tcp_header_size = (p->tcp.doff << 2);
+        
+                // start of packet checksum verifications
+                // set a temporary buffer to the packets IP header checksum
+                pkt_chk = p->ip.check;
+                // set packets IP checksum to 0 so we can calculate and verify here
+                p->ip.check = 0;
+                // calculate what it should be
+                p->ip.check = (unsigned short)in_cksum((unsigned short *)&p->ip, IPHSIZE);
+                // verify its OK.. if not mark this packet as bad (so we can verify how many bad/good and decide
+                // on discarding or not)
+                if (p->ip.check != pkt_chk) iptr->ok = 0;
+                // lets put the IP header checksum back
+                p->ip.check = pkt_chk;
 
-                // we need generate an attack structure anad set proper client/server identifier for tcp/ip headaer
-                
-                // that should be it.. it should function like any other fabricated session...
-                // you can insert GZIP attacks, etc
+                // now lets verify TCP header..
+                // copy the packets header..
+                pkt_chk = p->tcp.check;
+                // set the packet header to 0 so we can calculate it like an operatinng system would
+                p->tcp.check = 0;
+                // it needs to be calculated with a special pseudo structure..
+                checkbuf = (char *)calloc(1,sizeof(struct pseudo_tcp) + tcp_header_size + iptr->data_size);
 
-                // *** todo.. get accurate timings (exact milliseconds between packets)
-                // pptr->wait_time = time_diff;
+                // code taken from ipv4 tcp packet building function
+                p_tcp = (struct pseudo_tcp *)checkbuf;
+                
+                p_tcp->saddr 	= p->ip.saddr;
+                p_tcp->daddr 	= p->ip.daddr;
+                p_tcp->mbz      = 0;
+                p_tcp->ptcl 	= IPPROTO_TCP;
+                p_tcp->tcpl 	= htons(tcp_header_size + iptr->data_size);
+        
+                memcpy(&p_tcp->tcp, &p->tcp, tcp_header_size);
+                memcpy(checkbuf + sizeof(struct pseudo_tcp), iptr->options, iptr->options_size);
+                memcpy(checkbuf + sizeof(struct pseudo_tcp) + iptr->options_size, iptr->data, iptr->data_size);        
+        
+                // put the checksum into the correct location inside of the header
+                p->tcp.check = (unsigned short)in_cksum((unsigned short *)checkbuf, tcp_header_size + PSEUDOTCPHSIZE + iptr->data_size + iptr->options_size);
+        
+                // free that buffer
+                free(checkbuf);
+
+                // TCP header verification failed
+                if (p->tcp.check != pkt_chk) iptr->ok = 0;
+
+                // put the original value back
+                p->tcp.check = pkt_chk;
+                // done w checksums..
+
+                // moved other analysis to the next function which builds the attack structure
             }
             
         }
@@ -2703,40 +2734,158 @@ PacketBuildInstructions *PacketsToInstructions(PacketInfo *packets) {
 }
 
 
-PacketBuildInstructions *InstructionsFindConnection(PacketBuildInstructions *instructions) {
-    PacketBuildInstructions *iptr = instructions;
+// types of filtering we can perform..
+// FAMILIAR means it will match client/server sides of the connection
+enum {
+    FILTER_CLIENT_IP=1,
+    FILTER_SERVER_IP=2,
+    FILTER_CLIENT_PORT=4,
+    FILTER_SERVER_PORT=8,
+    FILTER_PACKET_FLAGS=16,
+    FILTER_PACKET_FAMILIAR=32
+};
+
+typedef struct _filter_information {
+    int flags;
+    int packet_flags;
+    uint32_t source_ip;
+    uint32_t destination_ip;
+    uint16_t source_port;
+    uint16_t destination_port;
+    int init;
+} FilterInformation;
+
+void FilterPrepare(FilterInformation *fptr, int type, uint32_t value) {
+    if (fptr->init != 1)
+        memset((void *)fptr, 0, sizeof(FilterInformation));
+
+    if (type & FILTER_PACKET_FAMILIAR)
+        fptr->flags |= FILTER_PACKET_FAMILIAR;
+
+    if (type & FILTER_CLIENT_IP) {
+        fptr->flags |= FILTER_CLIENT_IP;
+        fptr->source_ip = value;
+    }
+
+    if (type & FILTER_SERVER_IP) {
+        fptr->flags |= FILTER_SERVER_IP;
+        fptr->destination_ip = value;
+    }
+
+    if (type & FILTER_SERVER_PORT) {
+        fptr->flags |= FILTER_SERVER_PORT;
+        fptr->server_port = value;
+    }
+
+    if (type & FILTER_CLIENT_PORT) {
+        fptr->flags |= FILTER_CLIENT_PORT;
+        fptr->client_port = value;
+    }
+}
+
+// Filters through packets ensuring that it matches a criteria of something being looked for..
+int FilterCheck(FilterInformation *fptr, PacketBuildInstructions *iptr) {
+    int ret = 0;
+
+    if (fptr->flags == 0) return 1;
+
+    // verify client IP
+    if (fptr->flags & FILTER_CLIENT_IP)
+        if (iptr->source_ip != fptr->source_ip)
+            if (!(fptr->flags & FILTER_PACKET_FAMILIAR) || (iptr->source_ip != fptr->destination_ip))
+                goto end;
+
+    // verify server IP
+    if (fptr->flags & FILTER_SERVER_IP)
+        if (iptr->destination_ip != fptr->destination_ip)
+            if (!(fptr->flags & FILTER_PACKET_FAMILIAR) || (iptr->destination_ip != fptr->source_ip))
+                goto end;
+
+    // verify server port (for instance www 80)
+    if (fptr->flags & FILTER_SERVER_PORT)
+        if (iptr->destination_port != fptr->destination_port)
+            if (!(fptr->flags & FILTER_PACKET_FAMILIAR) || (iptr->destination_port != fptr->source_port))
+                goto end;
+    
+    // verify client source port
+    if (fptr->flags & FILTER_CLIENT_PORT)
+        if (iptr->source_port != fptr->source_port)
+            if (!(fptr->flags & FILTER_PACKET_FAMILIAR) || (iptr->destination_port != fptr->source_port))
+            goto end;
+
+    // looking for a specific type of packet by its flags..
+    if (fptr->flags & FILTER_PACKET_FLAGS) {
+        if (fptr->packet_flags & TCP_FLAG_SYN)
+            if (!(iptr->flags & TCP_FLAG_SYN)) goto end;
+        if (fptr->packet_flags & TCP_FLAG_ACK)
+            if (!(iptr->flags & TCP_FLAG_ACK)) goto end;
+        if (fptr->packet_flags & TCP_FLAG_PSH)
+            if (!(iptr->flags & TCP_FLAG_PSH)) goto end;
+        if (fptr->packet_flags & TCP_FLAG_FIN)
+            if (!(iptr->flags & TCP_FLAG_FIN)) goto end;
+        if (fptr->packet_flags & TCP_FLAG_RST)
+            if (!(iptr->flags & TCP_FLAG_RST)) goto end;
+    }
+
+    ret = 1;
+
+    end:;
+    return ret;
+}
+
+
+// OK the last function was to create instruction structures.. IP/TCP header checksum was put inside of that function
+// so it does basic checking.. now we have to perform further analysis to get other parameters required for attacking
+// automatically using these pcaps
+PacketBuildInstructions *InstructionsFindConnection(PacketBuildInstructions **instructions, FilterInformation *flt) {
+    PacketBuildInstructions *iptr = *instructions;
+    PacketBuildInstructions *ilast = NULL, *inext = NULL;
     uint32_t src_ip=0, dst_ip=0;
     uint16_t src_port=0, dst_port=0;
     uint32_t client_base_seq = 0;
     uint32_t server_base_seq = 0;
+    uint16_t chk = 0;
+    uint16_t pkt_chk = 0;
+    struct pseudo_tcp *p_tcp = NULL;
+    char *checkbuf = NULL;
+    int tcp_header_size = 0;
+    PacketBuildInstructions *packets = NULL;
+    PacketBuildInstructions *ret = NULL;
+    FilterInformation fptr;
 
+    if (flt == NULL) {
+        // default filter is port 80 (www) both sides of the packets...
+        FilterPrepare(&fptr, FILTER_SERVER_PORT|FILTER_PACKET_FAMILIAR, 80);
+    } else
+        memcpy((void *)&fptr, flt, sizeof(FilterInformation));
 
+    // enumerate all instruction packets
     while (iptr != NULL) {
-        // a SYN packet with an ACK of 0 should be the first connecting packet
-        if (!src_ip && !dst_ip) {
-            if ((iptr->flags & TCP_FLAG_SYN) && iptr->ack == 0) {
-                // mark this as the client
-                iptr->client = 1;
-                // grab the IP addresses, and ports from packet.. we will use as a reference
-                src_ip = iptr->source_ip;
-                dst_ip = iptr->destination_ip;
-                src_port = iptr->source_port;
-                dst_port = iptr->destination_port;
+        // make sure it matches our filter (right now hard coded for www)
+        if (FilterCheck(&fptr, iptr)) {
+            // ***
+            // a SYN packet with an ACK of 0 should be the first connecting packet
+            // to start: we wiill support the first TCP/IP connection we grab from the pcap
+            // there are numerous utilities to split PCAPs.. Ill come back to this later
+            if (!src_ip && !dst_ip && !src_port && !dst_port) {
+                if ((iptr->flags & TCP_FLAG_SYN) && iptr->ack == 0) {
+                    // mark this as the client
+                    iptr->client = 1;
 
+                    // grab the IP addresses, and ports from packet.. we will use as a reference to find the connection
+                    src_ip = iptr->source_ip;
+                    dst_ip = iptr->destination_ip;
+                    src_port = iptr->source_port;
+                    dst_port = iptr->destination_port;
+                }
             }
-        } else {
-
+            
             // is it the same connection?
             if (((src_port == iptr->source_port) && (dst_port == iptr->destination_port)) ||
                 (src_port == iptr->destination_port) && (dst_port == iptr->source_port)) {
-
                     // if its coming from the source IP we found as an initial SYN.. its the client
                     iptr->client = (src_ip == iptr->source_ip);
-                    
 
-                    // *** we need to analyze using differences to find the base header.. and refix all packets
-                    // i wont worry so muh now... but to ensure all cannot be found/filtered computationally.. i suggest
-                    // finishing it
 
                     // at this rate i can code a mass surveillance system from scratch almost.
                     // go figure.
@@ -2744,7 +2893,7 @@ PacketBuildInstructions *InstructionsFindConnection(PacketBuildInstructions *ins
                     // analysis notes:
                     // for later if we want to take mass packets from pcaps in a directory
                     // (easy to distribute) and add and automatically attack..
-                    // we should do several paasses over files looking for thingss
+                    // we should do several passes over files looking for thingss
                     // we need functions like FindNextPacket() fromm one to another (looking for ACK/SEQ)
                     // by taking the current packet + its size and looking for the ACK on the opposite side
                     // tailed with the connection close, or nothing.. paired with the connection finder.. or nothing
@@ -2757,35 +2906,62 @@ PacketBuildInstructions *InstructionsFindConnection(PacketBuildInstructions *ins
                     // as an IoT worm.. it would take random data, and popuate it across millions of
                     // new messages over & over... .. id say mass surveillance would be over.
                     // dare to try?
+
+                    // get the next packets pointer..
+                    inext = iptr->next;
+                    
+                    // remove from the list it arrived in.. so we can put into another list which only contains
+                    // a single connection
+                    if (*instructions == iptr)
+                        *instructions = inext;
+                    else
+                        ilast->next = inext;
+
+                    // we dont want ths packet going to the next one as it arrived..
+                    iptr->next = NULL;
+
+                    // put to linked list in order
+                    L_link_ordered((LINK **)&packets, (LINK *)iptr);
+
+                    // time to process the next
+                    iptr = inext;
                 }
-        }
+            }
+
+        // set this packet as the last.. so in future the connections can be unlinked from their original list
+        ilast = iptr;
+
+        // time to process the next
         iptr = iptr->next;
     }
+
+    ret = packets;
+
+    return ret;
 }
+
+
+
 
 // Generates an anti surveillance attack structure (AS_attacks) from build instructions that had come from
 // some live pcap capture
 // this function has to ensure it has enough packets for a session, and can analyze
 // enough information to start creating attacks from its data
-AS_attacks *InstructionsToAttack(PacketBuildInstructions *instructions) {
+AS_attacks *InstructionsToAttack(PacketBuildInstructions *instructions, int count, int interval) {
     PacketBuildInstructions *iptr = instructions;
     AS_attacks *aptr = NULL;
     struct packet *p = NULL;
     AS_attacks *ret = NULL;
     int found_start = 0;
-    /*
-    int curpkt = 0;
+    PacketBuildInstructions *Packets[16];
+    PacketBuildInstructions *pptr = NULL;
+    int Current_Packet = 0;
+    int found_seq = 0;
 
-    struct _packet_list {
-        uint32_t seq;
-        uint32_t ack;
-        int from_client;
-        int data_size;
+    // ensure that packet array if ZERO for later...
+    memset((void *)&Packets, 0, sizeof(Packets) * 16);
 
-    } Pkts[16] = {
-
-    };*/
-
+    // allocate space for this new structure being built
     if ((aptr = (AS_attacks *)calloc(1,sizeof(AS_attacks))) == NULL) goto end;
 
     // set ids randomly.. aybe use ranges later..
@@ -2807,13 +2983,13 @@ AS_attacks *InstructionsToAttack(PacketBuildInstructions *instructions) {
     aptr->packet_build_instructions = instructions;
 
     // we need to find a few things... base server/client seq
-    
-
     // loop through them if we need something from there..    
     while (iptr != NULL && !found_start) {
 
         if (!found_start) {
-            if (iptr->client) {
+            // if its set as a client from the last function which created these structures, and its a SYN packet..
+            // then its the first
+            if (iptr->client && (iptr->flags & TCP_FLAG_SYN)) {
                 aptr->src = iptr->source_ip;
                 aptr->dst = iptr->destination_ip;
                 aptr->source_port = iptr->source_port;
@@ -2823,15 +2999,38 @@ AS_attacks *InstructionsToAttack(PacketBuildInstructions *instructions) {
             }
         }
 
+        // maybe rewrite this later... i'd like to process more information about connections
+        // but i do beieve this will work for now.
+        if (!found_seq) {
+            // SYN / ACK are good for finding the base seqs because it only gets incresed by 1
+            if ((iptr->flags & TCP_FLAG_ACK) && !(iptr->flags & TCP_FLAG_SYN)) {
+                // if this is an ACK but not a SYN.. its accepting the connection..
+                // we want to find the other before it!
+                pptr = Packets[(Current_Packet - 1) % 16];
+                // the packet before (SYN packet) should have an ACK of 0 since its new
+                if (pptr->ack == 0) {
+                    // this is the one where we get the clients base seq
+                    aptr->client_base_seq = pptr->seq;
+
+                    // and the current packet that we found (ACK'ing the SYN) is the server's base seq.
+                    aptr->server_base_seq = iptr->seq;
+
+                    found_seq = 1;
+                }
+                
+            }
+
+            // most temporary we hold is 16.. we just keep rotating using mod
+            Packets[Current_Packet++ % 16] = iptr;
+        }
+
         iptr = iptr->next;
     }
 
-    // final settings..?
-
     //iptr->ts = time(0); // we dont set time so itll activate immediately..
-    aptr->count = 0;
+    aptr->count = count;
     // lets repeat this connection once every 10 seconds
-    aptr->repeat_interval = 10;
+    aptr->repeat_interval = interval;
 
     // successful...
     ret = aptr;
@@ -2861,7 +3060,6 @@ AS_attacks *InstructionsToAttack(PacketBuildInstructions *instructions) {
         AttackFreeStructures(aptr);
 
         PtrFree((char **)&aptr);
-        
     }
 
     return ret;
