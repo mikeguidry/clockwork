@@ -2504,8 +2504,9 @@ int main(int argc, char *argv[]) {
              !G_server_body || !count || !repeat_interval) goto bad_syntax;
     } else {
         //AS_attacks *PCAPtoAttack(char *filename, int dest_port, int count, int interval);
-        aptr = PCAPtoAttack(filename, 80, 999999, 10);
-        printf("APTR from PCAP: %p\n", aptr);
+        //aptr = 
+        i = PCAPtoAttack(filename, 80, 999999, 10);
+        printf("Total from PCAP: %d\n", i);
     }
 
 
@@ -2523,6 +2524,7 @@ int main(int argc, char *argv[]) {
         }
         
 #ifndef BIG_TEST
+        if (!filename)
          printf("AS_session_queue() = %d\n", r);
 #else
        // This is the main function to use which will loop, and handle things for the attacks
@@ -3211,45 +3213,54 @@ new sites to aattack
 
 
 // Load a PCAP and call correct functionality to load it as an attack
-AS_attacks *PCAPtoAttack(char *filename, int dest_port, int count, int interval) {
+//AS_attacks *PCAPtoAttack(char *filename, int dest_port, int count, int interval) {
+int PCAPtoAttack(char *filename, int dest_port, int count, int interval) {
     PacketInfo *packets = NULL;
     PacketBuildInstructions *packetinstructions = NULL;
     PacketBuildInstructions *final_instructions = NULL;
     FilterInformation flt;
     AS_attacks *aptr = NULL;
     AS_attacks *ret = NULL;
+    int i = 1;
+    int total = 0;
 
     printf("pcap to attack filename: %s\n", filename);
     // load pcap file into packet information structures
-    if ((packets = PcapLoad(filename)) == NULL) return NULL;
+    if ((packets = PcapLoad(filename)) == NULL) return 0;
     
     printf("Packets: %p\n", packets);
-    // turn those packet structures into packet building instructions via analysis, etc
+    // turn those packet structures `into packet building instructions via analysis, etc
     if ((packetinstructions = PacketsToInstructions(packets)) == NULL) goto end;
     
     printf("1st instructions: %p\n", packetinstructions);
     // prepare the filter for detination port
     FilterPrepare(&flt, FILTER_PACKET_FAMILIAR|FILTER_SERVER_PORT, dest_port);
     
-    // find the connection for some last minute things required for building an attack
-    // from the connection
-    if ((final_instructions = InstructionsFindConnection(&packetinstructions, &flt)) == NULL) goto end;
+    // loop and load as many of this type of connection as possible..
+    while (i) {
+        final_instructions = NULL;
+        // find the connection for some last minute things required for building an attack
+        // from the connection
+        if ((final_instructions = InstructionsFindConnection(&packetinstructions, &flt)) == NULL) goto end;
 
-    printf("filtered instructions: %p\n", final_instructions);
+        printf("filtered instructions: %p\n", final_instructions);
 
-    // create the attack structure w the most recent filtered packet building parameters
-    if ((aptr = InstructionsToAttack(final_instructions, count, interval)) == NULL) goto end;
+        if (final_instructions == NULL) break;
 
-    printf("attack structure %p\n", aptr);
+        // create the attack structure w the most recent filtered packet building parameters
+        if ((aptr = InstructionsToAttack(final_instructions, count, interval)) == NULL) goto end;
+        
+        // add to the attack list being executed now
+        aptr->next = attack_list;
+        attack_list = aptr;
 
+        total++;
+    }
     // if it all worked out...
     ret = aptr;
 
-    // add to the attack list being executed now
-    aptr->next = attack_list;
-    attack_list = aptr;
 
-    printf("perfecto we generated an attack directly from a packet capture..\n");
+    printf("perfecto we generated an attack directly from a packet capture..\n%d count\n", total);
 
     end:;
     PacketsFree(&packets);
@@ -3258,7 +3269,7 @@ AS_attacks *PCAPtoAttack(char *filename, int dest_port, int count, int interval)
     if (ret == NULL)
         PacketBuildInstructionsFree(&final_instructions);
 
-    return ret;
+    return total;
 }
 
 /*
