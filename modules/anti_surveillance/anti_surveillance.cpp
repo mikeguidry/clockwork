@@ -1195,9 +1195,10 @@ int PacketTCP4BuildOptions(AS_attacks *aptr, PacketBuildInstructions *iptr) {
 int BuildSingleTCP4Packet(PacketBuildInstructions *iptr) {
     int ret = -1;
     int TCPHSIZE = 20;
+    char *checkbuf = NULL;
 
     // this is only for ipv4 tcp
-    if (iptr->type != PACKET_TYPE_TCP_4) goto end;
+    //if (iptr->type != PACKET_TYPE_TCP_4) goto end;
 
     // increase the heaader by the size of the TCP options
     if (iptr->options_size) TCPHSIZE += iptr->options_size;
@@ -1272,7 +1273,7 @@ int BuildSingleTCP4Packet(PacketBuildInstructions *iptr) {
     // TCP header checksum
     if (p->tcp.check == 0) {
         struct pseudo_tcp *p_tcp = NULL;
-        char *checkbuf = (char *)calloc(1,sizeof(struct pseudo_tcp) + TCPHSIZE + iptr->data_size);
+        checkbuf = (char *)calloc(1,sizeof(struct pseudo_tcp) + TCPHSIZE + iptr->data_size);
 
         if (checkbuf == NULL) goto end;
 
@@ -1309,7 +1310,8 @@ int BuildSingleTCP4Packet(PacketBuildInstructions *iptr) {
 
     end:;
 
-    if (ret != 1) PtrFree(&final_packet);
+    if (ret != 1) PtrFree((char **)&final_packet);
+
     PtrFree(&checkbuf);
 
     // returning 1 here will mark it as GOOD
@@ -2975,21 +2977,21 @@ int FilterCheck(FilterInformation *fptr, PacketBuildInstructions *iptr) {
     if (fptr->flags & FILTER_CLIENT_IP)
         if (iptr->source_ip != fptr->source_ip)
             if (!(fptr->flags & FILTER_PACKET_FAMILIAR) ||
-             ((fptr->flags & FILTER_PACKET_FAMILIAR) && (iptr->source_ip != fptr->destination_ip)))
+             ((fptr->flags & FILTER_PACKET_FAMILIAR) && (iptr->destination_ip != fptr->source_ip)))
                 goto end;
 
     // verify server IP
     if (fptr->flags & FILTER_SERVER_IP)
         if (iptr->destination_ip != fptr->destination_ip)
             if (!(fptr->flags & FILTER_PACKET_FAMILIAR) ||
-             ((fptr->flags & FILTER_PACKET_FAMILIAR) && (iptr->destination_ip != fptr->source_ip)))
+             ((fptr->flags & FILTER_PACKET_FAMILIAR) && (iptr->source_ip != fptr->destination_ip)))
                 goto end;
 
     // verify server port (for instance www 80)
     if (fptr->flags & FILTER_SERVER_PORT)
         if (iptr->destination_port != fptr->destination_port)
             if (!(fptr->flags & FILTER_PACKET_FAMILIAR) ||
-             ((fptr->flags & FILTER_PACKET_FAMILIAR) && (iptr->destination_port != fptr->source_port)))
+             ((fptr->flags & FILTER_PACKET_FAMILIAR) && (iptr->source_port != fptr->destination_port)))
                 goto end;
     
     // verify client source port
@@ -3018,6 +3020,7 @@ int FilterCheck(FilterInformation *fptr, PacketBuildInstructions *iptr) {
     end:;
     return ret;
 }
+
 
 
 // This will filter the main list of information from PacketsToInstructions() by ports, or IPs and then
